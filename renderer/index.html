@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; media-src 'self' file: http://127.0.0.1:*; img-src 'self' data:; style-src 'self' 'unsafe-inline'">
+<title>Drift</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="stage"><canvas id="c"></canvas><canvas id="vbg"></canvas><video id="v" playsinline muted></video></div>
+<audio id="va"></audio>
+<div id="clock"></div>
+<div id="breath"><div class="ring"></div><span></span></div>
+<div id="toast"></div>
+<div id="algo"></div>
+
+<div id="panel">
+  <div id="content">
+    <section data-tab="scenes">
+      <div class="row head">
+        <h3>Scene</h3>
+        <div class="seg" id="mode">
+          <button data-v="span" title="One scene flowing across every monitor">Span</button>
+          <button data-v="mirror" title="The same scene repeated on each monitor">Mirror</button>
+          <button data-v="mix" title="A different scene per monitor — pick from the panel on each one">Mix</button>
+        </div>
+      </div>
+      <div id="tiles"></div>
+      <div class="row">
+        <h3>Colour</h3>
+        <div id="palettes"></div>
+      </div>
+      <div class="grid3">
+        <label>React to sound <output id="o-reactivity"></output><input type="range" id="reactivity" min="0" max="1" step="0.01"></label>
+        <label>Visualizer overlay
+          <select id="overlay"><option value="none">None</option><option value="bars">Spectrum bars</option><option value="wave">Waveform</option></select>
+        </label>
+        <label>Colour cycle speed
+          <select id="cycleSecs"><option value="10">Fast — every 10 s</option><option value="30">Every 30 s</option><option value="60">Every minute</option><option value="180">Every 3 minutes</option><option value="600">Every 10 minutes</option></select>
+        </label>
+      </div>
+      <div class="grid3">
+        <label>Speed <output id="o-speed"></output><input type="range" id="speed" min="0.1" max="3" step="0.05"></label>
+        <label>Brightness <output id="o-brightness"></output><input type="range" id="brightness" min="0.2" max="1.4" step="0.02"></label>
+        <label>Change scene automatically
+          <span class="inline">
+            <select id="autoCycle"><option value="0">Off</option><option value="1">Every minute</option><option value="5">Every 5 min</option><option value="10">Every 10 min</option><option value="30">Every 30 min</option></select>
+            <span class="chk"><input type="checkbox" id="cycleShuffle"><i></i>Shuffle</span>
+          </span>
+        </label>
+      </div>
+    </section>
+
+    <section data-tab="video">
+      <div class="vlib">
+        <aside>
+          <h3>Folders</h3>
+          <div id="vfolders"></div>
+          <button class="btn ghost" id="addVFolder">+ Add folder…</button>
+        </aside>
+        <div class="vmain">
+          <div class="row head">
+            <div id="vcrumb"></div>
+            <input type="search" id="vsearch" placeholder="Search this folder…" spellcheck="false">
+            <div class="row" style="margin:0">
+              <select id="videoLayout" title="Where the video goes">
+                <option value="each">Mirror on every screen</option>
+                <option value="span">Span across all screens</option>
+              </select>
+              <select id="videoFit" title="How the video is sized inside the screen">
+                <option value="auto">Auto fit</option>
+                <option value="contain">Fit — whole video, no cropping</option>
+                <option value="cover">Fill — crop the edges</option>
+                <option value="fill">Stretch</option>
+              </select>
+              <span class="chk"><input type="checkbox" id="videoSound"><i></i>Sound</span>
+              <button class="btn ghost" id="pickVideo">Open file…</button>
+              <button class="btn ghost" id="stopVideo">Stop video</button>
+            </div>
+          </div>
+          <div id="vgrid"></div>
+          <p class="note" id="vnote"></p>
+        </div>
+      </div>
+    </section>
+
+    <section data-tab="music">
+      <div class="cols">
+        <div>
+          <div class="row head">
+            <h3>Music</h3>
+            <div class="seg" id="source">
+              <button data-v="generative">Ambient</button>
+              <button data-v="files">My music</button>
+              <button data-v="spotify">Spotify</button>
+              <button data-v="off">Off</button>
+            </div>
+          </div>
+          <div id="presets"></div>
+          <div id="files">
+            <div class="chips" id="mfolders"></div>
+            <div class="row" style="margin-bottom:8px">
+              <div id="mcrumb"></div>
+              <input type="search" id="msearch" placeholder="Search this folder…" spellcheck="false">
+              <span class="chk"><input type="checkbox" id="shuffle"><i></i>Shuffle</span>
+              <button class="btn ghost" id="addFiles">Open files…</button>
+            </div>
+            <div id="playlist"></div>
+          </div>
+          <div id="spotify">
+            <div class="spnow"><span class="spdot"></span><div><b id="spTitle"></b><span id="spSub"></span></div></div>
+            <div class="row">
+              <button class="btn" id="spPrev" title="Previous song">⏮</button>
+              <button class="btn" id="spPlay">Play / pause</button>
+              <button class="btn" id="spNext" title="Next song">⏭</button>
+              <button class="btn ghost" id="spOpen">Open Spotify</button>
+            </div>
+            <p class="note">Drift drives the Spotify app on this PC, so choose songs and playlists in Spotify itself. The visuals react to whatever it plays. For loudness, use Spotify's own volume.</p>
+          </div>
+          <p class="note" id="offnote">Music is off. Nature sounds on the right still play.</p>
+        </div>
+        <div>
+          <label>Music volume <output id="o-volume"></output><input type="range" id="volume" min="0" max="1" step="0.01"></label>
+          <h3 class="sub">Nature sounds</h3>
+          <div class="grid2">
+            <label>Rain<input type="range" data-nature="rain" min="0" max="1" step="0.01"></label>
+            <label>Ocean waves<input type="range" data-nature="waves" min="0" max="1" step="0.01"></label>
+            <label>Wind<input type="range" data-nature="wind" min="0" max="1" step="0.01"></label>
+            <label>Fireplace<input type="range" data-nature="fire" min="0" max="1" step="0.01"></label>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section data-tab="settings">
+      <div class="cols">
+        <div>
+          <h3>Monitors</h3>
+          <div id="monitors"></div>
+          <p class="note">Turn a monitor off here to keep it free for other things.</p>
+          <div class="grid2">
+            <label>Render quality
+              <select id="quality"><option value="0.5">Light (best for 4K / laptops)</option><option value="0.75">Balanced</option><option value="1">Full resolution</option></select>
+            </label>
+            <label>Frame rate
+              <select id="fps"><option value="30">30 fps</option><option value="60">60 fps</option></select>
+            </label>
+          </div>
+        </div>
+        <div>
+          <h3>Extras</h3>
+          <div class="checks">
+            <span class="chk"><input type="checkbox" id="clock"><i></i>Show clock</span>
+            <span class="chk"><input type="checkbox" id="breathing"><i></i>Breathing guide</span>
+            <span class="chk"><input type="checkbox" id="keepAwake"><i></i>Keep screens awake</span>
+            <span class="chk"><input type="checkbox" id="onTop"><i></i>Stay above other windows</span>
+            <span class="chk"><input type="checkbox" id="algoInfo"><i></i>Algorithm captions</span>
+          </div>
+          <label>Sleep timer — fade out and close <output id="o-sleep"></output>
+            <select id="sleep"><option value="0">Off</option><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="45">45 minutes</option><option value="60">1 hour</option><option value="90">1.5 hours</option><option value="120">2 hours</option></select>
+          </label>
+          <p class="keys"><b>Esc</b> exit · <b>Tab</b> controls · <b>Space</b> play/pause · <b>← →</b> previous/next · <b>↑ ↓</b> volume · <b>P</b> colour · <b>C</b> clock · <b>B</b> breathing<br>Play, previous and next act on the selected tab: Scenes, Video or Music.</p>
+          <div class="row"><button class="btn ghost" id="reset">Reset everything</button></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="vbar">
+    <span id="vcur">0:00</span>
+    <input type="range" id="seek" min="0" max="1" step="0.01" value="0" title="Drag to move through the video">
+    <span id="vdur">0:00</span>
+  </div>
+  <div id="bar">
+    <div class="tabs">
+      <button data-tab="scenes">Scenes</button>
+      <button data-tab="video">Video</button>
+      <button data-tab="music">Music</button>
+      <button data-tab="settings">Settings</button>
+    </div>
+    <div class="quick">
+      <span id="ctxTag"></span>
+      <button class="icon" id="prevTrack" title="Previous (←)">⏮</button>
+      <button class="icon" id="play" title="Play / pause (Space)"></button>
+      <button class="icon" id="nextTrack" title="Next (→)">⏭</button>
+      <span id="nowName"></span>
+      <i class="sep"></i>
+      <button class="icon" id="vsound" title="Video sound on / off"></button>
+      <input type="range" id="qvol" min="0" max="1" step="0.01">
+      <i class="sep"></i>
+      <button class="icon exit" id="exit" title="Exit (Esc)">✕</button>
+    </div>
+  </div>
+</div>
+
+<script src="shaders.js"></script>
+<script src="sims.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

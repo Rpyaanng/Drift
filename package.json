@@ -1,0 +1,17 @@
+{
+  "name": "drift",
+  "productName": "Drift",
+  "version": "1.0.0",
+  "description": "Relaxing multi-monitor ambient visuals and soundscapes",
+  "main": "main.js",
+  "author": "Ryan Pang",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "package": "electron-packager . Drift --platform=win32 --arch=x64 --icon=icon.ico --overwrite --asar --out=dist --ignore=^/dist"
+  },
+  "devDependencies": {
+    "@electron/packager": "20.3.0",
+    "electron": "45.3.1"
+  }
+}

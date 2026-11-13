@@ -1,0 +1,5 @@
+node_modules/
+dist/
+Drift-win32-x64/
+ffmpeg.exe
+*.log
