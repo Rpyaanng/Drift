@@ -30,6 +30,13 @@
         <h3>Colour</h3>
         <div id="palettes"></div>
       </div>
+      <div id="customRow">
+        <label class="cc"><input type="color" data-i="0"><span>Background</span></label>
+        <label class="cc"><input type="color" data-i="1"><span>Shadows</span></label>
+        <label class="cc"><input type="color" data-i="2"><span>Main colour</span></label>
+        <label class="cc"><input type="color" data-i="3"><span>Highlights</span></label>
+        <button id="customDark" title="Pick only the main colour and let Drift choose the other three to match">Match to main colour</button>
+      </div>
       <div class="grid3">
         <label>React to sound <output id="o-reactivity"></output><input type="range" id="reactivity" min="0" max="1" step="0.01"></label>
         <label>Visualizer overlay
@@ -115,7 +122,7 @@
               <button class="btn" id="spNext" title="Next song">⏭</button>
               <button class="btn ghost" id="spOpen">Open Spotify</button>
             </div>
-            <p class="note">Drift drives the Spotify app on this PC, so choose songs and playlists in Spotify itself. The visuals react to whatever it plays. For loudness, use Spotify's own volume.</p>
+            <p class="note">Drift drives the Spotify app on this PC, so choose songs and playlists in Spotify itself. The visuals react to whatever it plays. <span id="spVolNote"></span></p>
           </div>
           <p class="note" id="offnote">Music is off. Nature sounds on the right still play.</p>
         </div>

@@ -11,7 +11,9 @@ const { packager } = require('@electron/packager');
 const root = path.resolve(__dirname, '..');
 const pkg = require(path.join(root, 'package.json'));
 const outDir = path.join(root, 'dev-build');
-const ffmpegExe = process.env.FFMPEG_EXE || '/home/claude/ff/ffmpeg.exe';
+// ffmpeg.exe is too big for git: keep a copy in vendor/ (ignored), or point FFMPEG_EXE at one.
+const ffmpegExe = [process.env.FFMPEG_EXE, path.join(root, 'vendor', 'ffmpeg.exe'), '/home/claude/ff/ffmpeg.exe']
+  .filter(Boolean).find((f) => fs.existsSync(f)) || path.join(root, 'vendor', 'ffmpeg.exe');
 
 function gitInfo() {
   try {
@@ -47,6 +49,7 @@ function gitInfo() {
       /^\/scripts(\/|$)/,
       /^\/\.githooks(\/|$)/,
       /^\/\.git(\/|$)/,
+      /^\/vendor(\/|$)/,
     ],
     quiet: true,
   });

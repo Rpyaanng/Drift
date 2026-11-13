@@ -31,6 +31,12 @@ window.SCENES = [
   { id: 'julia',      name: 'Julia Set',       group: 'algo' },
   { id: 'hilbert',    name: 'Hilbert Curve',   group: 'algo' },
   { id: 'voronoi',    name: 'Voronoi',         group: 'algo' },
+  { id: 'polyhedra',  name: 'Platonic Solids', group: '3d' },
+  { id: 'globe',      name: 'Wire Globe',      group: '3d' },
+  { id: 'tunnel',     name: 'Hex Tunnel',      group: '3d' },
+  { id: 'cubes',      name: 'Cube City',       group: '3d' },
+  { id: 'lattice',    name: 'Lattice',         group: '3d' },
+  { id: 'menger',     name: 'Menger Sponge',   group: '3d' },
 ];
 
 window.SHADER_VERT = `attribute vec2 a; void main(){ gl_Position = vec4(a, 0.0, 1.0); }`;
@@ -73,6 +79,7 @@ float beatRings(vec2 p, vec2 c, float speed){      // a soft ring expands from c
   }
   return s * uReact;
 }
+mat2 rot(float a){ float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }
 float sdSeg(vec2 p, vec2 a, vec2 b){ vec2 pa = p - a, ba = b - a; float h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-6), 0.0, 1.0); return length(pa - ba * h); }
 vec3 pal(float t){
   t = clamp(t, 0.0, 1.0) * 3.0;
@@ -494,5 +501,260 @@ vec3 scene(vec2 uv, vec2 p){
   col += pal(0.93) * smoothstep(0.07, 0.0, border) * (0.45 + 1.2 * uAudio.x);
   col += pal(0.98) * smoothstep(0.06, 0.0, d1) * (0.7 + uAudio.z);
   return col + pal(0.9) * beatRings(p, vec2(0.0), 0.5) * 0.3;
+}`,
+
+polyhedra: `
+// The five Platonic solids, intersected exactly (no ray marching): each is a set of face planes.
+vec4 faceN(int i, float k){
+  vec3 n = vec3(1.0, 0.0, 0.0); float ok = 1.0;
+  const float G = 1.618034, H = 0.618034;
+  if (k < 0.5 || (k > 1.5 && k < 2.5)){            // tetrahedron (4 planes) and octahedron (4 pairs)
+    if (i == 0) n = vec3(1.0, 1.0, 1.0); else if (i == 1) n = vec3(1.0, -1.0, -1.0); else if (i == 2) n = vec3(-1.0, 1.0, -1.0); else if (i == 3) n = vec3(-1.0, -1.0, 1.0); else ok = 0.0;
+  } else if (k < 1.5){                              // cube
+    if (i == 0) n = vec3(1.0, 0.0, 0.0); else if (i == 1) n = vec3(0.0, 1.0, 0.0); else if (i == 2) n = vec3(0.0, 0.0, 1.0); else ok = 0.0;
+  } else if (k < 3.5){                              // dodecahedron
+    if (i == 0) n = vec3(0.0, 1.0, G); else if (i == 1) n = vec3(0.0, 1.0, -G); else if (i == 2) n = vec3(1.0, G, 0.0); else if (i == 3) n = vec3(1.0, -G, 0.0);
+    else if (i == 4) n = vec3(G, 0.0, 1.0); else if (i == 5) n = vec3(-G, 0.0, 1.0); else ok = 0.0;
+  } else {                                          // icosahedron
+    if (i == 0) n = vec3(1.0, 1.0, 1.0); else if (i == 1) n = vec3(1.0, -1.0, -1.0); else if (i == 2) n = vec3(-1.0, 1.0, -1.0); else if (i == 3) n = vec3(-1.0, -1.0, 1.0);
+    else if (i == 4) n = vec3(0.0, H, G); else if (i == 5) n = vec3(0.0, H, -G); else if (i == 6) n = vec3(H, G, 0.0); else if (i == 7) n = vec3(H, -G, 0.0);
+    else if (i == 8) n = vec3(G, 0.0, H); else n = vec3(-G, 0.0, H);
+  }
+  return vec4(normalize(n), ok);
+}
+// distance from the nearest edge at surface point q, and which face it is on
+float edgeAt(vec3 q, float k, out float face){
+  float d1 = -1e5, d2 = -1e5; face = 0.0;
+  for (int i = 0; i < 10; i++){
+    vec4 f = faceN(i, k); if (f.w < 0.5) continue;
+    float v = dot(q, f.xyz), id = float(i);
+    if (k > 0.5){ if (v < 0.0) id += 10.0; v = abs(v); }
+    if (v > d1){ d2 = d1; d1 = v; face = id; } else if (v > d2) d2 = v;
+  }
+  return d1 - d2;
+}
+vec3 scene(vec2 uv, vec2 p){
+  float tiles = max(1.0, floor(uAspect / 1.6 + 0.5)), tw = uAspect / tiles;
+  float tx = (p.x + uAspect * 0.5) / tw, ti = floor(tx);
+  vec2 lp = vec2((fract(tx) - 0.5) * tw, p.y);
+  vec3 col = mix(uC0 * 0.7, uC0 * 1.15 + uC1 * 0.2, uv.y);
+  col += vec3(0.9, 0.95, 1.0) * stars(p, 30.0) * 0.5;
+  float seq = uTime / 26.0 + ti * 0.37, ph = fract(seq), k = mod(floor(seq) + ti * 2.0, 5.0);
+  float grow = smoothstep(0.0, 0.07, ph) * (1.0 - smoothstep(0.93, 1.0, ph));
+  float R = 0.42 * grow * (1.0 + 0.1 * uAudio.x * uReact + 0.05 * uBeat * uReact);
+  float r = R * (k < 0.5 ? 0.3333 : k < 2.5 ? 0.57735 : 0.79465);     // face distance for a fixed corner distance
+  vec3 ro = vec3(0.0, 0.0, -2.2), rd = normalize(vec3(lp, 1.6));
+  float a1 = uTime * 0.23 + ti * 1.7 + uATime * 0.15, a2 = uTime * 0.17 + ti;
+  ro.yz *= rot(a2); rd.yz *= rot(a2); ro.xz *= rot(a1); rd.xz *= rot(a1);
+  float tn = -1e5, tf = 1e5;
+  for (int i = 0; i < 10; i++){
+    vec4 f = faceN(i, k); if (f.w < 0.5) continue;
+    float a = dot(ro, f.xyz), b = dot(rd, f.xyz); if (abs(b) < 1e-5) b = 1e-5;
+    if (k < 0.5){ float t = (r - a) / b; if (b > 0.0) tf = min(tf, t); else tn = max(tn, t); }
+    else { float t1 = (-r - a) / b, t2 = (r - a) / b; tn = max(tn, min(t1, t2)); tf = min(tf, max(t1, t2)); }
+  }
+  float dc = length(cross(rd, ro));
+  col += pal(0.6) * exp(-max(dc - R * 0.8, 0.0) * 7.0) * 0.16 * grow * (1.0 + 2.0 * uBeat * uReact);
+  if (tf > tn && tn > 0.0 && grow > 0.01){
+    float ff, fb, w = 0.035 * R;
+    float ef = edgeAt(ro + rd * tn, k, ff), eb = edgeAt(ro + rd * tf, k, fb);
+    float tone = hash21(vec2(ff, k) + 3.1), toneB = hash21(vec2(fb, k) + 3.1);
+    col = mix(col, pal(0.3 + 0.45 * tone), 0.22);                         // glassy front face
+    col += pal(0.5 + 0.4 * tone) * spec(tone * 0.8) * 0.9;                 // each face listens to its own band
+    col += pal(0.45 + 0.4 * toneB) * spec(toneB * 0.8) * 0.35;
+    col += pal(0.7) * smoothstep(w, w * 0.25, eb) * 0.4;
+    col += pal(0.95) * smoothstep(w, w * 0.25, ef) * (0.9 + 1.4 * uAudio.x);
+    col += pal(0.85) * exp(-ef / w * 0.5) * 0.25;
+  }
+  return col;
+}`,
+
+globe: `
+vec3 scene(vec2 uv, vec2 p){
+  float tiles = max(1.0, floor(uAspect / 1.6 + 0.5)), tw = uAspect / tiles;
+  float tx = (p.x + uAspect * 0.5) / tw, ti = floor(tx);
+  vec2 lp = vec2((fract(tx) - 0.5) * tw, p.y);
+  vec3 col = mix(uC0 * 0.7, uC0 * 1.15 + uC1 * 0.2, uv.y);
+  col += vec3(0.9, 0.95, 1.0) * stars(p, 30.0) * 0.5;
+  vec3 ro = vec3(0.0, 0.0, -2.6), rd = normalize(vec3(lp, 1.6));
+  float R = 0.4 * (1.0 + 0.08 * uAudio.x * uReact + 0.04 * uBeat * uReact);
+  float b = dot(ro, rd), c = dot(ro, ro) - R * R, h = b * b - c, tFront = 1e5;
+  float rotY = uTime * 0.16 + ti * 2.1;
+  if (h > 0.0){
+    float sq = sqrt(h); tFront = -b - sq;
+    for (int s = 0; s < 2; s++){                 // back of the sphere first, then the front
+      vec3 q = ro + rd * (s == 0 ? -b + sq : -b - sq);
+      q.yz *= rot(0.42); q.xz *= rot(rotY);
+      float lat = asin(clamp(q.y / R, -1.0, 1.0)), lon = atan(q.z, q.x);
+      float dla = abs(fract(lat * 12.0 / 3.14159 + 0.5) - 0.5) * 3.14159 / 12.0;
+      float dlo = abs(fract(lon * 24.0 / 6.28318 + 0.5) - 0.5) * 6.28318 / 24.0 * cos(lat);
+      float w = 0.012, band = spec(abs(lat) / 1.5708 * 0.85);
+      float line = smoothstep(w, w * 0.3, min(dla, dlo)), dot2 = smoothstep(0.035, 0.01, length(vec2(dla, dlo)));
+      float gain = s == 0 ? 0.3 : 1.0;
+      col += (pal(0.55 + 0.35 * abs(lat) / 1.5708) * line * (0.5 + 2.2 * band) + pal(0.97) * dot2 * (0.6 + 2.0 * band)) * gain;
+    }
+    col += pal(0.5) * pow(1.0 - sq / R, 3.0) * 0.5;       // soft rim
+  }
+  float dc = length(cross(rd, ro));
+  col += pal(0.6) * exp(-max(dc - R, 0.0) * 9.0) * 0.14 * (1.0 + 2.0 * uBeat * uReact);
+  // a tilted ring of bars around it: a circular equaliser
+  vec3 n = vec3(0.0, 1.0, 0.0); n.yz *= rot(1.15 + 0.2 * sin(uTime * 0.11 + ti)); n.xy *= rot(0.35 * sin(uTime * 0.07 + ti * 1.3));
+  float dn = dot(rd, n);
+  if (abs(dn) > 1e-4){
+    float t = -dot(ro, n) / dn;
+    if (t > 0.0){
+      vec3 hp = ro + rd * t, e1 = normalize(cross(n, vec3(0.0, 0.0, 1.0))), e2 = cross(n, e1);
+      float rad = length(hp), fa = fract(atan(dot(hp, e2), dot(hp, e1)) / 6.28318 + uTime * 0.012);
+      float nb = 72.0, fb = fract(fa * nb), s = spec(abs(fract(floor(fa * nb) / nb + 0.5) * 2.0 - 1.0) * 0.9);
+      float r0 = R * 1.35, r1 = r0 + 0.03 + s * 0.3;
+      float bar = step(r0, rad) * step(rad, r1) * step(0.2, fb) * step(fb, 0.8);
+      float hidden = (h > 0.0 && t > tFront && rad < R) ? 0.0 : (h > 0.0 && t > tFront ? 0.4 : 1.0);
+      col += pal(0.5 + 0.45 * (rad - r0) / 0.33) * bar * hidden * (0.8 + s);
+    }
+  }
+  return col;
+}`,
+
+tunnel: `
+vec3 scene(vec2 uv, vec2 p){
+  vec2 c = p - 0.1 * vec2(sin(uTime * 0.13), 0.6 * cos(uTime * 0.17));
+  c.x /= pow(max(1.0, uAspect / 1.78), 0.75);          // across several monitors the tunnel becomes a wide corridor
+  float N = 6.0, seg = 6.28318 / N, a = atan(c.y, c.x) + uTime * 0.03;
+  float side = floor(a / seg), am = a - (side + 0.5) * seg;
+  float r = max(length(c) * cos(am) / cos(seg * 0.5), 1e-3);
+  float depth = 0.35 / r, z = depth + uTime * 0.45 + uATime * 0.5;
+  float zi = floor(z * 1.5), fz = fract(z * 1.5);
+  float pu = (am / seg + 0.5) * 3.0, pi = floor(pu), fu = fract(pu);
+  float hh = hash21(vec2(zi, mod(side, N) * 3.0 + pi) + 0.5);
+  float aa = 0.012 * depth + 0.01;
+  float frame = max(smoothstep(0.5 - 0.05 - aa, 0.5 - 0.02, abs(fz - 0.5)), smoothstep(0.5 - 0.04 - aa, 0.5 - 0.015, abs(fu - 0.5)));
+  float band = spec(fract(hh * 7.0) * 0.9);
+  float lit = step(0.45, hh) * (0.3 + 2.6 * band);
+  vec3 col = pal(0.1 + 0.1 * hh) * 0.5;
+  col += pal(0.3 + 0.55 * fract(hh * 3.0)) * lit * (1.0 - frame);
+  col += pal(0.9) * frame * (0.35 + 0.8 * uAudio.x);
+  float pulse = 0.0;
+  for (int i = 0; i < 4; i++){ float ag = uBeatAge[i]; pulse += exp(-pow((depth - ag * 5.0) * 0.9, 2.0)) * exp(-ag * 0.9) * step(ag, 5.0); }
+  col += pal(0.95) * pulse * uReact * (0.25 + 0.6 * frame);
+  col *= exp(-depth * 0.24);
+  col += pal(0.75) * exp(-r * 7.0) * (0.35 + 0.9 * uAudio.x);
+  return col;
+}`,
+
+cubes: `
+float colH(vec2 cell){
+  float h = hash21(cell + 0.5), h2 = hash21(cell * 1.7 + 9.3);
+  return 0.12 + 0.55 * h * h + 1.7 * spec(h2 * 0.9) + 0.12 * sin(uTime * 0.5 + cell.x * 0.7 + cell.y * 0.5);
+}
+vec3 scene(vec2 uv, vec2 p){
+  vec3 ro = vec3(0.5, 3.1, uTime * 0.55), rd = normalize(vec3(p.x, p.y - 0.02, 1.25));
+  rd.yz *= rot(0.36);
+  rd.xz *= rot(0.12 * sin(uTime * 0.05));
+  vec3 sky = mix(pal(0.32), uC0 * 0.6, smoothstep(-0.05, 0.45, rd.y));
+  sky += pal(0.8) * exp(-abs(rd.y) * 14.0) * (0.35 + 0.5 * uAudio.x);
+  sky += vec3(0.9, 0.95, 1.0) * stars(rd.xy / (abs(rd.z) + 0.3), 26.0) * step(0.0, rd.y) * 0.6;
+  if (rd.y > -0.01) return sky;
+  vec2 d2 = vec2(abs(rd.x) < 1e-4 ? 1e-4 : rd.x, abs(rd.z) < 1e-4 ? 1e-4 : rd.z);
+  vec2 cell = floor(ro.xz), stp = sign(d2), inv = 1.0 / abs(d2);
+  vec2 tMax = (cell + 0.5 + 0.5 * stp - ro.xz) / d2;
+  float t0 = 0.0, hitT = -1.0, hTop = 0.0; vec3 nrm = vec3(0.0, 1.0, 0.0); vec2 lastAxis = vec2(0.0);
+  for (int i = 0; i < 90; i++){
+    float t1 = min(tMax.x, tMax.y), hc = colH(cell);
+    float y0 = ro.y + rd.y * t0, y1 = ro.y + rd.y * t1;
+    if (y0 < hc){ hitT = t0; hTop = hc; nrm = vec3(-stp.x * lastAxis.x, 0.0, -stp.y * lastAxis.y); break; }
+    if (y1 < hc){ hitT = (hc - ro.y) / rd.y; hTop = hc; break; }
+    if (tMax.x < tMax.y){ tMax.x += inv.x; cell.x += stp.x; lastAxis = vec2(1.0, 0.0); }
+    else { tMax.y += inv.y; cell.y += stp.y; lastAxis = vec2(0.0, 1.0); }
+    t0 = t1;
+    if (t0 > 60.0) break;
+  }
+  if (hitT < 0.0) return sky;
+  vec3 q = ro + rd * hitT;
+  vec2 f = fract(q.xz) - 0.5;
+  float hh = hash21(cell * 1.7 + 9.3), lvl = spec(hh * 0.9);
+  vec3 base = pal(0.25 + 0.3 * hash21(cell + 0.5) + 0.35 * min(hTop / 2.4, 1.0)), col;
+  if (nrm.y > 0.5){
+    float e = max(abs(f.x), abs(f.y));
+    col = base * (0.5 + 2.2 * lvl) * (1.0 - smoothstep(0.4, 0.48, e)) + pal(0.95) * smoothstep(0.4, 0.47, e) * (0.3 + 1.5 * lvl);
+  } else {
+    float u = abs(nrm.x) > 0.5 ? f.y : f.x, top = hTop - q.y;
+    col = base * (abs(nrm.x) > 0.5 ? 0.3 : 0.2) * (0.45 + 0.55 * q.y / max(hTop, 0.01));
+    col += pal(0.95) * exp(-top * 16.0) * (0.25 + 1.5 * lvl);
+    col *= 1.0 - 0.6 * smoothstep(0.42, 0.5, abs(u));
+  }
+  col += pal(0.9) * beatRings(q.xz * 0.06, ro.xz * 0.06 + vec2(0.0, 0.5), 0.35) * 0.35;
+  return mix(sky, col, exp(-hitT * 0.045));
+}`,
+
+lattice: `
+// An endless cubic lattice of rods and nodes; each node listens to its own frequency band.
+float lnode(vec3 p){ vec3 id = floor(p + 0.5); return spec(hash21(id.xy + id.z * 7.31) * 0.9); }
+float lmap(vec3 p){
+  vec3 q = mod(p + 0.5, 1.0) - 0.5;
+  float rods = min(length(q.xy), min(length(q.yz), length(q.zx))) - 0.022 - 0.012 * uAudio.x * uReact;
+  return min(rods, length(q) - 0.085 - 0.09 * lnode(p));
+}
+vec3 scene(vec2 uv, vec2 p){
+  float z = uTime * 0.3 + uATime * 0.15;
+  vec3 ro = vec3(0.5 + 0.18 * sin(uTime * 0.07), 0.5 + 0.18 * cos(uTime * 0.09), z);
+  vec3 rd = normalize(vec3(p * rot(uTime * 0.03), 1.15));
+  rd.xz *= rot(0.45 * sin(uTime * 0.05)); rd.yz *= rot(0.3 * sin(uTime * 0.041));
+  float t = 0.0, glow = 0.0; bool hit = false;
+  for (int i = 0; i < 80; i++){
+    float d = lmap(ro + rd * t);
+    glow += exp(-d * 22.0) * 0.02;
+    if (d < 0.0008 * t + 0.0004){ hit = true; break; }
+    t += d * 0.95;
+    if (t > 16.0) break;
+  }
+  vec3 fog = mix(uC0 * 0.8, pal(0.16), 0.5), col = fog;
+  if (hit){
+    vec3 q = ro + rd * t, lq = mod(q + 0.5, 1.0) - 0.5; vec2 e = vec2(0.002, -0.002);
+    vec3 n = normalize(e.xyy * lmap(q + e.xyy) + e.yyx * lmap(q + e.yyx) + e.yxy * lmap(q + e.yxy) + e.xxx * lmap(q + e.xxx));
+    float diff = 0.25 + 0.75 * max(dot(n, -rd), 0.0), rim = pow(1.0 - max(dot(n, -rd), 0.0), 3.0);
+    float lvl = lnode(q), isNode = smoothstep(0.24, 0.12, length(lq));
+    col = mix(pal(0.4 + 0.25 * sin(q.z * 0.6)) * 0.55, pal(0.55 + 0.4 * lvl) * (0.7 + 3.0 * lvl), isNode) * diff;
+    col += pal(0.92) * rim * 0.6;
+    col += pal(0.97) * exp(-abs(fract(q.z * 0.25 - uTime * 0.1) - 0.5) * 30.0) * (0.3 + uBeat * uReact) * (1.0 - isNode);
+    col = mix(fog, col, exp(-t * 0.19));
+  }
+  return col + pal(0.7) * glow * (0.35 + 0.8 * uAudio.x);
+}`,
+
+menger: `
+float mmap(vec3 p){
+  float d = -1e5, s = 1.0;
+  for (int m = 0; m < 4; m++){
+    vec3 a = mod(p * s, 2.0) - 1.0; s *= 3.0;
+    vec3 r = abs(1.0 - 3.0 * abs(a));
+    float c = (min(max(r.x, r.y), min(max(r.y, r.z), max(r.z, r.x))) - 1.0) / s;
+    d = max(d, c);
+  }
+  return d;
+}
+vec3 scene(vec2 uv, vec2 p){
+  float z = uTime * 0.22 + uATime * 0.1;
+  vec3 ro = vec3(0.12 * sin(uTime * 0.11), 0.12 * cos(uTime * 0.09), z);
+  vec2 pr = p * rot(uTime * 0.04);
+  vec3 rd = normalize(vec3(pr, 1.2));
+  rd.xz *= rot(0.3 * sin(uTime * 0.06)); rd.yz *= rot(0.2 * sin(uTime * 0.045));
+  float t = 0.0, steps = 0.0; bool hit = false;
+  for (int i = 0; i < 72; i++){
+    float d = mmap(ro + rd * t);
+    if (d < 0.0006 * t + 0.0003){ hit = true; break; }
+    t += d; steps += 1.0;
+    if (t > 14.0) break;
+  }
+  vec3 fog = pal(0.1) * 0.35, col = fog;
+  if (hit){
+    vec3 q = ro + rd * t; vec2 e = vec2(0.0015, -0.0015);
+    vec3 n = normalize(e.xyy * mmap(q + e.xyy) + e.yyx * mmap(q + e.yyx) + e.yxy * mmap(q + e.yxy) + e.xxx * mmap(q + e.xxx));
+    float ao = 1.0 - steps / 72.0, diff = 0.3 + 0.7 * max(dot(n, -rd), 0.0);
+    float lvl = spec(fract(q.z * 0.25) * 0.9);
+    col = pal(0.3 + 0.3 * abs(n.x) + 0.15 * abs(n.y) + 0.2 * sin(q.z * 0.8)) * diff * ao * (0.9 + 1.5 * lvl);
+    col += pal(0.95) * exp(-abs(fract(q.z * 0.5 - uTime * 0.1) - 0.5) * 26.0) * (0.2 + 1.8 * lvl + 0.8 * uBeat * uReact) * ao;
+    col = mix(fog, col, exp(-t * 0.2));
+  }
+  return col + pal(0.75) * (steps / 72.0) * (steps / 72.0) * 0.35 * (0.6 + uAudio.x);
 }`,
 };

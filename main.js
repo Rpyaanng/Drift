@@ -30,6 +30,7 @@ const DEFAULTS = {
   overlay: 'none',
   cycleSecs: 30,
   algoInfo: true,
+  customColors: null,      // four '#rrggbb' colours once the user has made their own palette
   autoCycle: 0,            // minutes, 0 = off
   cycleShuffle: false,
   displaysOff: [],         // indices of monitors left alone
@@ -85,6 +86,10 @@ function loadSettings() {
     }
     if ((s.settingsVersion || 1) < 4 && state.reactivity === 0.5) state.reactivity = 0.7;   // sound reactions are stronger by default now
     state.settingsVersion = 4; state.video.paused = false;
+    const known = (id) => id === 'video' || SCENES.includes(id);
+    if (!known(state.scene)) state.scene = 'aurora';
+    for (const k of Object.keys(state.perDisplay || {})) if (!known(state.perDisplay[k])) delete state.perDisplay[k];
+    if (state.palette === 'custom' && !Array.isArray(state.customColors)) state.palette = 'aurora';
     state.video.folders = (state.video.folders || []).filter((p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } });
     state.music.playlist = (state.music.playlist || []).filter((p) => { try { return fs.existsSync(p); } catch { return false; } });
     if (state.music.source === 'files' && !state.music.playlist.length) state.music.source = 'generative';
@@ -173,7 +178,7 @@ function startAudioServer() {
 
 // ---- Spotify desktop app -------------------------------------------------------------------------
 // No account or API key: Drift presses the same media keys a keyboard has, and reads the song from Spotify's window title.
-let spotify = { status: process.platform === 'win32' ? 'closed' : 'unsupported', title: '' }, spotifyProc = null;
+let spotify = { status: process.platform === 'win32' ? 'closed' : 'unsupported', title: '', volMode: '', vol: 0 }, spotifyProc = null;
 const ps = (script, opts) => spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { windowsHide: true, ...opts });
 const SPOTIFY_WATCH = `
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -199,7 +204,11 @@ function spotifyWatch(on) {
     // Spotify's window says "Artist - Song" while playing and just "Spotify ..." when paused
     const next = kind === 'N' ? { status: 'closed', title: '' } : kind === 'R' ? { status: 'running', title: '' }
       : /^Spotify( |$)/i.test(t) ? { status: 'paused', title: '' } : { status: 'playing', title: t };
-    if (next.status !== spotify.status || next.title !== spotify.title) { spotify = next; pushState(); }
+    if (next.status !== spotify.status || next.title !== spotify.title) {
+      const started = next.status === 'playing' && spotify.status !== 'playing';
+      spotify = { ...spotify, ...next }; pushState();
+      if (started) setTimeout(() => spotifyVolSend('?'), 800);   // Spotify's mixer slot appears once it plays
+    }
   });
 }
 function spotifyDo(action) {
@@ -210,6 +219,91 @@ function spotifyDo(action) {
   if (spotify.status === 'closed') { shell.openExternal('spotify:').catch(() => {}); return; }
   const p = ps(`(New-Object -ComObject WScript.Shell).SendKeys([char]${key})`, { stdio: 'ignore' });
   p.on('error', () => {});
+}
+
+// Volume while Spotify is the music source. Drift turns down Spotify's own slot in the Windows volume mixer;
+// if Spotify has no slot there (it has not played anything yet), it changes the PC's main volume instead.
+const SPOTIFY_VOL = `
+$src = @'
+using System; using System.Runtime.InteropServices; using System.Diagnostics; using System.Globalization;
+namespace DriftAudio {
+[ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class MMDeviceEnumerator {}
+[Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IMMDeviceEnumerator { int NotImpl1(); [PreserveSig] int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice dev); }
+[Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IMMDevice { [PreserveSig] int Activate(ref Guid iid, int clsCtx, IntPtr p, [MarshalAs(UnmanagedType.IUnknown)] out object o); }
+[Guid("77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IAudioSessionManager2 { int NotImpl1(); int NotImpl2(); [PreserveSig] int GetSessionEnumerator(out IAudioSessionEnumerator e); }
+[Guid("E2F5BB11-0570-40CA-ACDD-3AA01277DEE8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IAudioSessionEnumerator { [PreserveSig] int GetCount(out int n); [PreserveSig] int GetSession(int i, out IAudioSessionControl2 s); }
+[Guid("bfb7ff88-7239-4fc9-8fa2-07c950be9c6d"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IAudioSessionControl2 { int f0(); int f1(); int f2(); int f3(); int f4(); int f5(); int f6(); int f7(); int f8(); int g0(); int g1(); [PreserveSig] int GetProcessId(out uint pid); }
+[Guid("87CE5498-68D6-44E5-9215-6DA47EF883D8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface ISimpleAudioVolume { [PreserveSig] int SetMasterVolume(float l, ref Guid ctx); [PreserveSig] int GetMasterVolume(out float l); }
+[Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IAudioEndpointVolume { int f0(); int f1(); int f2(); int f3(); [PreserveSig] int SetMasterVolumeLevelScalar(float l, ref Guid ctx); int f5(); [PreserveSig] int GetMasterVolumeLevelScalar(out float l); }
+public static class Vol {
+  public static string Apply(float v, bool set) {
+    IMMDevice d; ((IMMDeviceEnumerator)(new MMDeviceEnumerator())).GetDefaultAudioEndpoint(0, 1, out d);
+    Guid g = Guid.Empty; object o; int hit = 0; float cur = 0;
+    Guid iid = typeof(IAudioSessionManager2).GUID; d.Activate(ref iid, 23, IntPtr.Zero, out o);
+    IAudioSessionEnumerator en; ((IAudioSessionManager2)o).GetSessionEnumerator(out en); int n; en.GetCount(out n);
+    for (int i = 0; i < n; i++) {
+      try {
+        IAudioSessionControl2 c; en.GetSession(i, out c); uint pid; c.GetProcessId(out pid);
+        if (pid == 0 || Process.GetProcessById((int)pid).ProcessName.ToLowerInvariant() != "spotify") continue;
+        ISimpleAudioVolume sv = (ISimpleAudioVolume)c; if (set) sv.SetMasterVolume(v, ref g); sv.GetMasterVolume(out cur); hit++;
+      } catch { }
+    }
+    if (hit > 0) return "S|" + cur.ToString("0.000", CultureInfo.InvariantCulture);
+    iid = typeof(IAudioEndpointVolume).GUID; d.Activate(ref iid, 23, IntPtr.Zero, out o);
+    IAudioEndpointVolume ev = (IAudioEndpointVolume)o; if (set) ev.SetMasterVolumeLevelScalar(v, ref g); ev.GetMasterVolumeLevelScalar(out cur);
+    return "M|" + cur.ToString("0.000", CultureInfo.InvariantCulture);
+  }
+} }
+'@
+try { Add-Type -TypeDefinition $src } catch { [Console]::Out.WriteLine('E|type'); exit }
+[Console]::Out.WriteLine('READY|')
+while ($true) {
+  $l = [Console]::In.ReadLine(); if ($l -eq $null) { break }
+  try {
+    if ($l -eq '?') { [Console]::Out.WriteLine([DriftAudio.Vol]::Apply(0, $false)) }
+    else { [Console]::Out.WriteLine([DriftAudio.Vol]::Apply([single]::Parse($l, [System.Globalization.CultureInfo]::InvariantCulture), $true)) }
+  } catch { [Console]::Out.WriteLine('E|call') }
+}`;
+let volProc = null, volPoll = null, volSetAt = 0;
+function spotifyVolSend(line) { if (volProc && volProc.stdin.writable) { try { volProc.stdin.write(line + '\n'); } catch { /* gone */ } } }
+function spotifyVolWatch(on) {
+  if (process.platform !== 'win32') return;
+  if (!on) {
+    clearInterval(volPoll); volPoll = null;
+    if (volProc) { try { volProc.stdin.end(); volProc.kill(); } catch { /* gone */ } volProc = null; }
+    return;
+  }
+  if (volProc) return;
+  let buf = '';
+  const p = volProc = ps(SPOTIFY_VOL, { stdio: ['pipe', 'pipe', 'ignore'] });
+  const gone = () => { if (volProc === p) { volProc = null; clearInterval(volPoll); volPoll = null; if (spotify.volMode) { spotify = { ...spotify, volMode: '' }; pushState(); } } };
+  p.on('error', gone); p.on('close', gone); p.stdin.on('error', () => {});
+  p.stdout.setEncoding('utf8');
+  p.stdout.on('data', (d) => {
+    buf += d; const lines = buf.split(/\r?\n/); buf = lines.pop();
+    for (const line of lines) {
+      const kind = line[0], v = parseFloat(line.slice(2));
+      if (line.startsWith('READY')) { spotifyVolSend('?'); continue; }
+      if ((kind !== 'S' && kind !== 'M') || !(v >= 0)) continue;
+      const mode = kind === 'S' ? 'app' : 'system';
+      if (Date.now() - volSetAt < 1200 && mode === spotify.volMode) continue;     // don't fight the slider while it is being dragged
+      if (mode !== spotify.volMode || Math.abs(v - (spotify.vol || 0)) > 0.004) { spotify = { ...spotify, volMode: mode, vol: v }; pushState(); }
+    }
+  });
+  volPoll = setInterval(() => { if (Date.now() - volSetAt > 1200) spotifyVolSend('?'); }, 3000);   // follow changes made in Spotify or Windows
+}
+function spotifyVolSet(v) {
+  v = Math.max(0, Math.min(1, +v || 0));
+  if (!volProc || !spotify.volMode) return;
+  volSetAt = Date.now(); spotify = { ...spotify, vol: v };
+  spotifyVolSend(v.toFixed(3)); pushState();
 }
 
 function publicState() {
@@ -304,13 +398,14 @@ function applySideEffects(prev) {
       }, Math.max(0, state.sleepAt - Date.now() - 9000));
     }
   }
-  if (!prev || prev.music.source !== state.music.source) spotifyWatch(state.music.source === 'spotify');
+  if (!prev || prev.music.source !== state.music.source) { spotifyWatch(state.music.source === 'spotify'); spotifyVolWatch(state.music.source === 'spotify'); }
   // monitors on/off
   if (prev && JSON.stringify(prev.displaysOff) !== JSON.stringify(state.displaysOff)) rebuildSoon();
 }
 
 const SCENES = ['aurora', 'nebula', 'silk', 'water', 'stars', 'lava', 'ridges', 'ripples', 'mandala', 'bokeh', 'lines',
-  'sierpinski', 'sorting', 'life', 'maze', 'julia', 'hilbert', 'voronoi'];
+  'sierpinski', 'sorting', 'life', 'maze', 'julia', 'hilbert', 'voronoi',
+  'polyhedra', 'globe', 'tunnel', 'cubes', 'lattice', 'menger'];
 function stepScene(dir, shuffle, auto) {
   const next = (cur) => {
     if (auto && cur === 'video') return cur;   // auto-change never interrupts your video
@@ -342,6 +437,7 @@ function patch(p) {
       state.music = { ...state.music, ...p.music };
       if (p.music.nature) state.music.nature = { ...prev.music.nature, ...p.music.nature };
     } else if (k === 'perDisplay') state.perDisplay = { ...state.perDisplay, ...p.perDisplay };
+    else if (k === 'customColors') { if (Array.isArray(p[k]) && p[k].length === 4 && p[k].every((c) => /^#[0-9a-f]{6}$/i.test(c))) state.customColors = p[k].map((c) => c.toLowerCase()); }
     else if (k in DEFAULTS) state[k] = p[k];
   }
   if (allDisplays().every((d) => state.displaysOff.includes(d.index))) state.displaysOff = prev.displaysOff;
@@ -477,6 +573,7 @@ ipcMain.on('cmd', async (e, c) => {
       break;
     }
     case 'spotify': spotifyDo(c.action); break;
+    case 'spotify-volume': spotifyVolSet(c.value); break;
     case 'add-video-folder': {
       const r = await dialog.showOpenDialog(parent, { title: 'Add a video folder', properties: ['openDirectory'], defaultPath: app.getPath('videos') });
       if (!r.canceled && !state.video.folders.includes(r.filePaths[0])) patch({ video: { folders: [...state.video.folders, r.filePaths[0]] } });
@@ -563,7 +660,7 @@ else {
     if (SHOT_DIR) runShots();
   });
   app.on('window-all-closed', () => app.quit());
-  app.on('before-quit', () => { quitting = true; spotifyWatch(false); for (const k of audioKids) { try { k.kill(); } catch { /* gone */ } } try { fs.writeFileSync(settingsFile, JSON.stringify(state, null, 1)); } catch { /* ignore */ } });
+  app.on('before-quit', () => { quitting = true; spotifyWatch(false); spotifyVolWatch(false); for (const k of audioKids) { try { k.kill(); } catch { /* gone */ } } try { fs.writeFileSync(settingsFile, JSON.stringify(state, null, 1)); } catch { /* ignore */ } });
 }
 
 // ---- dev-only screenshot harness -------------------------------------------------
@@ -629,6 +726,22 @@ async function runShots() {
     await press("document.querySelector('#play').click()"); await wait(300);
     await press("document.querySelector('#nextTrack').click()"); await wait(1500); log.push(`scenes tab next: scene=${state.scene}`);
     await snap('ctx-scenes');
+  }
+  if (process.env.DRIFT_CUSTOM) {     // exercise the custom colour picker through the real UI
+    const wc = visWins[0].win.webContents;
+    patch({ scene: 'polyhedra', palette: 'sunset' });
+    wc.send('cmd', { type: 'show-panel', tab: 'scenes' }); await wait(1500);
+    await wc.executeJavaScript("document.querySelector('.sw.cus').click()"); await wait(600);
+    log.push('custom seeded: ' + state.palette + ' ' + JSON.stringify(state.customColors));
+    await wc.executeJavaScript("(() => { const el = document.querySelector('#customRow input[data-i=\"2\"]'); el.value = '#ff2d95'; el.dispatchEvent(new Event('input', { bubbles: true })); })()"); await wait(600);
+    log.push('custom edited: ' + JSON.stringify(state.customColors));
+    await wc.executeJavaScript("document.querySelector('#customDark').click()"); await wait(7000);
+    log.push('custom matched: ' + JSON.stringify(state.customColors));
+    patch({ customColors: ['red', '#000000', '#111111', '#222222'] }); log.push('bad input ignored: ' + JSON.stringify(state.customColors));
+    await wc.executeJavaScript("document.querySelector('#customRow').scrollIntoView({ block: 'center' })"); await wait(500);
+    await snap('custom-panel');
+    await wc.executeJavaScript("document.querySelector('#panel').classList.remove('show')"); await wait(800); await snap('custom-scene');
+    spotifyVolSet(0.5); log.push('spotify vol off-Windows: ' + JSON.stringify(spotify));
   }
   if (process.env.DRIFT_PANEL) {
     for (const tab of ['scenes', 'video', 'music', 'settings']) { visWins[0].win.webContents.send('cmd', { type: 'show-panel', tab }); await wait(tab === 'scenes' || tab === 'video' ? 6000 : 1500); await snap('panel-' + tab); }

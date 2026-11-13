@@ -8,7 +8,8 @@
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "dev-build": "node scripts/dev-build.js"
+    "dev-build": "node scripts/dev-build.js",
+    "prepare": "git config core.hooksPath .githooks || exit 0"
   },
   "devDependencies": {
     "@electron/packager": "^20.3.0",

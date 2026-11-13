@@ -111,12 +111,27 @@
   const PAL_IDS = Object.keys(PALETTES);
   const rgb = (id) => PALETTES[id].c.map(hex);
   function currentColors(at) {
+    if (S.palette === 'custom' && Array.isArray(S.customColors)) return S.customColors.map(hex);
     if (S.palette !== 'cycle') return rgb(PALETTES[S.palette] ? S.palette : 'aurora');
     const T = (at || Date.now()) / 1000 / Math.max(5, S.cycleSecs || 30), i = Math.floor(T), f = T - i;
     const a = rgb(PAL_IDS[i % PAL_IDS.length]), b = rgb(PAL_IDS[(i + 1) % PAL_IDS.length]);
     const k = f < 0.65 ? 0 : (x => x * x * (3 - 2 * x))((f - 0.65) / 0.35);
     return a.map((c, j) => c.map((v, n) => v + (b[j][n] - v) * k));
   }
+  const customNow = () => (Array.isArray(S.customColors) ? [...S.customColors] : [...PALETTES.aurora.c]);
+  function rgbToHsl([r, g, b]) {
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn;
+    if (!d) return [0, 0, l];
+    const s = d / (1 - Math.abs(2 * l - 1));
+    const h = mx === r ? ((g - b) / d + 6) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    return [h / 6, s, l];
+  }
+  function hslToHex(h, s, l) {
+    h = ((h % 1) + 1) % 1;
+    const f = (n) => { const k = (n + h * 12) % 12; return l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1)); };
+    return toHex([f(0), f(8), f(4)]);
+  }
+  let thumbTimer = 0;
   const toHex = (c) => '#' + c.map((v) => Math.round(v * 255).toString(16).padStart(2, '0')).join('');
 
   // caption for algorithm scenes (bottom-left of the leftmost screen in Span)
@@ -190,6 +205,8 @@
   // The toolbar's play / previous / next / volume act on whichever tab is selected: Scenes, Video or Music.
   let lastCtx = 'scene';
   const ctx = () => { if (tab !== 'settings') lastCtx = { scenes: 'scene', video: 'video', music: 'music' }[tab]; return lastCtx; };
+  const volIsSpotify = () => !volIsVideo() && S.music.source === 'spotify';
+  const volNow = () => (volIsVideo() ? S.video.volume : volIsSpotify() ? ((S.spotify || {}).vol || 0) : S.music.volume);
   const volIsVideo = () => (ctx() === 'video' ? true : ctx() === 'music' ? false : videoOn() && S.video.sound);
   function syncVideo() {
     const on = shown === 'video' && !!S.videoUrl;
@@ -293,8 +310,9 @@
   const tcan = document.createElement('canvas'); tcan.width = 256; tcan.height = 144;
   let TR = null, thumbPalette = null, thumbJob = 0;
   function makeThumbs() {
-    if (thumbPalette === S.palette) return;
-    thumbPalette = S.palette; const job = ++thumbJob;
+    const palKey = S.palette + (S.palette === 'custom' ? (S.customColors || []).join('') : '');
+    if (thumbPalette === palKey) return;
+    thumbPalette = palKey; const job = ++thumbJob;
     if (!TR) TR = makeRenderer(tcan, { preserveDrawingBuffer: true });
     if (!TR) return;
     const list = [...SCENES]; const cols = currentColors();
@@ -314,9 +332,11 @@
   let tab = 'scenes', hideTimer = null, overPanel = false;
   const tileHtml = (s) => { const i = SCENES.indexOf(s); return `<button class="tile" data-id="${s.id}"><kbd>${i < 9 ? i + 1 : ''}</kbd><span>${s.name}</span></button>`; };
   $('#tiles').innerHTML = `<div class="tilegrid">${SCENES.filter((s) => !s.group).map(tileHtml).join('')}</div>`
-    + `<h3 class="sub">Algorithms</h3><div class="tilegrid">${SCENES.filter((s) => s.group === 'algo').map(tileHtml).join('')}</div>`;
+    + `<h3 class="sub">Algorithms</h3><div class="tilegrid">${SCENES.filter((s) => s.group === 'algo').map(tileHtml).join('')}</div>`
+    + `<h3 class="sub">3D geometry</h3><div class="tilegrid">${SCENES.filter((s) => s.group === '3d').map(tileHtml).join('')}</div>`;
   $('#palettes').innerHTML = Object.entries(PALETTES).map(([id, p]) => `<button class="sw" data-id="${id}" title="${p.name}" style="background:linear-gradient(90deg,${p.c.join(',')})"></button>`).join('')
-    + `<button class="sw cyc" data-id="cycle" title="Cycle through every colour" style="background:linear-gradient(90deg,${Object.values(PALETTES).map((p) => p.c[2]).join(',')})">↻</button>`;
+    + `<button class="sw cyc" data-id="cycle" title="Cycle through every colour" style="background:linear-gradient(90deg,${Object.values(PALETTES).map((p) => p.c[2]).join(',')})">↻</button>`
+    + `<button class="sw cus" data-id="custom" title="Your own colours">✎</button>`;
   $('#presets').innerHTML = PRESETS.map((p) => `<button class="preset" data-id="${p.id}"><b>${p.name}</b><span>${p.desc}</span></button>`).join('');
   $('#monitors').innerHTML = init.displays.map((d) => `<button class="mon" data-i="${d.index}"><b>Monitor ${d.index + 1}</b>${d.width} × ${d.height}${d.index === me.index ? '<em>this screen</em>' : ''}</button>`).join('');
 
@@ -360,6 +380,10 @@
     $$('#content section').forEach((x) => x.classList.toggle('active', x.dataset.tab === tab));
     $$('.tile').forEach((x) => x.classList.toggle('active', x.dataset.id === cur));
     $$('.sw').forEach((x) => x.classList.toggle('active', x.dataset.id === S.palette));
+    const cc = customNow();
+    $('.sw.cus').style.background = `linear-gradient(90deg,${cc.join(',')})`;
+    $('#customRow').classList.toggle('on', S.palette === 'custom');
+    $$('#customRow input').forEach((el) => { if (document.activeElement !== el) el.value = cc[+el.dataset.i]; });
     $$('#mode button').forEach((x) => x.classList.toggle('active', x.dataset.v === S.mode));
     $$('#source button').forEach((x) => x.classList.toggle('active', x.dataset.v === S.music.source));
     $$('.preset').forEach((x) => x.classList.toggle('active', x.dataset.id === S.music.preset));
@@ -382,7 +406,8 @@
     $('.spnow').classList.toggle('live', sp.status === 'playing');
     $('#spTitle').textContent = sp.status === 'playing' ? sp.title : { paused: 'Spotify is paused', running: 'Spotify is running', closed: 'Spotify isn\'t open', unsupported: 'Spotify control needs Windows' }[sp.status];
     $('#spSub').textContent = sp.status === 'playing' ? 'Playing in Spotify' : sp.status === 'closed' ? 'Press Open Spotify, then start a song.' : sp.status === 'running' ? 'Open its window to see the song name here.' : sp.status === 'paused' ? 'Press play to continue.' : '';
-    $('#qvol').disabled = spOn && !volIsVideo(); $('#qvol').style.opacity = $('#qvol').disabled ? 0.35 : 1;
+    $('#qvol').disabled = volIsSpotify() && !sp.volMode; $('#qvol').style.opacity = $('#qvol').disabled ? 0.35 : 1;
+    $('#spVolNote').textContent = !spOn || sp.status === 'unsupported' ? '' : sp.volMode === 'app' ? 'The volume bar controls Spotify\'s own volume.' : sp.volMode === 'system' ? 'The volume bar controls your PC\'s main volume until Spotify starts playing.' : 'Volume control is starting…';
     $('#offnote').style.display = S.music.source === 'off' ? '' : 'none';
     const sc = SCENES.find((x) => x.id === cur);
     $('#videoFit').value = S.video.fit; $('#videoLayout').value = S.video.layout; $('#videoSound').checked = !!S.video.sound;
@@ -395,8 +420,8 @@
     panel.classList.toggle('hasvideo', videoOn());
     $('#vsound').style.display = videoOn() || ctx() === 'video' ? '' : 'none';
     $('#vsound').textContent = S.video.sound ? '🔊' : '🔇';
-    setVal($('#qvol'), volIsVideo() ? S.video.volume : S.music.volume);
-    $('#qvol').title = volIsVideo() ? 'Video volume' : 'Music volume';
+    setVal($('#qvol'), volNow());
+    $('#qvol').title = volIsVideo() ? 'Video volume' : !volIsSpotify() ? 'Music volume' : sp.volMode === 'app' ? 'Spotify volume' : sp.volMode === 'system' ? 'PC volume (Spotify is not playing yet)' : 'Spotify volume is not available';
     const c = ctx(), pr = PRESETS.find((x) => x.id === S.music.preset);
     $('#ctxTag').textContent = { scene: 'Scene', video: 'Video', music: 'Music' }[c];
     const playing = c === 'scene' ? !S.frozen : c === 'video' ? videoOn() && !S.video.paused : spOn ? sp.status === 'playing' : S.music.playing && S.music.source !== 'off';
@@ -526,7 +551,22 @@
   const P = (p) => api.patch(p);
   $$('.tabs button').forEach((x) => x.addEventListener('click', () => setTab(x.dataset.tab, true)));
   $('#tiles').addEventListener('click', (e) => { const t = e.target.closest('.tile'); if (!t) return; if (t.dataset.id === 'video' && !S.video.files.length) { api.cmd({ type: 'pick-video', key: me.key }); return; } P(S.mode === 'mix' ? { perDisplay: { [me.key]: t.dataset.id } } : { scene: t.dataset.id }); });
-  $('#palettes').addEventListener('click', (e) => { const t = e.target.closest('.sw'); if (t) P({ palette: t.dataset.id }); });
+  $('#palettes').addEventListener('click', (e) => {
+    const t = e.target.closest('.sw'); if (!t) return;
+    // the first time, Custom starts from the colours on screen right now
+    if (t.dataset.id === 'custom' && !Array.isArray(S.customColors)) P({ customColors: currentColors().map(toHex), palette: 'custom' });
+    else P({ palette: t.dataset.id });
+  });
+  let ccTimer = 0, ccPending = null;
+  const sendCustom = (cols) => { ccPending = cols; S.customColors = cols; if (!ccTimer) ccTimer = setTimeout(() => { ccTimer = 0; P({ customColors: ccPending, palette: 'custom' }); }, 60); };
+  $('#customRow').addEventListener('input', (e) => {
+    if (e.target.type !== 'color') return;
+    const cols = customNow(); cols[+e.target.dataset.i] = e.target.value; sendCustom(cols);
+  });
+  $('#customDark').addEventListener('click', () => {      // build a matching dark-to-light ramp from the main colour
+    const [h, s] = rgbToHsl(hex(customNow()[2]));
+    sendCustom([hslToHex(h, Math.min(s, 0.6), 0.05), hslToHex(h + 0.04, Math.min(1, s * 0.9), 0.22), customNow()[2], hslToHex(h - 0.06, Math.min(1, s + 0.1), 0.86)]);
+  });
   $('#cycleSecs').addEventListener('change', (e) => P({ cycleSecs: +e.target.value }));
   $('#overlay').addEventListener('change', (e) => P({ overlay: e.target.value }));
   $('#algoInfo').addEventListener('change', (e) => P({ algoInfo: e.target.checked }));
@@ -563,7 +603,7 @@
     else api.cmd({ type: 'play-videos', files: lib.videos.map((v) => v.path), index: +t.dataset.i, key: me.key });
   });
   $('#vcrumb').addEventListener('click', (e) => { if (e.target.closest('button') && lib && lib.parent) openDir(lib.parent); });
-  const setVol = (v) => P(volIsVideo() ? { video: { volume: v } } : { music: { volume: v } });
+  const setVol = (v) => { if (volIsSpotify()) { if ((S.spotify || {}).volMode) { S.spotify.vol = v; api.cmd({ type: 'spotify-volume', value: v }); } } else P(volIsVideo() ? { video: { volume: v } } : { music: { volume: v } }); };
   $('#qvol').addEventListener('input', (e) => { fill(e.target); setVol(+e.target.value); });
   $('#vsound').addEventListener('click', () => P({ video: { sound: !S.video.sound } }));
   const seekEl = $('#seek');
@@ -641,12 +681,13 @@
     else if (k === 'ArrowLeft') ctxStep(-1);
     else if (k === 'ArrowUp' || k === 'ArrowDown') {
       e.preventDefault();
-      const v = Math.max(0, Math.min(1, +((volIsVideo() ? S.video.volume : S.music.volume) + (k === 'ArrowUp' ? 0.05 : -0.05)).toFixed(2)));
+      if (volIsSpotify() && !(S.spotify || {}).volMode) return;
+      const v = Math.max(0, Math.min(1, +(volNow() + (k === 'ArrowUp' ? 0.05 : -0.05)).toFixed(2)));
       setVol(v); toast('Volume ' + Math.round(v * 100) + '%', 1200);
     }
     else if (k === ' ') { e.preventDefault(); ctxToggle(); }
     else if (k === 'n' || k === 'N') ctxStep(1);
-    else if (k === 'p' || k === 'P') { const ids = [...Object.keys(PALETTES), 'cycle']; const n = ids[(ids.indexOf(S.palette) + 1) % ids.length]; P({ palette: n }); toast(n === 'cycle' ? 'Colour cycle' : PALETTES[n].name, 1200); }
+    else if (k === 'p' || k === 'P') { const ids = [...Object.keys(PALETTES), 'cycle', ...(Array.isArray(S.customColors) ? ['custom'] : [])]; const n = ids[(ids.indexOf(S.palette) + 1) % ids.length]; P({ palette: n }); toast(n === 'cycle' ? 'Colour cycle' : n === 'custom' ? 'Your colours' : PALETTES[n].name, 1200); }
     else if (k === 'c' || k === 'C') P({ clock: !S.clock });
     else if (k === 'b' || k === 'B') P({ breathing: !S.breathing });
     else if (/^[1-9]$/.test(k) && SCENES[+k - 1] && ctx() === 'scene') P(S.mode === 'mix' ? { perDisplay: { [me.key]: SCENES[+k - 1].id } } : { scene: SCENES[+k - 1].id });
@@ -654,12 +695,12 @@
 
   // ---------- state sync ----------
   api.on('state', (ns) => {
-    const prevPal = S.palette;
+    const prevPal = S.palette + (S.customColors || []).join('');
     S = ns; resize();
     if (sceneFor(S) !== shown) setScene(sceneFor(S));
     syncVideo();
     syncUI();
-    if (prevPal !== S.palette && panel.classList.contains('open')) makeThumbs();
+    if (prevPal !== S.palette + (S.customColors || []).join('') && panel.classList.contains('open')) { clearTimeout(thumbTimer); thumbTimer = setTimeout(makeThumbs, S.palette === 'custom' ? 350 : 0); }
   });
   api.on('levels', (m) => {
     const l = Array.isArray(m) ? m : m.l;
