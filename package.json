@@ -4,14 +4,14 @@
   "version": "1.0.0",
   "description": "Relaxing multi-monitor ambient visuals and soundscapes",
   "main": "main.js",
-  "author": "Ryan Pang",
+  "author": "Ryan",
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "package": "electron-packager . Drift --platform=win32 --arch=x64 --icon=icon.ico --overwrite --asar --out=dist --ignore=^/dist"
+    "dev-build": "node scripts/dev-build.js"
   },
   "devDependencies": {
-    "@electron/packager": "20.3.0",
-    "electron": "45.3.1"
+    "@electron/packager": "^20.3.0",
+    "electron": "^45.3.1"
   }
 }

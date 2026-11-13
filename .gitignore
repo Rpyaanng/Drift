@@ -1,5 +1,7 @@
 node_modules/
+dev-build/
 dist/
-Drift-win32-x64/
-ffmpeg.exe
+*.zip
 *.log
+*.mkv
+*.exe

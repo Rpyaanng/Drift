@@ -35,24 +35,32 @@ npm install
 npm start
 ```
 
+### Building
+
+```sh
+npm run dev-build
+```
+
+This writes an unpacked (no asar) Windows x64 copy to `dev-build/Drift-win32-x64/`, with a
+`BUILD-INFO.txt` recording the commit it was built from. To rebuild automatically after every commit,
+turn on the included hook:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+The app isn't code-signed, so Windows SmartScreen will warn on first launch
+("More info" → "Run anyway").
+
 ### Video sound (ffmpeg)
 
 Converting Dolby / DTS audio needs `ffmpeg.exe`. It isn't in this repo (too large for GitHub).
-Drift looks for it in this order:
+Set `FFMPEG_EXE` to its path when you run `dev-build` and it is copied into the build's `resources`
+folder. At runtime Drift looks for it in this order:
 
 1. the path in the `DRIFT_FFMPEG` environment variable
 2. `resources/ffmpeg.exe` next to the packaged app
 3. `ffmpeg.exe` in the project folder
-
-### Building
-
-```sh
-npm run package
-```
-
-This writes `dist/Drift-win32-x64/`. Copy `ffmpeg.exe` into its `resources` folder before you share it.
-The app isn't code-signed, so Windows SmartScreen will warn on first launch
-("More info" → "Run anyway").
 
 ## License
 

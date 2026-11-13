@@ -1,0 +1,3 @@
+#!/bin/sh
+# Rebuild the Windows dev copy after every commit.
+node "$(git rev-parse --show-toplevel)/scripts/dev-build.js" || echo "post-commit: dev build failed (commit itself is kept)"
