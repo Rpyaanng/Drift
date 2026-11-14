@@ -6,6 +6,10 @@
   const init = await api.init();
   let S = init.state;
   const me = { key: init.key, index: init.index, bounds: init.bounds, union: init.union };
+  // Is this screen showing HDR right now? (Windows' HDR switch for this monitor.) The main process is told, and told again if it changes.
+  const hdrQuery = matchMedia('(dynamic-range: high)');
+  const myHdr = () => (init.fakeHdr ? init.fakeHdr === '1' : hdrQuery.matches);
+  const tellHdr = () => api.cmd({ type: 'hdr', on: myHdr() });
   const PRESETS = [
     { id: 'pads', name: 'Warm Pads', desc: 'Slow, soft chords' },
     { id: 'space', name: 'Deep Space', desc: 'Low drones, wide and dark' },
@@ -132,6 +136,8 @@
     return toHex([f(0), f(8), f(4)]);
   }
   let thumbTimer = 0;
+  // the controls take the palette's main colour, lifted when it is too dim to see on the panel (the Dark palette)
+  const accentHex = () => { const c = currentColors()[2], m = Math.max(...c, 0.001); return toHex(m < 0.6 ? c.map((v) => Math.min(1, v * 0.6 / m)) : c); };
   const toHex = (c) => '#' + c.map((v) => Math.round(v * 255).toString(16).padStart(2, '0')).join('');
 
   // caption for algorithm scenes (bottom-left of the leftmost screen in Span)
@@ -204,19 +210,31 @@
   const videoOn = () => sceneFor(S) === 'video' && !!S.videoUrl;
   // The toolbar's play / previous / next / volume act on whichever tab is selected: Scenes, Video or Music.
   let lastCtx = 'scene';
-  const ctx = () => { if (tab !== 'settings') lastCtx = { scenes: 'scene', video: 'video', music: 'music' }[tab]; return lastCtx; };
+  const ctx = () => { if (tab !== 'settings') lastCtx = { scenes: 'scene', video: 'video', music: 'music', share: 'video' }[tab]; return lastCtx; };
   const volIsSpotify = () => !volIsVideo() && S.music.source === 'spotify';
   const volNow = () => (volIsVideo() ? S.video.volume : volIsSpotify() ? ((S.spotify || {}).vol || 0) : S.music.volume);
   const volIsVideo = () => (ctx() === 'video' ? true : ctx() === 'music' ? false : videoOn() && S.video.sound);
+  // A video this screen can't show as it is (HDR on an SDR screen, a codec the player lacks, a smaller copy from a friend's PC)
+  // arrives converted, as a live stream that begins at S.xc.start. A stream can't be searched: every jump is a new stream.
+  const useX = () => { const x = S.xc || {}; return !!x.base && (x.all || (x.sdr && !myHdr())); };
+  let xOn = false, xStart = 0, xBehind = 0, holdTimer = 0, xSetAt = 0, lastTarget = 0, lastTSeq, lastTUrl = '';
+  video.addEventListener('loadeddata', () => { if (xOn && xSetAt) { api.cmd({ type: 'xc-started', ms: performance.now() - xSetAt }); xSetAt = 0; } });
+  const vTime = () => (xOn ? xStart : 0) + video.currentTime;
+  const vDur = () => { const d = (S.videoInfo || {}).dur || 0; return !xOn && isFinite(video.duration) && video.duration > 0 ? video.duration : d; };
+  // A friend's video comes over the network, where a jump takes a moment: aim ahead by about that long, then wait for the clock.
+  const far = () => (S.p2p || {}).role === 'guest' && !S.p2p.own;
+  let farLead = 0.8, farAt = 0;
+  video.addEventListener('seeked', () => { if (farAt) { farLead = Math.max(0.4, Math.min(6, (performance.now() - farAt) / 1000 * 1.25 + 0.2)); farAt = 0; } });
   function syncVideo() {
     const on = shown === 'video' && !!S.videoUrl;
     video.style.display = on ? 'block' : 'none';
     canvas.style.display = on ? 'none' : 'block';
     if (!on) { if (!video.paused) video.pause(); syncSound(false); vbg.style.display = 'none'; bgOn = false; return; }
-    if (curUrl !== S.videoUrl) { curUrl = S.videoUrl; video.src = S.videoUrl; seekHold = 0; }
+    const x = useX(), url = x ? `${S.xc.base}&t=${S.xc.start}&e=${S.xc.epoch}` : S.videoUrl;
+    if (curUrl !== url) { curUrl = url; xOn = x; xStart = x ? S.xc.start : 0; xBehind = 0; farAt = 0; video.src = url; seekHold = 0; xSetAt = x ? performance.now() : 0; }
     const lead = S.videoLeader === me.key;
-    video.loop = S.video.files.length === 1;
-    const converted = S.videoAudio && S.videoAudio.mode === 'transcode' && !!S.audioBase;
+    video.loop = !xOn && S.video.files.length === 1;
+    const converted = !xOn && S.videoAudio && S.videoAudio.mode === 'transcode' && !!S.audioBase;      // a converted stream carries its own sound
     video.muted = !(lead && S.video.sound) || converted;
     syncSound(lead && S.video.sound && converted);
     video.volume = S.video.volume;
@@ -233,16 +251,52 @@
     const b = me.bounds, U = me.union;
     const box = spanIt ? { left: U.x - b.x + 'px', top: U.y - b.y + 'px', width: U.width + 'px', height: U.height + 'px' } : { left: 0, top: 0, width: '100%', height: '100%' };
     Object.assign(video.style, box); Object.assign(vbg.style, box);
-    const playing = !S.video.paused;
+    const playing = !S.video.paused, now = performance.now(), dur = vDur();
     let target = playing ? (Date.now() - S.vclock.startedAt) / 1000 : S.vclock.pos;
-    if (!playing) { if (!video.paused) video.pause(); } else if (video.paused && !video.ended) video.play().catch(() => {});
-    const dur = video.duration;
-    if (!dur || !isFinite(dur)) return;
-    if (video.loop) target %= dur; else if (target >= dur) return;         // clip finished: wait for the next one
-    const drift = video.currentTime - target, now = performance.now();
-    if (Math.abs(drift) > 0.3 && Math.abs(drift) < dur - 0.3) { if (now > seekHold) { video.currentTime = target; seekHold = now + 2000; } video.playbackRate = 1; }
-    else video.playbackRate = Math.abs(drift) > 0.012 && Math.abs(drift) < 1 ? Math.max(0.94, Math.min(1.06, 1 - drift * 0.6)) : 1;
+    const early = playing && target < 0;        // the clock is being held back a moment so every screen (and friend) starts together
+    if (early) target = 0;
+    if (S.video.files.length === 1 && dur > 1) target %= dur;       // a single video loops
+    let hold = early, rate = 1, drift = 0;
+    if (xOn) {
+      drift = vTime() - target;
+      if (playing && drift > 0.06) hold = true;                                    // ready before the clock got there: wait for it
+      else if (playing && Math.abs(drift) > 0.012) rate = Math.max(0.94, Math.min(1.12, 1 - drift * 0.5));
+      const looped = playing && S.video.files.length === 1 && lastTarget - target > 1 && lastTSeq === S.vclock.seq && lastTUrl === curUrl;      // a single video went back to its start
+      xBehind = playing && (drift < -3 || drift > 9) ? (xBehind || now) : 0;
+      if (looped || (xBehind && now - xBehind > 2500)) { xBehind = 0; api.cmd({ type: 'xc-trouble', index: S.video.index }); }     // can't catch up: ask for a stream that starts from here
+    } else if (isFinite(video.duration) && video.duration > 0 && (video.loop || target < video.duration)) {      // (past the end: wait for the next one)
+      const d = video.duration;
+      drift = video.currentTime - target;
+      if (Math.abs(drift) > 0.3 && Math.abs(drift) < d - 0.3) {
+        if (far() && playing && drift > 0 && drift < 6 && !video.seeking) hold = true;
+        else if (now > seekHold) {
+          const lead2 = far() && playing ? farLead : 0;
+          video.currentTime = Math.min(Math.max(0, d - 0.2), target + lead2); seekHold = now + (lead2 ? 5000 : 2000); farAt = lead2 ? now : 0;
+        }
+      } else if (Math.abs(drift) > 0.012 && Math.abs(drift) < 1) rate = Math.max(0.94, Math.min(1.06, 1 - drift * 0.6));
+    }
+    lastTarget = target; lastTSeq = S.vclock.seq; lastTUrl = curUrl;
+    if (!playing || hold) { if (!video.paused) video.pause(); } else if (video.paused && !video.ended) video.play().catch(() => {});
+    video.playbackRate = rate;
+    clearTimeout(holdTimer);
+    if (hold && !early && drift < 0.3) holdTimer = setTimeout(syncVideo, Math.max(10, drift * 1000));      // start again exactly when the clock arrives
   }
+  // Watching with a friend: tell their PC when this one has loaded enough to play, so it can wait for us (or carry on).
+  let rdySent = '', rdyBadAt = 0;
+  function reportReady() {
+    const p = S.p2p || {};
+    if (p.role !== 'guest' || p.status !== 'connected') { rdySent = ''; return; }
+    const on = shown === 'video' && !!S.videoUrl;
+    if (on ? S.videoLeader !== me.key : me.index !== init.displays.filter((d) => !S.displaysOff.includes(d.index)).map((d) => d.index)[0]) return;     // one window speaks for this PC
+    let ahead = 0; const t = video.currentTime, b = video.buffered;
+    for (let i = 0; i < b.length; i++) if (b.start(i) <= t + 0.1 && b.end(i) > t) ahead = b.end(i) - t;
+    const ok = !on || (!video.seeking && (video.readyState === 4 || (video.readyState >= 3 && ahead > 1.2)));
+    const key = p.file + '|' + ok, now = performance.now();
+    if (key === rdySent) { rdyBadAt = 0; return; }
+    if (!ok && rdySent.startsWith(p.file + '|')) { if (!rdyBadAt) rdyBadAt = now; if (now - rdyBadAt < 900) return; }     // a brief hiccup isn't worth pausing everyone for
+    rdySent = key; rdyBadAt = 0; api.cmd({ type: 'share-ready', ok });
+  }
+  setInterval(reportReady, 400);
   // Sound track the built-in player can't decode: play the converted stream from the main process alongside the picture.
   const vaud = $('#va');
   let vaOffset = 0, vaUrl = '', vaHold = 0, vaSeq;
@@ -296,7 +350,7 @@
     const spanIt = S.mode === 'span' && S.video.layout === 'span';
     let html = '', top = false;
     if (shown === 'video' && S.videoUrl && info.sel && cues.length && (!spanIt || subMine())) {
-      const t = video.currentTime - (info.offset || 0);
+      const t = vTime() - (info.offset || 0);
       let lo = 0, hi = cues.length - 1, at = -1;
       while (lo <= hi) { const mid = (lo + hi) >> 1; if (cues[mid].s <= t) { at = mid; lo = mid + 1; } else hi = mid - 1; }
       const live = [];
@@ -313,17 +367,22 @@
   setInterval(checkSilent, 1000);
   setInterval(syncVideo, 250);
   video.addEventListener('loadedmetadata', syncVideo);
-  video.addEventListener('ended', () => { if (S.videoLeader === me.key) api.cmd({ type: 'video-next', index: S.video.index }); });
+  video.addEventListener('ended', () => {
+    if (xOn && vDur() - vTime() > 4) { api.cmd({ type: 'xc-trouble', index: S.video.index, hard: true }); return; }      // the converted stream stopped short
+    if (S.videoLeader === me.key) api.cmd({ type: 'video-next', index: S.video.index, stream: xOn });
+  });
   video.addEventListener('error', () => {
-    if (!video.getAttribute('src') || S.videoLeader !== me.key) return;
-    toast('That video can\'t be played here — MP4 (H.264) or WebM work best.', 6000);
-    api.cmd({ type: 'video-next', index: S.video.index, failed: true });
+    if (!video.getAttribute('src')) return;
+    if (xOn) { api.cmd({ type: 'xc-trouble', index: S.video.index, hard: true }); return; }
+    const code = (video.error || {}).code;
+    if (far() && (code === 2 || (S.p2p || {}).status !== 'connected')) { setTimeout(() => { curUrl = ''; syncVideo(); }, 2000); return; }     // the connection dropped: try again shortly
+    if (S.videoLeader === me.key) api.cmd({ type: 'video-failed', index: S.video.index });       // the main process converts it if it can, or moves on
   });
 
   // ---------- overlays ----------
   const U = me.union, cx = U.x + U.width / 2, cy = U.y + U.height / 2, b = me.bounds;
   const isCenter = cx >= b.x && cx < b.x + b.width && cy >= b.y && cy < b.y + b.height;
-  const clockEl = $('#clock'), breathEl = $('#breath'), ring = $('#breath .ring'), breathTxt = $('#breath span');
+  const clockEl = $('#clockFace'), breathEl = $('#breath'), ring = $('#breath .ring'), breathTxt = $('#breath span');
   const ease = (x) => x * x * (3 - 2 * x);
   let lastClock = '', accentAt = 0;
   function tickOverlays() {
@@ -343,13 +402,13 @@
       ring.style.transform = `scale(${0.45 + 0.55 * k})`;
       if (breathTxt.textContent !== label) breathTxt.textContent = label;
     }
-    if (panel.classList.contains('show') && videoOn() && isFinite(video.duration) && video.duration > 0) {
-      const sk = $('#seek');
-      sk.max = video.duration;
-      if (!seeking) { sk.value = video.currentTime; $('#vcur').textContent = clockStr(video.currentTime); }
-      fill(sk); $('#vdur').textContent = clockStr(video.duration);
+    if (panel.classList.contains('show') && videoOn() && vDur() > 0) {
+      const sk = $('#seek'), at = Math.min(vDur(), vTime());
+      sk.max = vDur();
+      if (!seeking) { sk.value = at; $('#vcur').textContent = clockStr(at); }
+      fill(sk); $('#vdur').textContent = clockStr(vDur());
     }
-    if (S.palette === 'cycle' && performance.now() - accentAt > 500) { accentAt = performance.now(); document.documentElement.style.setProperty('--accent', toHex(currentColors()[2])); }
+    if (S.palette === 'cycle' && performance.now() - accentAt > 500) { accentAt = performance.now(); document.documentElement.style.setProperty('--accent', accentHex()); }
     const sl = $('#o-sleep');
     if (S.sleepAt > Date.now()) { const m = Math.ceil((S.sleepAt - Date.now()) / 60000); sl.textContent = m + ' min left'; } else if (sl.textContent) sl.textContent = '';
   }
@@ -375,11 +434,23 @@
     step();
   }
 
+  // ---------- "Close Drift?" ----------
+  // Esc, the ✕ button and Alt+F4 all ask first. Enter closes, Esc (or a click outside) stays.
+  const confirmEl = $('#confirm');
+  function askQuit() {
+    const p = S.p2p || {}, n = (p.peers || []).length;
+    $('#confirmNote').textContent = p.role === 'host' && n ? `${n === 1 ? p.peers[0].name : n + ' friends'} will stop seeing your video.`
+      : p.role === 'guest' ? `You'll leave ${p.host || 'your friend'}'s video.` : 'Your settings are saved for next time.';
+    confirmEl.classList.add('on'); $('#confirmYes').focus();
+  }
+  function closeAsk() { confirmEl.classList.remove('on'); document.activeElement?.blur(); }
+
   // ---------- panel ----------
   const panel = $('#panel');
   let tab = 'scenes', hideTimer = null, overPanel = false;
   const tileHtml = (s) => { const i = SCENES.indexOf(s); return `<button class="tile" data-id="${s.id}"><kbd>${i < 9 ? i + 1 : ''}</kbd><span>${s.name}</span></button>`; };
   $('#tiles').innerHTML = `<div class="tilegrid">${SCENES.filter((s) => !s.group).map(tileHtml).join('')}</div>`
+    + `<h3 class="sub">Landscapes</h3><div class="tilegrid">${SCENES.filter((s) => s.group === 'land').map(tileHtml).join('')}</div>`
     + `<h3 class="sub">Algorithms</h3><div class="tilegrid">${SCENES.filter((s) => s.group === 'algo').map(tileHtml).join('')}</div>`
     + `<h3 class="sub">3D geometry</h3><div class="tilegrid">${SCENES.filter((s) => s.group === '3d').map(tileHtml).join('')}</div>`
     + `<h3 class="sub">Mathematical geometry</h3><div class="tilegrid">${SCENES.filter((s) => s.group === 'geo').map(tileHtml).join('')}</div>`;
@@ -413,7 +484,7 @@
     if (Math.abs(e.screenX - lastMove[0]) + Math.abs(e.screenY - lastMove[1]) < 4) return;   // ignore jitter
     lastMove = [e.screenX, e.screenY]; showPanel();
   });
-  addEventListener('mousedown', (e) => { if (!panel.contains(e.target)) { if (panel.classList.contains('open')) { panel.classList.remove('open'); } else showPanel(); } });
+  addEventListener('mousedown', (e) => { if (!panel.contains(e.target) && !confirmEl.contains(e.target)) { if (panel.classList.contains('open')) { panel.classList.remove('open'); } else showPanel(); } });
 
   const fill = (el) => el.style.setProperty('--fill', ((el.value - el.min) / (el.max - el.min)) * 100 + '%');
   const setVal = (el, v) => { if (document.activeElement !== el || el.tagName !== 'INPUT') { el.value = v; } if (el.type === 'range') fill(el); };
@@ -421,7 +492,7 @@
   let plKey = '';
 
   function syncUI() {
-    document.documentElement.style.setProperty('--accent', toHex(currentColors()[2]));
+    document.documentElement.style.setProperty('--accent', accentHex());
     $('#cycleSecs').value = String(S.cycleSecs); $('#cycleSecs').disabled = S.palette !== 'cycle';
     $('#overlay').value = S.overlay; $('#algoInfo').checked = !!S.algoInfo;
     const cur = sceneFor(S);
@@ -461,12 +532,15 @@
     const sc = SCENES.find((x) => x.id === cur);
     $('#videoFit').value = S.video.fit; $('#videoLayout').value = S.video.layout; $('#videoSound').checked = !!S.video.sound;
     $('#stopVideo').style.display = cur === 'video' ? '' : 'none';
-    const va = S.videoAudio || {};
-    syncSubUI();
-    $('#vnote').textContent = !videoOn() ? 'Pick a video to play it on your monitors. Videos in the same folder play one after another.'
-      : va.ffmpeg === false ? `Now playing: ${S.videoName} — this copy of Drift is missing ffmpeg.exe, so Dolby / DTS sound can't be converted and subtitles stored inside a video can't be read. Put ffmpeg.exe in Drift's "resources" folder and restart.`
-      : va.mode === 'transcode' ? `Now playing: ${S.videoName} — its ${va.codec.toUpperCase().replace('EAC3', 'Dolby Digital Plus (E-AC-3)').replace(/^AC3$/, 'Dolby Digital (AC-3)')} sound is being converted live so you can hear it.`
-      : va.mode === 'none' ? `Now playing: ${S.videoName} — this file has no audio track.` : `Now playing: ${S.videoName}`;
+    const va = S.videoAudio || {}, vi = S.videoInfo || {}, pp = S.p2p || {}, guest = pp.role === 'guest';
+    syncSubUI(); syncShareUI(); syncConvertUI();
+    const from = guest ? ` (shared by ${pp.host || 'a friend'})` : '';
+    $('#vnote').textContent = !videoOn() ? (guest ? `${pp.host || 'Your friend'} isn't playing a video right now.` : 'Pick a video to play it on your monitors. Videos in the same folder play one after another.')
+      : useX() ? `Now playing: ${S.videoName}${from} — ${pp.viaHost ? `${pp.host}'s PC is sending a ${pp.quality === 'original' ? 'converted' : pp.quality + 'p'} copy.`
+        : vi.hdr && !vi.force ? 'this HDR video is being converted to SDR for this screen.' : vi.hdr ? 'it is being converted (HDR to SDR) so it can play here.' : 'the built-in player can\'t play this format, so it is being converted live.'}`
+      : va.ffmpeg === false && !guest ? `Now playing: ${S.videoName} — this copy of Drift is missing ffmpeg.exe, so Dolby / DTS sound and HDR video can't be converted and subtitles stored inside a video can't be read. Put ffmpeg.exe in Drift's "resources" folder and restart.`
+      : va.mode === 'transcode' && va.ffmpeg !== false ? `Now playing: ${S.videoName}${from} — its ${va.codec.toUpperCase().replace('EAC3', 'Dolby Digital Plus (E-AC-3)').replace(/^AC3$/, 'Dolby Digital (AC-3)')} sound is being converted live so you can hear it.`
+      : va.mode === 'none' ? `Now playing: ${S.videoName}${from} — this file has no audio track.` : `Now playing: ${S.videoName}${from}${pp.own ? ' — playing your own copy of this file.' : ''}`;
     renderFolders(); markPlaying();
     panel.classList.toggle('hasvideo', videoOn());
     $('#vsound').style.display = videoOn() || ctx() === 'video' ? '' : 'none';
@@ -482,6 +556,67 @@
       : spOn ? (sp.title || 'Spotify') : S.music.source === 'off' ? 'Music off' : S.music.source === 'files' ? (S.nowPlaying.title || 'My music') : (pr ? pr.name : '');
     $('#nowName').title = $('#nowName').textContent;
     renderMusicLib();
+  }
+
+  // ---------- watch together: the Together tab ----------
+  const QNAME = { original: 'Original', 1080: '1080p', 720: '720p', 480: '480p' };
+  function syncShareUI() {
+    const p = S.p2p || { role: 'off', peers: [] }, sh = S.share || {}, peers = p.peers || [], n = peers.length;
+    $('#shOff').style.display = p.role === 'off' ? '' : 'none';
+    $('#shHost').style.display = p.role === 'host' ? '' : 'none';
+    $('#shGuest').style.display = p.role === 'guest' ? '' : 'none';
+    $('.tabs button[data-tab="share"]').classList.toggle('live', p.role !== 'off');
+    $('#shNote').textContent = p.note || '';
+    if (p.role === 'host') {
+      const wait = p.waitingFor || [];
+      $('#shHost .spnow').classList.toggle('live', p.status === 'ready');
+      $('#shTitle').textContent = p.status !== 'ready' ? 'Starting…' : wait.length ? `Paused while ${wait.join(' and ')} ${wait.length > 1 ? 'load' : 'loads'}…`
+        : n ? `Sharing with ${n === 1 ? peers[0].name : n + ' friends'}` : 'Sharing — waiting for friends to join';
+      $('#shSub').textContent = p.settling ? 'Getting your invite code ready…' : (p.reach === 'internet' ? 'Friends anywhere can join with this code.' : 'Friends on your network can join with this code.')
+        + (videoOn() ? '' : ' Play a video and they will see it too.');
+      const shown = p.settling ? '' : p.code || '';
+      if ($('#shCodeOut').textContent !== shown) $('#shCodeOut').textContent = shown;
+      $('#shCopy').style.opacity = p.settling ? 0.4 : 1; $('#shCopy').style.pointerEvents = p.settling ? 'none' : '';
+      $('#shCopy').textContent = p.settling ? 'Preparing…' : 'Copy invite code';
+    } else if (p.role === 'guest') {
+      const live = p.status === 'connected';
+      $('#shGuest .spnow').classList.toggle('live', live);
+      $('#shGTitle').textContent = live ? `Watching with ${p.host || 'a friend'}` : p.status === 'reconnecting' ? 'Connection lost — trying again…' : 'Connecting…';
+      $('#shGSub').textContent = !live ? '' : !S.videoName ? `${p.host || 'Your friend'} isn't playing a video right now.`
+        : S.videoName + (p.own ? ' · playing your own copy of this file' : p.viaHost ? ` · ${p.quality === 'original' ? 'converted' : p.quality + 'p'} from ${p.host}'s PC` : '') + (p.ctrl ? '' : ` · only ${p.host} can control it`);
+    }
+    const pk = p.role + '|' + peers.map((x) => x.name + (x.ready ? 1 : 0)).join('|');
+    if (pk !== peopleKey) {
+      peopleKey = pk;
+      $('#shPeople').innerHTML = p.role === 'off' || !n ? '' : '<h3 class="sub">Watching</h3>' + peers.map((x) => `<div class="who${x.ready ? ' ok' : ''}"><span class="spdot"></span>${esc(x.name)}<em>${x.ready ? '' : 'loading…'}</em></div>`).join('');
+    }
+    const nm = $('#shName');
+    nm.placeholder = p.defaultName || 'Your name';
+    if (document.activeElement !== nm) nm.value = sh.name || '';
+    $('#shControl').checked = !!sh.control; $('#shWait').checked = !!sh.wait; $('#shInternet').checked = !!sh.internet;
+    $('#shQuality').value = sh.quality || 'original';
+    $('#shQNote').textContent = p.role === 'guest' && sh.quality !== p.quality ? `${p.host || 'Your friend'} is sending ${QNAME[p.quality] || p.quality} at most.` : '';
+  }
+  let peopleKey = '';
+  // ---------- video conversion: the box in Settings ----------
+  let encKey = null;
+  function syncConvertUI() {
+    const v = S.video, encs = S.encoders || [], vi = S.videoInfo || {}, va = S.videoAudio || {};
+    const key = encs.map((x) => x.id).join('|');
+    if (key !== encKey) {
+      encKey = key;
+      const auto = encs.find((x) => x.auto);
+      $('#vEnc').innerHTML = `<option value="auto">Automatic${auto ? ' (' + esc(auto.label) + ')' : ''}</option>` + encs.map((x) => `<option value="${esc(x.id)}">${esc(x.label)}</option>`).join('');
+    }
+    $('#vEnc').value = encs.some((x) => x.id === v.enc) ? v.enc : 'auto';
+    $('#vHdr').value = v.hdr || 'auto'; $('#vTone').value = v.tone || 'hable'; $('#vXq').value = String(v.xq || 'auto');
+    const off = va.ffmpeg === false;
+    for (const id of ['#vHdr', '#vTone', '#vEnc', '#vXq']) $(id).disabled = off;
+    $('#xcNote').textContent = off ? 'Converting video needs ffmpeg.exe, which this copy of Drift is missing. Put it in Drift\'s "resources" folder and restart.'
+      : (S.canTonemap === false ? 'This copy of ffmpeg can\'t convert HDR (it was built without the zscale and libplacebo filters). ' : '')
+        + `This screen is ${myHdr() ? 'showing HDR, so HDR videos play as they are' : 'not showing HDR'}.`
+        + (videoOn() && vi.hdr ? ` The video playing now is HDR${vi.dv ? ' (Dolby Vision)' : vi.hdr === 'hlg' ? ' (HLG)' : ''}${useX() ? ' and is being converted for this screen.' : '.'}` : videoOn() && useX() ? ' The video playing now is being converted.' : '')
+        + ' Drift also converts videos in formats the built-in player can\'t play.';
   }
 
   // ---------- subtitles: the box in the Video tab ----------
@@ -732,6 +867,19 @@
   $('#shuffle').addEventListener('change', (e) => P({ music: { shuffle: e.target.checked } }));
   $('#sleep').addEventListener('change', (e) => P({ sleepAt: +e.target.value ? Date.now() + +e.target.value * 60000 : 0 }));
   $('#pickVideo').addEventListener('click', () => api.cmd({ type: 'pick-video', key: me.key }));
+  for (const [id, k] of [['#vHdr', 'hdr'], ['#vTone', 'tone'], ['#vEnc', 'enc'], ['#vXq', 'xq']]) $(id).addEventListener('change', (e) => P({ video: { [k]: e.target.value } }));
+  $('#shStart').addEventListener('click', () => api.cmd({ type: 'share-start' }));
+  $('#shStop').addEventListener('click', () => api.cmd({ type: 'share-stop' }));
+  $('#shLeave').addEventListener('click', () => api.cmd({ type: 'share-stop' }));
+  $('#shCopy').addEventListener('click', () => api.cmd({ type: 'share-copy' }));
+  $('#shPaste').addEventListener('click', () => api.cmd({ type: 'share-paste' }));
+  const joinNow = () => { const code = $('#shCode').value.trim(); if (!code) { toast('Paste your friend\'s invite code first', 2400); return; } api.cmd({ type: 'share-join', code }); $('#shCode').value = ''; };
+  $('#shJoin').addEventListener('click', joinNow);
+  $('#shCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') joinNow(); });
+  $('#shName').addEventListener('change', (e) => P({ share: { name: e.target.value.trim() } }));
+  $('#shName').addEventListener('keydown', (e) => { if (e.key === 'Enter') e.target.blur(); });
+  for (const [id, k] of [['#shControl', 'control'], ['#shWait', 'wait'], ['#shInternet', 'internet']]) $(id).addEventListener('change', (e) => P({ share: { [k]: e.target.checked } }));
+  $('#shQuality').addEventListener('change', (e) => P({ share: { quality: e.target.value } }));
   $('#videoFit').addEventListener('change', (e) => P({ video: { fit: e.target.value } }));
   $('#videoLayout').addEventListener('change', (e) => P({ video: { layout: e.target.value } }));
   $('#videoSound').addEventListener('change', (e) => P({ video: { sound: e.target.checked } }));
@@ -757,7 +905,7 @@
     fill(seekEl); $('#vcur').textContent = clockStr(+seekEl.value);
     if (performance.now() - lastJump > 140) { lastJump = performance.now(); api.cmd({ type: 'video-jump', pos: +seekEl.value }); }
   });
-  seekEl.addEventListener('change', () => { api.cmd({ type: 'video-jump', pos: +seekEl.value }); setTimeout(() => { seeking = false; }, 400); });
+  seekEl.addEventListener('change', () => { api.cmd({ type: 'video-jump', pos: +seekEl.value, final: true }); setTimeout(() => { seeking = false; }, 400); });
   $('#addFiles').addEventListener('click', () => api.cmd({ type: 'add-files' }));
   // play / pause: Spotify when that's the music source (and no video is up), otherwise Drift's own sound + video
   const ctxToggle = () => {
@@ -777,7 +925,7 @@
     if (c === 'scene') stepScene(dir);
     else if (c === 'video') {
       if (!videoOn()) toast('Pick a video in the Video tab first', 1800);
-      else if (dir < 0 && video.currentTime > 4) api.cmd({ type: 'video-jump', pos: 0 });      // first press of "previous" restarts the video
+      else if (dir < 0 && vTime() > 4) api.cmd({ type: 'video-jump', pos: 0, final: true });      // first press of "previous" restarts the video
       else api.cmd({ type: 'video-step', dir });
     }
     else if (S.music.source === 'spotify') api.cmd({ type: 'spotify', action: dir > 0 ? 'next' : 'prev' });
@@ -807,7 +955,10 @@
   $('#play').addEventListener('click', ctxToggle);
   $('#prevTrack').addEventListener('click', () => ctxStep(-1));
   $('#nextTrack').addEventListener('click', () => ctxStep(1));
-  $('#exit').addEventListener('click', () => api.cmd({ type: 'quit' }));
+  $('#exit').addEventListener('click', askQuit);
+  $('#confirmYes').addEventListener('click', () => api.cmd({ type: 'quit' }));
+  $('#confirmNo').addEventListener('click', closeAsk);
+  confirmEl.addEventListener('mousedown', (e) => { if (e.target === confirmEl) closeAsk(); });      // a click outside the box means "stay"
 
   function stepScene(dir) {
     if (S.mode === 'mix') { const i = SCENES.findIndex((x) => x.id === sceneFor(S)); P({ perDisplay: { [me.key]: SCENES[(i + dir + SCENES.length) % SCENES.length].id } }); }
@@ -817,10 +968,17 @@
   function toast(msg, ms = 2600) { const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('on'), ms); }
 
   addEventListener('keydown', (e) => {
+    if (confirmEl.classList.contains('on')) {       // the question is up: only it gets keys
+      e.preventDefault();
+      if (e.key === 'Enter') api.cmd({ type: 'quit' });
+      else if (e.key === 'Escape') closeAsk();
+      else if (e.key === 'Tab' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') $(document.activeElement === $('#confirmNo') ? '#confirmYes' : '#confirmNo').focus();
+      return;
+    }
     if (e.target.tagName === 'SELECT') return;
     if (e.target.type === 'search') { if (e.key === 'Escape') e.target.blur(); return; }   // typing in a search box
     const k = e.key;
-    if (k === 'Escape') { if (panel.classList.contains('show') && panel.classList.contains('open')) { panel.classList.remove('open'); syncUI(); } else api.cmd({ type: 'quit' }); }
+    if (k === 'Escape') { if (panel.classList.contains('show') && panel.classList.contains('open')) { panel.classList.remove('open'); syncUI(); } else askQuit(); }
     else if (k === 'Tab' || k === 'h' || k === 'H') { e.preventDefault(); if (panel.classList.contains('show') && panel.classList.contains('open')) hidePanel(), panel.classList.remove('open'); else { showPanel(true); syncUI(); } }
     else if (k === 'ArrowRight') ctxStep(1);
     else if (k === 'ArrowLeft') ctxStep(-1);
@@ -860,7 +1018,14 @@
     if (m.a !== undefined) { if (Math.abs(m.a - aTimeTarget) > 5) aTime = m.a; aTimeTarget = m.a; }
   });
   api.on('now', (n) => { S.nowPlaying = n; syncUI(); });
-  api.on('cmd', (c) => { if (c.type === 'show-panel') { tab = c.tab; showPanel(true); clearTimeout(hideTimer); syncUI(); } });
+  api.on('cmd', (c) => {
+    if (c.type === 'show-panel') { tab = c.tab; showPanel(true); clearTimeout(hideTimer); syncUI(); }
+    else if (c.type === 'toast') { if (isCenter || panel.classList.contains('show')) toast(c.text, Math.max(3200, Math.min(9000, c.text.length * 70))); }     // one screen is enough
+    else if (c.type === 'ask-quit') { if (confirmEl.classList.contains('on')) api.cmd({ type: 'quit' }); else askQuit(); }
+    else if (c.type === 'share-code') { $('#shCode').value = c.code; $('#shCode').focus(); }
+  });
+  hdrQuery.addEventListener('change', () => { tellHdr(); syncUI(); });
+  tellHdr();
 
   resize(); syncUI(); syncSubs(); requestAnimationFrame(frame);
   if (!R) toast('Your graphics driver has WebGL disabled — visuals cannot start.', 10000);

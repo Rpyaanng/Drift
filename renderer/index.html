@@ -10,10 +10,11 @@
 <div id="stage"><canvas id="c"></canvas><canvas id="vbg"></canvas><video id="v" playsinline muted></video></div>
 <div id="subs"><div id="subText"></div></div>
 <audio id="va"></audio>
-<div id="clock"></div>
+<div id="clockFace"></div>
 <div id="breath"><div class="ring"></div><span></span></div>
 <div id="toast"></div>
 <div id="algo"></div>
+<div id="confirm"><div class="box"><b>Close Drift?</b><p id="confirmNote"></p><div class="row"><button class="btn" id="confirmNo">Stay</button><button class="btn danger" id="confirmYes">Close Drift</button></div></div></div>
 
 <div id="panel">
   <div id="content">
@@ -53,7 +54,7 @@
         <label>Change scene automatically
           <span class="inline">
             <select id="autoCycle"><option value="0">Off</option><option value="1">Every minute</option><option value="5">Every 5 min</option><option value="10">Every 10 min</option><option value="30">Every 30 min</option></select>
-            <span class="chk"><input type="checkbox" id="cycleShuffle"><i></i>Shuffle</span>
+            <label class="chk"><input type="checkbox" id="cycleShuffle"><i></i>Shuffle</label>
           </span>
         </label>
       </div>
@@ -81,7 +82,7 @@
                 <option value="cover">Fill — crop the edges</option>
                 <option value="fill">Stretch</option>
               </select>
-              <span class="chk"><input type="checkbox" id="videoSound"><i></i>Sound</span>
+              <label class="chk"><input type="checkbox" id="videoSound"><i></i>Sound</label>
               <button class="btn ghost" id="pickVideo">Open file…</button>
               <button class="btn ghost" id="stopVideo">Stop video</button>
             </div>
@@ -148,7 +149,7 @@
             <div class="row" style="margin-bottom:8px">
               <div id="mcrumb"></div>
               <input type="search" id="msearch" placeholder="Search this folder…" spellcheck="false">
-              <span class="chk"><input type="checkbox" id="shuffle"><i></i>Shuffle</span>
+              <label class="chk"><input type="checkbox" id="shuffle"><i></i>Shuffle</label>
               <button class="btn ghost" id="addFiles">Open files…</button>
             </div>
             <div id="playlist"></div>
@@ -178,6 +179,56 @@
       </div>
     </section>
 
+    <section data-tab="share">
+      <div class="cols">
+        <div>
+          <h3>Watch together</h3>
+          <div id="shOff">
+            <p class="note">Play a video, then share it. Friends who paste your invite code into their Drift see the same video, in step with you: play, pause and skipping stay together. The video travels straight from your PC to theirs, encrypted, with no server in between.</p>
+            <div class="row"><button class="btn" id="shStart">Share what I'm watching</button></div>
+            <h3 class="sub">Join a friend</h3>
+            <div class="row">
+              <input type="search" id="shCode" placeholder="Paste their invite code" spellcheck="false" autocomplete="off">
+              <button class="btn ghost" id="shPaste" title="Paste from the clipboard">Paste</button>
+              <button class="btn" id="shJoin">Join</button>
+            </div>
+          </div>
+          <div id="shHost">
+            <div class="spnow"><span class="spdot"></span><div><b id="shTitle"></b><span id="shSub"></span></div></div>
+            <div class="row">
+              <code id="shCodeOut" title="Your invite code"></code>
+              <button class="btn" id="shCopy">Copy invite code</button>
+              <button class="btn ghost" id="shStop">Stop sharing</button>
+            </div>
+          </div>
+          <div id="shGuest">
+            <div class="spnow"><span class="spdot"></span><div><b id="shGTitle"></b><span id="shGSub"></span></div></div>
+            <div class="row"><button class="btn ghost" id="shLeave">Leave</button></div>
+          </div>
+          <p class="note" id="shNote"></p>
+          <div id="shPeople"></div>
+        </div>
+        <div>
+          <label>Your name, as friends see it<input type="search" id="shName" maxlength="24" spellcheck="false" autocomplete="off"></label>
+          <div class="checks one">
+            <label class="chk"><input type="checkbox" id="shControl"><i></i>Friends can play, pause and skip</label>
+            <label class="chk"><input type="checkbox" id="shWait"><i></i>Pause for everyone while someone is loading</label>
+            <label class="chk"><input type="checkbox" id="shInternet"><i></i>Let friends join from outside my home network</label>
+          </div>
+          <label>Picture sent between PCs
+            <select id="shQuality">
+              <option value="original">Original — best picture, needs a fast connection</option>
+              <option value="1080">1080p — about 6 Mbit/s</option>
+              <option value="720">720p — about 3 Mbit/s</option>
+              <option value="480">480p — about 1.2 Mbit/s</option>
+            </select>
+          </label>
+          <p class="note">Lower the picture if the video keeps stopping to load: the sharing PC then sends a smaller copy. It applies to videos you share and videos you join. <span id="shQNote"></span></p>
+          <p class="note">Joining from outside your home asks your router to open one port while you share, and closes it when you stop. Subtitles, sound conversion and HDR conversion all work for friends too, and each person picks their own subtitles.</p>
+        </div>
+      </div>
+    </section>
+
     <section data-tab="settings">
       <div class="cols">
         <div>
@@ -192,20 +243,36 @@
               <select id="fps"><option value="30">30 fps</option><option value="60">60 fps</option></select>
             </label>
           </div>
+          <h3 class="sub">Video conversion</h3>
+          <div class="grid2">
+            <label>HDR videos
+              <select id="vHdr"><option value="auto">Convert to SDR on screens without HDR</option><option value="always">Always convert to SDR</option><option value="never">Never convert</option></select>
+            </label>
+            <label>HDR look after converting
+              <select id="vTone"><option value="hable">Filmic — keeps detail in bright areas</option><option value="mobius">Mobius — stays closer to the original colours</option><option value="reinhard">Reinhard — softer contrast</option></select>
+            </label>
+            <label>Convert with
+              <select id="vEnc" title="Which ffmpeg encoder does the converting. Automatic picks the fastest one that works on this PC."></select>
+            </label>
+            <label>Converted picture size
+              <select id="vXq"><option value="auto">Match my screen</option><option value="2160">4K (2160p)</option><option value="1440">1440p</option><option value="1080">1080p</option><option value="720">720p — lightest</option><option value="480">480p</option></select>
+            </label>
+          </div>
+          <p class="note" id="xcNote"></p>
         </div>
         <div>
           <h3>Extras</h3>
           <div class="checks">
-            <span class="chk"><input type="checkbox" id="clock"><i></i>Show clock</span>
-            <span class="chk"><input type="checkbox" id="breathing"><i></i>Breathing guide</span>
-            <span class="chk"><input type="checkbox" id="keepAwake"><i></i>Keep screens awake</span>
-            <span class="chk"><input type="checkbox" id="onTop"><i></i>Stay above other windows</span>
-            <span class="chk"><input type="checkbox" id="algoInfo"><i></i>Algorithm captions</span>
+            <label class="chk"><input type="checkbox" id="clock"><i></i>Show clock</label>
+            <label class="chk"><input type="checkbox" id="breathing"><i></i>Breathing guide</label>
+            <label class="chk"><input type="checkbox" id="keepAwake"><i></i>Keep screens awake</label>
+            <label class="chk"><input type="checkbox" id="onTop"><i></i>Stay above other windows</label>
+            <label class="chk"><input type="checkbox" id="algoInfo"><i></i>Algorithm captions</label>
           </div>
           <label>Sleep timer — fade out and close <output id="o-sleep"></output>
             <select id="sleep"><option value="0">Off</option><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="45">45 minutes</option><option value="60">1 hour</option><option value="90">1.5 hours</option><option value="120">2 hours</option></select>
           </label>
-          <p class="keys"><b>Esc</b> exit · <b>Tab</b> controls · <b>Space</b> play/pause · <b>← →</b> previous/next · <b>↑ ↓</b> volume · <b>P</b> colour · <b>C</b> clock · <b>B</b> breathing<br>During a video: <b>S</b> subtitles on/off · <b>V</b> next subtitle track · <b>Z X</b> subtitle timing<br>Play, previous and next act on the selected tab: Scenes, Video or Music.</p>
+          <p class="keys"><b>Esc</b> exit (asks first) · <b>Tab</b> controls · <b>Space</b> play/pause · <b>← →</b> previous/next · <b>↑ ↓</b> volume · <b>P</b> colour · <b>C</b> clock · <b>B</b> breathing<br>During a video: <b>S</b> subtitles on/off · <b>V</b> next subtitle track · <b>Z X</b> subtitle timing<br>Play, previous and next act on the selected tab: Scenes, Video or Music.</p>
           <div class="row"><button class="btn ghost" id="reset">Reset everything</button></div>
         </div>
       </div>
@@ -222,6 +289,7 @@
       <button data-tab="scenes">Scenes</button>
       <button data-tab="video">Video</button>
       <button data-tab="music">Music</button>
+      <button data-tab="share" title="Watch a video with friends, in step">Together</button>
       <button data-tab="settings">Settings</button>
     </div>
     <div class="quick">

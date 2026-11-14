@@ -10,6 +10,7 @@ window.PALETTES = {
   lavender: { name: 'Lavender', c: ['#0d0820', '#3d2a78', '#b07ae0', '#ffd9f2'] },
   rose:     { name: 'Rosé',     c: ['#14080e', '#6b2440', '#e58aa0', '#ffe9dc'] },
   mono:     { name: 'Moonlight', c: ['#05070a', '#27323f', '#8496a8', '#f2f6fa'] },
+  dark:     { name: 'Dark',     c: ['#000000', '#0a0c11', '#2a3340', '#77818f'] },   // dim on purpose: for a dark room at night
 };
 
 window.SCENES = [
@@ -43,6 +44,12 @@ window.SCENES = [
   { id: 'phyllotaxis', name: 'Phyllotaxis',       group: 'geo' },
   { id: 'rose',        name: 'Rose Curves',       group: 'geo' },
   { id: 'chladni',     name: 'Chladni Plate',     group: 'geo' },
+  { id: 'lake',    name: 'Mountain Lake', group: 'land' },
+  { id: 'pines',   name: 'Misty Forest',  group: 'land' },
+  { id: 'dunes',   name: 'Desert Dunes',  group: 'land' },
+  { id: 'seaside', name: 'Ocean Sunset',  group: 'land' },
+  { id: 'meadow',  name: 'Rolling Hills', group: 'land' },
+  { id: 'canyon',  name: 'Canyon Night',  group: 'land' },
 ];
 
 window.SHADER_VERT = `attribute vec2 a; void main(){ gl_Position = vec4(a, 0.0, 1.0); }`;
@@ -941,5 +948,211 @@ vec3 scene(vec2 uv, vec2 p){
   col += pal(0.72 + 0.26 * hash21(g + 5.3)) * sand * (0.8 + 1.4 * spec(0.1 + 0.6 * still));
   col += pal(0.9) * still * still * 0.12;
   return col + pal(0.9) * beatRings(lp, vec2(0.0), 0.5) * 0.25;
+}`,
+
+// ---- natural landscapes: layered silhouettes, far to near, with haze between them ----
+
+lake: `
+float lkPeak(float x){
+  return (1.0 - abs(noise(vec2(x, 1.7)) * 2.0 - 1.0)) * 0.6 + (1.0 - abs(noise(vec2(x * 2.9, 6.3)) * 2.0 - 1.0)) * 0.27 + noise(vec2(x * 8.3, 2.9)) * 0.13;
+}
+vec3 lkLand(vec2 q, float t){                       // everything above the waterline: sky, sun, peaks
+  vec3 sky = mix(pal(0.66), pal(0.2), smoothstep(0.0, 0.6, q.y));
+  float sd = length(q - vec2(0.0, 0.17));
+  float sr = 0.05 * (1.0 + 0.3 * uAudio.x + 0.25 * uBeat * uReact);
+  vec3 col = sky + pal(0.97) * (smoothstep(sr + 0.004, sr, sd) * 0.9 + 0.26 * exp(-sd * 4.5) * (1.0 + 1.4 * uAudio.x));
+  col += vec3(1.0) * stars(q, 40.0) * smoothstep(0.2, 0.55, q.y) * 0.5;
+  float cl = fbm(vec2(q.x * 1.3 + t * 0.5, q.y * 6.0 + 3.0));
+  col += pal(0.82) * smoothstep(0.5, 0.85, cl) * smoothstep(0.03, 0.25, q.y) * 0.16;
+  float valley = 0.35 + 0.65 * smoothstep(0.0, 0.5, abs(q.x));     // the peaks part in the middle, where the sun sits
+  for (int i = 0; i < 4; i++){
+    float fi = float(i), near = fi / 3.0;
+    float h = mix(0.06, 0.0, near) + lkPeak(q.x * (1.3 + fi * 0.6) + fi * 17.0) * mix(0.34, 0.1, near) * valley;
+    float m = smoothstep(h + 0.002, h - 0.002, q.y);
+    vec3 lc = mix(mix(sky, pal(0.34), 0.5), uC0 * 0.6, near);
+    float snow = (1.0 - step(0.5, fi)) * smoothstep(0.27, 0.32, q.y + (noise(vec2(q.x * 30.0, 4.0)) - 0.5) * 0.07);
+    lc = mix(lc, pal(0.92), snow * 0.55);
+    float mist = exp(-(h - q.y) * 10.0) * (1.0 - near) * 0.3;
+    col = mix(col, lc + sky * mist, m);
+  }
+  return col;
+}
+vec3 scene(vec2 uv, vec2 p){
+  float t = uTime * 0.02, y = p.y + 0.1;
+  if (y >= 0.0) return lkLand(vec2(p.x, y), t) + pal(0.75) * exp(-y * 45.0) * 0.1;
+  float d = -y;                                                      // how far below the waterline
+  float amp = (0.25 + d * 3.0) * (1.0 + 1.2 * uAudio.y);
+  float n1 = noise(vec2(p.x * 5.0 + t * 3.0, d * 110.0 - uTime * 0.45)) - 0.5;
+  float n2 = noise(vec2(p.x * 13.0 - t * 5.0, d * 170.0 + uTime * 0.3)) - 0.5;
+  vec2 q = vec2(p.x + n2 * 0.012 * amp, max(0.0, d + (n1 * 0.035 + n2 * 0.012) * amp));   // the mirror image, broken up by ripples
+  vec3 col = lkLand(q, t);
+  col = mix(col, pal(0.1), 0.3 + 0.35 * smoothstep(0.0, 0.4, d));
+  col += pal(0.97) * pow(max(n1 + 0.5, 0.0), 5.0) * exp(-abs(p.x) * 9.0 / (1.0 + d * 10.0)) * 0.5 * (1.0 + 2.0 * spec(0.3));
+  col += pal(0.75) * exp(-d * 45.0) * 0.1;
+  return col + pal(0.85) * beatRings(vec2(p.x, d * 3.2), vec2(0.0, 0.75), 0.5) * 0.22;
+}`,
+
+pines: `
+float pnTree(vec2 q, float seed, float aa){          // one pine per cell: stacked tiers, narrowing to the tip
+  float id = floor(q.x), fx = fract(q.x) - 0.5;
+  float h1 = hash21(vec2(id, seed)), h2 = hash21(vec2(id + 9.7, seed + 2.3));
+  float ht = 0.6 + 0.8 * h1, v = q.y / ht;
+  float tier = fract(v * (5.0 + floor(h2 * 4.0)));
+  float w = (1.0 - v) * (0.34 - 0.19 * tier) + 0.014;
+  float sway = sin(uTime * 0.7 + id * 1.9) * 0.03 * v * v * (1.0 + 2.0 * uAudio.x);
+  float x = abs(fx - (h2 - 0.5) * 0.2 - sway);
+  return smoothstep(w + aa, w - aa, x) * step(0.0, v) * step(v, 1.0) * step(0.12, h1);
+}
+vec3 scene(vec2 uv, vec2 p){
+  float t = uTime * 0.03;
+  vec2 lp = p - vec2(0.0, 0.16);                                      // the light behind the trees
+  float glow = exp(-length(lp * vec2(0.55, 1.0)) * 2.6);
+  vec3 fog = mix(pal(0.3), pal(0.8), glow);
+  vec3 col = mix(pal(0.24), pal(0.5), smoothstep(-0.5, 0.5, p.y)) * 0.6 + pal(0.9) * glow * (0.7 + 0.5 * uAudio.x);
+  for (int i = 0; i < 5; i++){
+    float fi = float(i), near = fi / 4.0, sc = mix(9.0, 2.1, near);
+    float x = p.x + fi * 7.3 + t * (0.15 + near * 0.5);              // nearer rows slide past faster
+    float g = mix(-0.06, -0.47, near) + (noise(vec2(x * (0.9 + fi * 0.2), fi * 3.1)) - 0.5) * 0.09;
+    float m = max(pnTree(vec2(x * sc, (p.y - g) * sc), fi * 5.7, 0.0015 * sc), smoothstep(g + 0.003, g - 0.003, p.y));
+    col = mix(col, mix(fog, uC0 * 0.45, 0.25 + 0.75 * near), m);
+    if (i == 1){                                                      // shafts of light, in front of the far rows only
+      float a = atan(lp.x, -lp.y), r = length(lp);
+      float rays = noise(vec2(a * 7.0, t * 0.8)) * 0.6 + noise(vec2(a * 19.0 + 4.0, -t * 1.1)) * 0.4;
+      rays = smoothstep(0.35, 0.8, rays) * smoothstep(1.5, 0.2, abs(a)) * smoothstep(0.02, 0.3, r);
+      col += pal(0.88) * rays * exp(-r * 1.3) * 0.3 * (1.0 + 1.5 * uAudio.y);
+    }
+    float mist = fbm(vec2(p.x * 1.2 - t * (1.0 + fi * 0.4), p.y * 3.5 + fi * 4.0));
+    col += fog * mist * exp(-max(p.y - g, 0.0) * 5.0) * (1.0 - near) * 0.22 * (1.0 + 1.5 * spec(0.2 + 0.15 * fi));
+  }
+  for (int i = 0; i < 12; i++){                                       // fireflies
+    float fi = float(i);
+    vec2 c = vec2(sin(t * (2.1 + fi * 0.37) + fi * 4.1) * uAspect * 0.46, -0.22 + 0.2 * sin(t * (3.3 + fi * 0.5) + fi * 2.7));
+    float d = length(p - c);
+    col += pal(0.95) * exp(-d * d * 9000.0) * (0.5 + 0.5 * sin(uTime * (1.1 + fi * 0.3) + fi * 9.0)) * (0.9 + 2.0 * spec(fi / 12.0));
+  }
+  return col + pal(0.85) * beatRings(p, vec2(0.0, 0.16), 0.5) * 0.2;
+}`,
+
+dunes: `
+float dnH(float x, float fi){
+  float a = noise(vec2(x * 0.9 + fi * 9.1, fi * 2.3)), b = noise(vec2(x * 2.1 + fi * 4.7, 7.7 + fi));
+  return mix(a, 1.0 - abs(a * 2.0 - 1.0), 0.45) * 0.8 + b * 0.2;     // smooth slopes meeting in soft crests
+}
+vec3 scene(vec2 uv, vec2 p){
+  float t = uTime * 0.01;
+  vec3 sky = mix(pal(0.72), pal(0.26), smoothstep(-0.1, 0.55, p.y));
+  float sd = length(p - vec2(0.0, 0.12));
+  float sr = 0.1 * (1.0 + 0.2 * uAudio.x + 0.2 * uBeat * uReact);
+  vec3 col = sky + pal(0.98) * (smoothstep(sr + 0.004, sr, sd) * 0.8 + 0.3 * exp(-sd * 3.5) * (1.0 + 1.3 * uAudio.x));
+  col += vec3(1.0) * stars(p, 44.0) * smoothstep(0.2, 0.5, p.y) * 0.35;
+  for (int i = 0; i < 6; i++){
+    float fi = float(i), near = fi / 5.0;
+    float x = p.x * (0.9 + fi * 0.28) + t * (0.6 + fi * 0.8);
+    float h = 0.03 - near * 0.5 + dnH(x, fi) * (0.12 + near * 0.1);
+    float m = smoothstep(h + 0.002, h - 0.002, p.y), below = h - p.y;
+    float xs = x + max(below, 0.0) * 1.2;                              // the shadow edge runs down the dune at a slant
+    float sl = (dnH(xs + 0.08, fi) - dnH(xs - 0.08, fi)) * 4.5;       // slope: one side of every dune catches the light
+    vec3 lc = mix(pal(0.28), pal(0.66), mix(smoothstep(-0.7, 0.7, sl), 0.5, smoothstep(0.0, 0.3, below)));
+    lc *= 1.0 + 0.07 * near * sin(below * (480.0 - 230.0 * near) + noise(vec2(x * 6.0, fi)) * 12.0);   // wind ripples in the sand
+    lc = mix(mix(sky, lc, 0.45), lc, near) * mix(1.0, 0.75, near);
+    lc += pal(0.9) * exp(-below * 60.0) * 0.18 * (1.0 + 2.5 * spec(uv.x * 0.8 + 0.1));
+    col = mix(col, lc, m);
+    col += pal(0.85) * noise(vec2(x * 3.0 - uTime * 0.12, p.y * 20.0 + fi * 3.0)) * exp(-abs(below) * 28.0) * 0.1 * (1.0 + 2.0 * uAudio.y);   // sand blowing off the crest
+  }
+  return col + pal(0.85) * beatRings(p, vec2(0.0, 0.12), 0.5) * 0.2;
+}`,
+
+seaside: `
+vec3 scene(vec2 uv, vec2 p){
+  float t = uTime * 0.05, y = p.y + 0.06;
+  float sd = length(vec2(p.x, y - 0.035));
+  float sr = 0.085 * (1.0 + 0.2 * uAudio.x + 0.2 * uBeat * uReact);
+  if (y > 0.0){
+    vec3 col = mix(pal(0.78), pal(0.18), smoothstep(0.0, 0.6, y));
+    col += pal(0.98) * (smoothstep(sr + 0.004, sr, sd) * 0.9 + 0.34 * exp(-sd * 3.6) * (1.0 + 1.3 * uAudio.x));
+    col += vec3(1.0) * stars(p, 42.0) * smoothstep(0.25, 0.55, y) * 0.4;
+    float cz = 1.0 / (y + 0.22);                                      // clouds on a flat layer overhead, drifting this way
+    float cl = fbm(vec2(p.x * cz * 0.9, cz * 1.6 + t * 0.6));
+    float cm = smoothstep(0.48, 0.78, cl) * smoothstep(0.02, 0.2, y);
+    return mix(col, mix(pal(0.36), pal(0.9), exp(-sd * 2.2)), cm * 0.7);   // undersides lit near the sun
+  }
+  float d = -y, z = 1.0 / (d + 0.012);                                 // distance out to sea
+  vec2 w = vec2(p.x * z, z);
+  float swell = noise(vec2(w.x * 0.5, w.y * 1.3 + t * 3.0)) - 0.5;
+  float chop = noise(vec2(w.x * 2.4 - t * 2.0, w.y * 6.0 + t * 9.0)) - 0.5;
+  float wv = 0.5 + swell * exp(-z * z / 320.0) + chop * 0.7 * exp(-z * z / 49.0) * (1.0 + 1.2 * uAudio.y);   // detail melts into haze far out
+  vec3 col = mix(pal(0.1), pal(0.5), smoothstep(0.25, 0.8, wv) * (0.35 + 0.65 * exp(-d * 5.0)));
+  col = mix(col, pal(0.7), exp(-d * 30.0) * 0.6);
+  float path = exp(-abs(p.x) / (0.035 + d * 0.55));                    // the sun's road across the water
+  col += pal(0.98) * path * pow(max(wv, 0.0), 3.0) * (1.6 + 2.5 * spec(0.2 + d));
+  return col + pal(0.85) * beatRings(vec2(p.x, d * 3.0), vec2(0.0, 0.7), 0.5) * 0.2;
+}`,
+
+meadow: `
+float mdHill(float x, float fi){ return noise(vec2(x * 0.8 + fi * 5.3, fi * 1.9)) * 0.7 + noise(vec2(x * 2.2 + fi * 2.1, 4.4)) * 0.3; }
+vec3 scene(vec2 uv, vec2 p){
+  float t = uTime * 0.02;
+  vec3 sky = mix(pal(0.7), pal(0.3), smoothstep(-0.1, 0.5, p.y));
+  float sd = length(p - vec2(0.0, 0.26));
+  float sr = 0.045 * (1.0 + 0.3 * uAudio.x + 0.25 * uBeat * uReact);
+  vec3 col = sky + pal(0.98) * (smoothstep(sr + 0.004, sr, sd) * 0.9 + 0.3 * exp(-sd * 4.0) * (1.0 + 1.2 * uAudio.x));
+  float cl = fbm(vec2(p.x * 1.45 + t * 1.1, p.y * 4.2) + 2.0);
+  col = mix(col, mix(pal(0.6), pal(0.97), smoothstep(0.5, 0.85, cl)), smoothstep(0.52, 0.7, cl) * smoothstep(0.02, 0.16, p.y) * 0.75);
+  for (int i = 0; i < 5; i++){
+    float fi = float(i), near = fi / 4.0;
+    float x = p.x * (0.7 + fi * 0.3) + t * (0.3 + fi * 0.5) + fi * 3.0;
+    float h = 0.04 - near * 0.42 + (mdHill(x, fi) - 0.5) * (0.2 - near * 0.04);
+    if (i > 2){                                                         // blades of grass on the two nearest hills, leaning in the wind
+      float gx = p.x * (i == 3 ? 230.0 : 150.0) + fi * 31.0;
+      float lean = sin(uTime * 1.2 + p.x * 5.0 + fi) * max(p.y - h, 0.0) * 12.0 * (1.0 + 2.0 * uAudio.x);
+      float tip = 1.0 - abs(fract(gx + lean) - 0.5) * 2.0;
+      h += tip * (0.02 + 0.045 * hash21(vec2(floor(gx + lean), fi))) * near * near;
+    }
+    float m = smoothstep(h + 0.002, h - 0.002, p.y), below = h - p.y;
+    float shade = noise(vec2(x * 1.3 - t * 2.0, fi * 7.0 + below * 6.0));          // cloud shadows crossing the hills
+    vec3 lc = pal(mix(0.5, 0.36, near) + 0.16 * shade);
+    lc *= 0.9 + 0.2 * noise(vec2(x * 8.0 - uTime * 0.25, below * 40.0));          // wind moving through the grass
+    lc = mix(sky, lc, 0.4 + 0.6 * near) * mix(1.0, 0.55, near * near);
+    lc += pal(0.85) * exp(-below * 30.0) * 0.12 * (1.0 + 2.0 * spec(uv.x * 0.8 + 0.1));
+    col = mix(col, lc, m);
+  }
+  for (int i = 0; i < 10; i++){                                         // drifting seeds catching the light
+    float fi = float(i);
+    vec2 c = vec2(sin(t * (1.7 + fi * 0.41) + fi * 3.7) * uAspect * 0.47, -0.12 + 0.24 * sin(t * (2.9 + fi * 0.6) + fi * 1.9));
+    float d = length(p - c);
+    col += pal(0.97) * exp(-d * d * 14000.0) * (0.45 + 0.4 * sin(uTime * (0.9 + fi * 0.2) + fi * 5.0)) * (0.8 + 2.0 * spec(fi / 10.0));
+  }
+  return col + pal(0.85) * beatRings(p, vec2(0.0, 0.26), 0.5) * 0.2;
+}`,
+
+canyon: `
+float cyMesa(float x, float fi){
+  float n = noise(vec2(x * 0.55 + fi * 6.1, fi * 2.7)) * 3.2;
+  return (floor(n) + smoothstep(0.42, 0.58, fract(n))) / 3.2 + (noise(vec2(x * 9.0, fi)) - 0.5) * 0.035;   // flat tops, steep sides
+}
+vec3 scene(vec2 uv, vec2 p){
+  float t = uTime * 0.008;
+  vec3 sky = mix(pal(0.6), pal(0.12), smoothstep(-0.15, 0.5, p.y));
+  float band = fbm(rot(0.5) * p * vec2(1.2, 3.0) + 3.0);                // a faint band of starlight
+  vec3 col = sky + pal(0.7) * band * band * 0.25 * smoothstep(0.0, 0.4, p.y);
+  col += vec3(1.0, 0.97, 0.92) * (stars(p, 36.0) + 0.7 * stars(p + 4.1, 63.0)) * smoothstep(-0.05, 0.3, p.y) * (0.8 + 2.0 * uAudio.z);
+  vec2 mp = p - vec2(0.0, 0.3);
+  float mr = 0.04 * (1.0 + 0.2 * uBeat * uReact);
+  float moon = smoothstep(mr + 0.003, mr, length(mp)) * (1.0 - 0.94 * smoothstep(mr + 0.003, mr, length(mp - vec2(0.02, 0.011))));
+  col += pal(0.98) * (moon + 0.16 * exp(-length(mp) * 6.0) * (1.0 + 1.4 * uAudio.x));
+  for (int i = 0; i < 5; i++){
+    float fi = float(i), near = fi / 4.0;
+    float x = p.x * (0.8 + fi * 0.35) + t * (0.5 + fi) + fi * 11.0;
+    float h = -0.02 - near * 0.4 + cyMesa(x, fi) * (0.34 - near * 0.1);
+    float m = smoothstep(h + 0.002, h - 0.002, p.y), below = h - p.y;
+    float lit = mix(smoothstep(-0.2, 0.2, cyMesa(x + 0.02, fi) - cyMesa(x - 0.02, fi)), 0.5, smoothstep(0.0, 0.2, below));
+    float sn = noise(vec2((p.y + 0.012 * noise(vec2(x * 3.0, fi))) * 90.0 + fi * 9.0, fi)) * 5.0;
+    float strata = (floor(sn) + smoothstep(0.35, 0.65, fract(sn))) / 5.0;                             // layers of rock
+    vec3 lc = pal(mix(0.5, 0.3, near) + 0.16 * (strata - 0.5)) * (0.85 + 0.3 * lit);
+    lc = mix(sky, lc, 0.3 + 0.7 * near) * mix(1.0, 0.45, near * near);
+    lc += pal(0.9) * exp(-below * 70.0) * 0.14 * (1.0 + 2.0 * spec(uv.x * 0.8 + 0.1));
+    col = mix(col, lc + sky * exp(-below * 7.0) * (1.0 - near) * 0.3, m);
+  }
+  return col + pal(0.85) * beatRings(p, vec2(0.0, 0.3), 0.5) * 0.2;
 }`,
 };
