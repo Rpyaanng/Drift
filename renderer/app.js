@@ -25,24 +25,34 @@
     const buf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
-    const progs = {};
-    const compile = (type, src) => {
-      const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
-      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) { console.log('SHADER ERROR ' + gl.getShaderInfoLog(s)); return null; }
-      return s;
-    };
-    const get = (id) => {
-      if (id in progs) return progs[id];
-      const vs = compile(gl.VERTEX_SHADER, SHADER_VERT);
-      const fs = compile(gl.FRAGMENT_SHADER, SHADER_HEAD + SCENE_SRC[id] + SHADER_TAIL);
-      if (!vs || !fs) { console.log('scene failed: ' + id); return (progs[id] = null); }
-      const p = gl.createProgram(); gl.attachShader(p, vs); gl.attachShader(p, fs); gl.bindAttribLocation(p, 0, 'a'); gl.linkProgram(p);
-      if (!gl.getProgramParameter(p, gl.LINK_STATUS)) { console.log('LINK ERROR ' + id + ' ' + gl.getProgramInfoLog(p)); return (progs[id] = null); }
+    // Programs build in the background where the browser allows it (the heavier scenes take a moment to compile),
+    // so the screen keeps moving: get() returns undefined while a scene is still being built.
+    const progs = {}, pending = {};
+    const par = gl.getExtension('KHR_parallel_shader_compile');
+    const finish = (id) => {
+      const { p, vs, fs } = pending[id]; delete pending[id];
+      if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+        for (const sh of [vs, fs]) if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) console.log('SHADER ERROR ' + gl.getShaderInfoLog(sh));
+        console.log('scene failed: ' + id + ' ' + gl.getProgramInfoLog(p));
+        return (progs[id] = null);
+      }
       const u = {};
       for (const n of ['uRes', 'uView', 'uAspect', 'uTime', 'uAudio', 'uBright', 'uC0', 'uC1', 'uC2', 'uC3',
         'uData', 'uDataSize', 'uSpec', 'uReact', 'uBeat', 'uBeatAge', 'uATime', 'uOverlay']) u[n] = gl.getUniformLocation(p, n);
       return (progs[id] = { p, u });
     };
+    const get = (id) => {
+      if (id in progs) return progs[id];
+      if (!pending[id]) {
+        const mk = (type, src) => { const sh = gl.createShader(type); gl.shaderSource(sh, src); gl.compileShader(sh); return sh; };
+        const vs = mk(gl.VERTEX_SHADER, SHADER_VERT), fs = mk(gl.FRAGMENT_SHADER, SHADER_HEAD + SCENE_SRC[id] + SHADER_TAIL);
+        const p = gl.createProgram(); gl.attachShader(p, vs); gl.attachShader(p, fs); gl.bindAttribLocation(p, 0, 'a'); gl.linkProgram(p);
+        pending[id] = { p, vs, fs };
+      }
+      if (par && !gl.getProgramParameter(pending[id].p, par.COMPLETION_STATUS_KHR)) return undefined;
+      return finish(id);
+    };
+    let lastOk = null;
     const mkTex = () => {
       const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
       for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
@@ -53,8 +63,11 @@
     let lastSim = null, lastVer = -1;
     return {
       gl,
-      draw(id, o) {
-        const pr = get(id) || get('aurora'); if (!pr) return;
+      // returns false when it couldn't draw this scene yet (still building); `exact` = draw nothing rather than the last scene
+      draw(id, o, exact) {
+        let pr = get(id);
+        if (pr === null) pr = get('aurora');
+        if (!pr) { if (exact || !lastOk) return false; pr = lastOk; } else lastOk = pr;
         gl.viewport(0, 0, canvas.width, canvas.height);
         gl.useProgram(pr.p);
         gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
@@ -86,6 +99,7 @@
         gl.uniform1f(pr.u.uATime, o.atime || 0);
         gl.uniform1f(pr.u.uOverlay, o.overlay || 0);
         gl.drawArrays(gl.TRIANGLES, 0, 3);
+        return true;
       },
     };
   }
@@ -427,7 +441,7 @@
       if (job !== thumbJob || !list.length) return;
       const s = list.shift();
       let sm = null; if (window.SIMS[s.id]) { sm = new window.SIMS[s.id](16 / 9); sm.update(47); }
-      TR.draw(s.id, { view: [0, 0, 1, 1], aspect: 16 / 9, time: 47, audio: [0, 0, 0], bright: 1, colors: cols, sim: sm });
+      if (!TR.draw(s.id, { view: [0, 0, 1, 1], aspect: 16 / 9, time: 47, audio: [0, 0, 0], bright: 1, colors: cols, sim: sm }, true)) { list.unshift(s); setTimeout(step, 150); return; }   // still building
       const el = $(`.tile[data-id="${s.id}"]`); if (el) el.style.backgroundImage = `url(${tcan.toDataURL('image/jpeg', 0.8)})`;
       setTimeout(step, 40);
     };
@@ -449,7 +463,7 @@
   // ---------- panel ----------
   const panel = $('#panel');
   let tab = 'scenes', hideTimer = null, overPanel = false;
-  const tileHtml = (s) => { const i = SCENES.indexOf(s); return `<button class="tile" data-id="${s.id}"><kbd>${i < 9 ? i + 1 : ''}</kbd><span>${s.name}</span></button>`; };
+  const tileHtml = (s) => { const i = SCENES.indexOf(s); return `<button class="tile" data-id="${s.id}"><i class="rot" role="checkbox" aria-checked="true" title="Include in automatic scene changes"></i><kbd>${i < 9 ? i + 1 : ''}</kbd><span>${s.name}</span></button>`; };
   $('#tiles').innerHTML = `<div class="tilegrid">${SCENES.filter((s) => !s.group).map(tileHtml).join('')}</div>`
     + `<h3 class="sub">Landscapes</h3><div class="tilegrid">${SCENES.filter((s) => s.group === 'land').map(tileHtml).join('')}</div>`
     + `<h3 class="sub">Algorithms</h3><div class="tilegrid">${SCENES.filter((s) => s.group === 'algo').map(tileHtml).join('')}</div>`
@@ -500,6 +514,10 @@
     $$('.tabs button').forEach((x) => x.classList.toggle('active', x.dataset.tab === tab));
     $$('#content section').forEach((x) => x.classList.toggle('active', x.dataset.tab === tab));
     $$('.tile').forEach((x) => x.classList.toggle('active', x.dataset.id === cur));
+    const skip = S.cycleSkip || [];                  // ticks for which scenes the automatic changes may pick
+    $('#tiles').classList.toggle('rotating', S.autoCycle > 0);
+    $$('.tile[data-id]').forEach((x) => { const on = !skip.includes(x.dataset.id); x.classList.toggle('skip', !on); const r = x.querySelector('.rot'); if (r) r.setAttribute('aria-checked', String(on)); });
+    $('#rotNote').textContent = S.autoCycle > 0 ? (skip.length >= SCENES.length - 1 ? 'Tick at least two scenes to rotate between.' : `Rotating through ${SCENES.length - skip.length} of ${SCENES.length} scenes. Untick a scene to leave it out.`) : '';
     $$('.sw').forEach((x) => x.classList.toggle('active', x.dataset.id === S.palette));
     const cc = customNow();
     $('.sw.cus').style.background = `linear-gradient(90deg,${cc.join(',')})`;
@@ -838,7 +856,15 @@
   document.addEventListener('change', (e) => { if (e.target.type === 'range') e.target.blur(); });
   const P = (p) => api.patch(p);
   $$('.tabs button').forEach((x) => x.addEventListener('click', () => setTab(x.dataset.tab, true)));
-  $('#tiles').addEventListener('click', (e) => { const t = e.target.closest('.tile'); if (!t) return; if (t.dataset.id === 'video' && !S.video.files.length) { api.cmd({ type: 'pick-video', key: me.key }); return; } P(S.mode === 'mix' ? { perDisplay: { [me.key]: t.dataset.id } } : { scene: t.dataset.id }); });
+  $('#tiles').addEventListener('click', (e) => {
+    const r = e.target.closest('.rot');
+    if (r && S.autoCycle > 0) {                       // the corner tick: in or out of the rotation, without switching to the scene
+      e.stopPropagation();
+      const id = r.closest('.tile').dataset.id, skip = S.cycleSkip || [];
+      P({ cycleSkip: skip.includes(id) ? skip.filter((x) => x !== id) : [...skip, id] });
+      return;
+    }
+    const t = e.target.closest('.tile'); if (!t) return; if (t.dataset.id === 'video' && !S.video.files.length) { api.cmd({ type: 'pick-video', key: me.key }); return; } P(S.mode === 'mix' ? { perDisplay: { [me.key]: t.dataset.id } } : { scene: t.dataset.id }); });
   $('#palettes').addEventListener('click', (e) => {
     const t = e.target.closest('.sw'); if (!t) return;
     // the first time, Custom starts from the colours on screen right now

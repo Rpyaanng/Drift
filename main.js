@@ -39,6 +39,7 @@ const DEFAULTS = {
   customColors: null,      // four '#rrggbb' colours once the user has made their own palette
   autoCycle: 0,            // minutes, 0 = off
   cycleShuffle: false,
+  cycleSkip: [],           // scenes left out of the automatic scene changes
   displaysOff: [],         // indices of monitors left alone
   quality: 0.75,
   fps: 60,
@@ -108,6 +109,7 @@ function loadSettings() {
     const known = (id) => id === 'video' || SCENES.includes(id);
     if (!known(state.scene)) state.scene = 'aurora';
     for (const k of Object.keys(state.perDisplay || {})) if (!known(state.perDisplay[k])) delete state.perDisplay[k];
+    state.cycleSkip = Array.isArray(state.cycleSkip) ? state.cycleSkip.filter((id) => SCENES.includes(id)) : [];
     if (state.palette === 'custom' && !Array.isArray(state.customColors)) state.palette = 'aurora';
     state.video.folders = (state.video.folders || []).filter((p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } });
     state.music.playlist = (state.music.playlist || []).filter((p) => { try { return fs.existsSync(p); } catch { return false; } });
@@ -861,11 +863,19 @@ const SCENES = ['aurora', 'nebula', 'silk', 'water', 'stars', 'lava', 'ridges', 
   'quasi', 'hyperbolic', 'apollonian', 'phyllotaxis', 'rose', 'chladni',
   'lake', 'pines', 'dunes', 'seaside', 'meadow', 'canyon'];
 function stepScene(dir, shuffle, auto) {
+  // automatic changes only pick the scenes ticked for rotation; Next / Previous still go through all of them
+  const pool = auto ? SCENES.filter((id) => !state.cycleSkip.includes(id)) : SCENES;
   const next = (cur) => {
     if (auto && cur === 'video') return cur;   // auto-change never interrupts your video
-    if (shuffle) { let n; do { n = SCENES[Math.floor(Math.random() * SCENES.length)]; } while (n === cur); return n; }
+    const others = pool.filter((id) => id !== cur);
+    if (!others.length) return cur;
+    if (shuffle) return others[Math.floor(Math.random() * others.length)];
     const i = SCENES.indexOf(cur);
-    return SCENES[(i + dir + SCENES.length) % SCENES.length];
+    for (let k = 1; k <= SCENES.length; k++) {   // the next scene in order that's in the pool
+      const n = SCENES[(((i + dir * k) % SCENES.length) + SCENES.length) % SCENES.length];
+      if (n !== cur && pool.includes(n)) return n;
+    }
+    return cur;
   };
   if (state.mode === 'mix') {
     const pd = { ...state.perDisplay };
@@ -1293,7 +1303,8 @@ async function runShots() {
   await wait(5000);
   const only = (process.env.DRIFT_ONLY || '').split(',').filter(Boolean);
   if (process.env.DRIFT_PALETTE) patch({ palette: process.env.DRIFT_PALETTE });
-  for (const s of (only.length ? only : SCENES)) { patch({ scene: s }); await wait(2600); await snap(s); }
+  const shotWait = +process.env.DRIFT_SHOTWAIT || 2600;
+  for (const s of (only.length ? only : SCENES)) { patch({ scene: s }); await wait(shotWait); await snap(s); }
   const lv = lastLevels || {};
   log.push('levels(generative): ' + JSON.stringify(lv.l) + ' spec max=' + Math.max(...(lv.s || [0])) + ' bands>0=' + (lv.s || []).filter((x) => x > 0).length + ' wave range=' + Math.min(...(lv.w || [128])) + '..' + Math.max(...(lv.w || [128])) + ' beats=' + JSON.stringify(lv.b) + ' aclock=' + (lv.a || 0).toFixed(3) + ' beatsSoFar=' + beatCount);
   if (process.env.DRIFT_OVERLAY) {
