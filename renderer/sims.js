@@ -279,5 +279,12 @@
     julia: (t) => { const a = t * 0.035, k = 0.985, re = k * (Math.cos(a) / 2 - Math.cos(2 * a) / 4), im = k * (Math.sin(a) / 2 - Math.sin(2 * a) / 4); return `Julia set — c = ${re.toFixed(3)} ${im < 0 ? '−' : '+'} ${Math.abs(im).toFixed(3)}i`; },
     hilbert: (t) => { const ph = (((t * 0.02) % 1) + 1) % 1; return `Hilbert curve — order 6 · ${Math.round(Math.min(ph / 0.8, 1) * 100)}% drawn`; },
     voronoi: () => 'Voronoi diagram — each region is closest to one moving point',
+    // the numbers below repeat the formulas in the matching shaders
+    quasi: (t) => { const w = [5, 7, 4, 6][((Math.floor(t * 0.02) % 4) + 4) % 4]; return `Quasicrystal — ${w} crossing waves make a ${2 * w}-fold pattern that never repeats`; },
+    hyperbolic: (t) => { const [p, q] = [[7, 3], [5, 4], [8, 3], [4, 5]][((Math.floor(t / 45) % 4) + 4) % 4]; return `Hyperbolic plane — {${p},${q}} tiling: ${p}-sided tiles, ${q} at every corner, all the same size`; },
+    apollonian: () => 'Apollonian gasket — every gap between three touching circles holds another circle',
+    phyllotaxis: (t) => `Phyllotaxis — each seed is turned ${((2.3999632 + 0.004 * Math.sin(t * 0.045)) * 180 / Math.PI).toFixed(2)}° from the last · golden angle 137.51°`,
+    rose: (t) => `Rose curve — r = cos(kθ), k = ${(4 + 3 * Math.sin(t * 0.012)).toFixed(2)}`,
+    chladni: (t) => { const i = Math.floor(t / 24), m = ((i * 3) % 5 + 5) % 5 + 1; return `Chladni figure — plate mode (${m}, ${m + 1 + ((i % 3) + 3) % 3}): sand gathers where the plate stays still`; },
   };
 })();

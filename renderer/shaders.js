@@ -37,6 +37,12 @@ window.SCENES = [
   { id: 'cubes',      name: 'Cube City',       group: '3d' },
   { id: 'lattice',    name: 'Lattice',         group: '3d' },
   { id: 'menger',     name: 'Menger Sponge',   group: '3d' },
+  { id: 'quasi',       name: 'Quasicrystal',      group: 'geo' },
+  { id: 'hyperbolic',  name: 'Hyperbolic Tiling', group: 'geo' },
+  { id: 'apollonian',  name: 'Apollonian Gasket', group: 'geo' },
+  { id: 'phyllotaxis', name: 'Phyllotaxis',       group: 'geo' },
+  { id: 'rose',        name: 'Rose Curves',       group: 'geo' },
+  { id: 'chladni',     name: 'Chladni Plate',     group: 'geo' },
 ];
 
 window.SHADER_VERT = `attribute vec2 a; void main(){ gl_Position = vec4(a, 0.0, 1.0); }`;
@@ -756,5 +762,184 @@ vec3 scene(vec2 uv, vec2 p){
     col = mix(fog, col, exp(-t * 0.2));
   }
   return col + pal(0.75) * (steps / 72.0) * (steps / 72.0) * 0.35 * (0.6 + uAudio.x);
+}`,
+
+// ---- mathematical geometry ----
+// Figures with a centre repeat once per 16:9 of width, so a spanned wall of monitors gets one each.
+
+quasi: `
+float qwaves(vec2 q, float n, float ph){            // n plane waves fanned evenly over half a turn
+  float s = 0.0;
+  for (int k = 0; k < 7; k++){
+    if (float(k) >= n) break;
+    float a = 3.14159265 * float(k) / n;
+    s += cos(dot(q, vec2(cos(a), sin(a))) + ph);
+  }
+  return s / n;
+}
+float qcount(float i){ i = mod(i, 4.0); return i < 0.5 ? 5.0 : i < 1.5 ? 7.0 : i < 2.5 ? 4.0 : 6.0; }
+vec3 scene(vec2 uv, vec2 p){
+  float c = uTime * 0.02, i = floor(c), w = smoothstep(0.86, 1.0, fract(c));
+  vec2 q = (p * rot(uTime * 0.012)) * (36.0 + 6.0 * sin(uTime * 0.03));
+  float ph = uTime * 0.22 + uATime * 1.4;
+  float s = qwaves(q, qcount(i), ph);
+  if (w > 0.0) s = mix(s, qwaves(q, qcount(i + 1.0), ph), w);
+  float v = 0.5 + 0.5 * s, bands = 0.5 + 0.5 * cos(s * 10.0 + uTime * 0.12);
+  vec3 col = pal(0.06 + 0.86 * v * (0.62 + 0.38 * bands)) * (0.18 + 1.05 * pow(v, 1.6) + 0.22 * bands);
+  col *= 0.8 + 1.7 * spec(v * 0.8);
+  return col + pal(0.92) * beatRings(p, vec2(0.0), 0.5) * 0.35;
+}`,
+
+hyperbolic: `
+vec2 cmul(vec2 a, vec2 b){ return vec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
+vec2 cdiv(vec2 a, vec2 b){ return vec2(a.x * b.x + a.y * b.y, a.y * b.x - a.x * b.y) / dot(b, b); }
+vec3 scene(vec2 uv, vec2 p){
+  float tiles = max(1.0, floor(uAspect / 1.78 + 0.5)), tw = uAspect / tiles;
+  float tx = (p.x + uAspect * 0.5) / tw, ti = floor(tx);
+  vec2 lp = vec2((fract(tx) - 0.5) * tw, p.y);
+  float c = uTime / 45.0, ci = mod(floor(c) + ti, 4.0), cf = fract(c);
+  float P = ci < 0.5 ? 7.0 : ci < 1.5 ? 5.0 : ci < 2.5 ? 8.0 : 4.0;     // {P,Q}: P-sided tiles, Q meeting at each corner
+  float Q = ci < 0.5 ? 3.0 : ci < 1.5 ? 4.0 : ci < 2.5 ? 3.0 : 5.0;
+  vec3 bg = pal(0.04) * (0.45 + 0.35 * uv.y);
+  vec2 z = lp / 0.465; float r0 = length(z);
+  if (r0 >= 1.0) return bg + pal(0.72) * exp(-(r0 - 1.0) * 26.0) * (0.3 + 0.7 * uAudio.x) + pal(0.9) * beatRings(lp, vec2(0.0), 0.5) * 0.25;
+  float ta = uTime * 0.06 + uATime * 0.25 + ti * 2.1;
+  vec2 a = 0.5 * vec2(cos(ta), sin(ta * 0.83));
+  z = cdiv(z - a, vec2(1.0, 0.0) - cmul(vec2(a.x, -a.y), z));          // slide the whole plane: a Mobius map of the disc
+  z = z * rot(uTime * 0.03);
+  float sp = sin(3.14159265 / P), cq = cos(3.14159265 / Q), den = sqrt(cq * cq - sp * sp);
+  vec2 cc = vec2(cq / den, 0.0); float cr = sp / den;                 // the circle that is one side of the tile
+  vec2 nb = vec2(-sp, cos(3.14159265 / P));
+  float n = 0.0;
+  for (int i = 0; i < 56; i++){                                        // reflect until the point lands in the first triangle
+    bool moved = false;
+    if (z.y < 0.0){ z.y = -z.y; n += 1.0; moved = true; }
+    float d = dot(z, nb);
+    if (d > 0.0){ z -= 2.0 * d * nb; n += 1.0; moved = true; }
+    vec2 dz = z - cc; float d2 = dot(dz, dz);
+    if (d2 < cr * cr){ z = cc + dz * (cr * cr / d2); n += 1.0; moved = true; }
+    if (!moved) break;
+  }
+  float edge = length(z - cc) - cr, spoke = min(z.y, -dot(z, nb)), par = mod(n, 2.0), zr = length(z) / (cc.x - cr);
+  float rim = 1.0 - r0 * r0;
+  vec3 col = pal(0.14 + 0.3 * par + 0.3 * zr) * (0.2 + 0.4 * par + 0.5 * zr * zr);
+  col += pal(0.95) * smoothstep(0.035, 0.0, edge) * (0.55 + 1.6 * spec(r0 * 0.8));
+  col += pal(0.7) * smoothstep(0.012, 0.0, spoke) * 0.22;
+  col *= smoothstep(0.0, 0.22, rim) * smoothstep(0.0, 0.03, cf) * smoothstep(1.0, 0.97, cf);
+  return mix(bg, col, smoothstep(0.0, 0.02, rim)) + pal(0.9) * beatRings(lp, vec2(0.0), 0.5) * 0.25;
+}`,
+
+apollonian: `
+vec2 cmul(vec2 a, vec2 b){ return vec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
+vec2 cdiv(vec2 a, vec2 b){ return vec2(a.x * b.x + a.y * b.y, a.y * b.x - a.x * b.y) / dot(b, b); }
+vec3 scene(vec2 uv, vec2 p){
+  float tiles = max(1.0, floor(uAspect / 1.78 + 0.5)), tw = uAspect / tiles;
+  float tx = (p.x + uAspect * 0.5) / tw, ti = floor(tx);
+  vec2 lp = vec2((fract(tx) - 0.5) * tw, p.y);
+  vec3 bg = pal(0.04) * (0.45 + 0.35 * uv.y);
+  vec2 z = lp / 0.47; float r0 = length(z);
+  if (r0 >= 1.0) return bg + pal(0.72) * exp(-(r0 - 1.0) * 26.0) * (0.3 + 0.7 * uAudio.x) + pal(0.9) * beatRings(lp, vec2(0.0), 0.5) * 0.25;
+  float ta = uTime * 0.05 + uATime * 0.2 + ti * 1.7;
+  vec2 a = 0.52 * vec2(cos(ta), sin(ta * 0.77));
+  vec2 den = vec2(1.0, 0.0) - cmul(vec2(a.x, -a.y), z);
+  float sc = (1.0 - dot(a, a)) / dot(den, den);                        // how much the map stretches lengths here
+  z = cdiv(z - a, den);                                                // a Mobius map: every circle stays a circle
+  z = z * rot(uTime * 0.02);
+  // Four mutually tangent circles (one outer, three inner). Inverting in the four circles through their
+  // touching points maps the packing onto itself, so repeating it carries any point back into one of the first four.
+  float n = 0.0;
+  for (int i = 0; i < 30; i++){
+    float d2 = dot(z, z);
+    if (d2 < 0.0717968){ float k = 0.0717968 / d2; z *= k; sc *= k; n += 1.0; continue; }
+    bool moved = false;
+    for (int j = 0; j < 3; j++){
+      float an = -1.5707963 + 2.0943951 * float(j);
+      vec2 c = 2.0 * vec2(cos(an), sin(an)), dz = z - c; float e2 = dot(dz, dz);
+      if (e2 < 3.0){ float k = 3.0 / e2; z = c + dz * k; sc *= k; n += 1.0; moved = true; break; }
+    }
+    if (!moved) break;
+  }
+  float d = abs(length(z) - 1.0), which = 0.0;
+  for (int j = 0; j < 3; j++){
+    float an = 1.5707963 + 2.0943951 * float(j);
+    float e = abs(length(z - 0.5358984 * vec2(cos(an), sin(an))) - 0.4641016);
+    if (e < d){ d = e; which = float(j) + 1.0; }
+  }
+  float inner = clamp(d / 0.2, 0.0, 1.0);          // depth inside the circle the point ended in
+  d /= sc;                                         // back to distance on screen
+  float hue = fract(n * 0.137 + which * 0.21);
+  vec3 col = pal(0.12 + 0.6 * hue) * (0.16 + 0.55 * inner) * (0.7 + 1.5 * spec(hue * 0.9));
+  col += pal(0.95) * exp(-d * 240.0) * (0.75 + 1.2 * uAudio.x);
+  col += pal(0.8) * exp(-d * 40.0) * 0.22;
+  return col + pal(0.9) * beatRings(lp, vec2(0.0), 0.5) * 0.25;
+}`,
+
+phyllotaxis: `
+vec3 scene(vec2 uv, vec2 p){
+  float tiles = max(1.0, floor(uAspect / 1.78 + 0.5)), tw = uAspect / tiles;
+  float tx = (p.x + uAspect * 0.5) / tw, ti = floor(tx);
+  vec2 lp = vec2((fract(tx) - 0.5) * tw, p.y);
+  float ang = 2.3999632 + 0.004 * sin(uTime * 0.045 + ti * 1.3);       // the golden angle, gently detuned
+  vec2 q = lp * rot(-uTime * 0.02 - uATime * 0.05);
+  float r = length(q);
+  vec3 col = pal(0.04) * (0.45 + 0.35 * uv.y) + pal(0.3) * exp(-r * 5.0) * 0.12;
+  float best = 1e3, bn = 0.0;
+  for (int i = 1; i <= 260; i++){
+    float n = float(i), f = sqrt(n / 260.0), rn = 0.47 * f, size = 0.0055 + 0.0135 * f;
+    if (abs(rn - r) > size * 2.2) continue;
+    float th = n * ang;
+    float d = length(q - rn * vec2(cos(th), sin(th))) / size;
+    if (d < best){ best = d; bn = n; }
+  }
+  if (best > 2.2) return col + pal(0.9) * beatRings(lp, vec2(0.0), 0.5) * 0.25;
+  float lvl = spec(bn / 260.0 * 0.9);
+  vec3 hue = pal(0.22 + 0.72 * (0.5 + 0.5 * cos(6.28318 * bn / 21.0 + uTime * 0.25)));    // colour runs along the 21 spirals
+  col += hue * smoothstep(1.0, 0.72, best) * (0.5 + 0.5 * sqrt(bn / 260.0) + 1.8 * lvl) * (1.0 - 0.35 * best * best);
+  col += hue * exp(-best * 1.6) * (0.14 + 0.5 * lvl);
+  return col + pal(0.9) * beatRings(lp, vec2(0.0), 0.5) * 0.25;
+}`,
+
+rose: `
+vec3 scene(vec2 uv, vec2 p){
+  float tiles = max(1.0, floor(uAspect / 1.78 + 0.5)), tw = uAspect / tiles;
+  float tx = (p.x + uAspect * 0.5) / tw, ti = floor(tx);
+  vec2 lp = vec2((fract(tx) - 0.5) * tw, p.y);
+  float k = 4.0 + 3.0 * sin(uTime * 0.012 + ti * 0.9);                 // r = cos(k * angle), k drifting between 1 and 7
+  vec2 q = lp * rot(uTime * 0.03);
+  float r = length(q) / 0.45, th = atan(q.y, q.x);
+  vec3 col = pal(0.04) * (0.45 + 0.35 * uv.y) + pal(0.25) * exp(-r * 2.2) * 0.1;
+  float amp = 1.0 + 0.06 * uAudio.x;
+  for (int j = 0; j < 14; j++){                                        // seven full turns of the pen
+    float t = th + 3.14159265 * float(j), sgn = mod(float(j), 2.0) < 0.5 ? 1.0 : -1.0;
+    float f = r - sgn * amp * cos(k * t);
+    float g = sqrt(1.0 + pow(amp * k * sin(k * t) / max(r, 0.04), 2.0));
+    float d = abs(f) / g, turn = float(j) / 13.0;
+    float lvl = spec(turn * 0.85);
+    col += pal(0.34 + 0.6 * turn) * (exp(-d * d * 9000.0) * (0.75 + 1.6 * lvl) + exp(-d * 26.0) * 0.07) * (1.0 - 0.45 * turn);
+  }
+  return col + pal(0.9) * beatRings(lp, vec2(0.0), 0.5) * 0.25;
+}`,
+
+chladni: `
+float plate(vec2 q, vec2 m){ return cos(m.x * 3.14159265 * q.x) * cos(m.y * 3.14159265 * q.y) - cos(m.y * 3.14159265 * q.x) * cos(m.x * 3.14159265 * q.y); }
+vec2 pmode(float i){ float n = 1.0 + mod(i * 3.0, 5.0); return vec2(n, n + 1.0 + mod(i, 3.0)); }
+vec3 scene(vec2 uv, vec2 p){
+  float tiles = max(1.0, floor(uAspect / 1.78 + 0.5)), tw = uAspect / tiles;
+  float tx = (p.x + uAspect * 0.5) / tw, ti = floor(tx);
+  vec2 lp = vec2((fract(tx) - 0.5) * tw, p.y);
+  float c = uTime / 24.0, ci = floor(c) + ti * 2.0, w = smoothstep(0.78, 1.0, fract(c));
+  vec2 q = lp / 0.43;                                                  // the plate spans -1..1
+  vec3 bg = pal(0.04) * (0.45 + 0.35 * uv.y);
+  float box = max(abs(q.x), abs(q.y));
+  if (box > 1.0) return bg + pal(0.7) * exp(-(box - 1.0) * 30.0) * (0.25 + 0.6 * uAudio.x) + pal(0.9) * beatRings(lp, vec2(0.0), 0.5) * 0.25;
+  float f = mix(plate(q, pmode(ci)), plate(q, pmode(ci + 1.0)), w);    // how hard the plate shakes at this spot
+  float still = exp(-abs(f) * (9.0 - 3.0 * min(uAudio.x, 1.0)));       // 1 on the lines that don't move: sand settles there
+  vec2 g = floor(q * 230.0);
+  float grain = hash21(g + step(0.22, abs(f)) * floor(uTime * 7.0) * 3.17);   // loose grains keep bouncing
+  float sand = step(grain, pow(still, 1.4) * 0.96 + 0.012);
+  vec3 col = pal(0.16) * (0.3 + 0.12 * abs(f)) + pal(0.45) * abs(f) * abs(f) * 0.05;
+  col += pal(0.72 + 0.26 * hash21(g + 5.3)) * sand * (0.8 + 1.4 * spec(0.1 + 0.6 * still));
+  col += pal(0.9) * still * still * 0.12;
+  return col + pal(0.9) * beatRings(lp, vec2(0.0), 0.5) * 0.25;
 }`,
 };

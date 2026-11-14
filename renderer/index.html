@@ -8,6 +8,7 @@
 </head>
 <body>
 <div id="stage"><canvas id="c"></canvas><canvas id="vbg"></canvas><video id="v" playsinline muted></video></div>
+<div id="subs"><div id="subText"></div></div>
 <audio id="va"></audio>
 <div id="clock"></div>
 <div id="breath"><div class="ring"></div><span></span></div>
@@ -83,6 +84,44 @@
               <span class="chk"><input type="checkbox" id="videoSound"><i></i>Sound</span>
               <button class="btn ghost" id="pickVideo">Open file…</button>
               <button class="btn ghost" id="stopVideo">Stop video</button>
+            </div>
+          </div>
+          <div id="subBox">
+            <div class="row">
+              <h3>Subtitles</h3>
+              <select id="subTrack" title="Which subtitles to show. S turns them on or off, V switches to the next one."></select>
+              <button class="btn ghost" id="subFile" title="Use a subtitle file from your PC (.srt, .vtt, .ass)">Load file…</button>
+              <button class="btn ghost" id="subFind" title="Look for subtitles on the internet">Find online…</button>
+              <button class="btn ghost" id="subMore">Look &amp; timing</button>
+              <span class="note" id="subNote"></span>
+            </div>
+            <div id="subOnline">
+              <div class="row">
+                <input type="search" id="subQ" placeholder="Film or show name" spellcheck="false">
+                <span class="sublbl">Season</span><input type="search" id="subS" class="num" inputmode="numeric" maxlength="3">
+                <span class="sublbl">Episode</span><input type="search" id="subE" class="num" inputmode="numeric" maxlength="4">
+                <select id="subLang" title="Language to look for"></select>
+                <button class="btn" id="subGo">Search</button>
+              </div>
+              <div class="row" id="subMatchRow"><span class="sublbl">Found</span><select id="subMatch" title="Not the right film or show? Pick another one."></select></div>
+              <div id="subResults"></div>
+              <p class="note">Searching sends the name in the box to Cinemeta and OpenSubtitles — nothing else. Leave Season and Episode empty for a film. Timing a little off? Use Look &amp; timing.</p>
+            </div>
+            <div id="subLook">
+              <div class="grid4">
+                <label>My language<select id="subPref" title="Drift picks subtitles in this language when a video has them"></select></label>
+                <label>Size <output id="o-subSize"></output><input type="range" id="subSize" min="0.5" max="2.5" step="0.05"></label>
+                <label>Height on screen <output id="o-subLift"></output><input type="range" id="subLift" min="0" max="70" step="1"></label>
+                <label>Style<span class="substy"><select id="subBg"><option value="outline">Outline</option><option value="shadow">Soft shadow</option><option value="box">Dark box</option></select><input type="color" id="subColor" title="Text colour"></span></label>
+              </div>
+              <div class="row" id="subTiming">
+                <span class="sublbl">Timing</span>
+                <button class="btn" data-d="-0.5">− 0.5 s</button><button class="btn" data-d="-0.1">− 0.1 s</button>
+                <b id="subOff"></b>
+                <button class="btn" data-d="0.1">+ 0.1 s</button><button class="btn" data-d="0.5">+ 0.5 s</button>
+                <button class="btn ghost" id="subOffReset">Reset</button>
+                <span class="note" style="margin:0">Words appear before they're spoken? Press + (or X). Too late? Press − (or Z). Remembered for each video.</span>
+              </div>
             </div>
           </div>
           <div id="vgrid"></div>
@@ -166,7 +205,7 @@
           <label>Sleep timer — fade out and close <output id="o-sleep"></output>
             <select id="sleep"><option value="0">Off</option><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="45">45 minutes</option><option value="60">1 hour</option><option value="90">1.5 hours</option><option value="120">2 hours</option></select>
           </label>
-          <p class="keys"><b>Esc</b> exit · <b>Tab</b> controls · <b>Space</b> play/pause · <b>← →</b> previous/next · <b>↑ ↓</b> volume · <b>P</b> colour · <b>C</b> clock · <b>B</b> breathing<br>Play, previous and next act on the selected tab: Scenes, Video or Music.</p>
+          <p class="keys"><b>Esc</b> exit · <b>Tab</b> controls · <b>Space</b> play/pause · <b>← →</b> previous/next · <b>↑ ↓</b> volume · <b>P</b> colour · <b>C</b> clock · <b>B</b> breathing<br>During a video: <b>S</b> subtitles on/off · <b>V</b> next subtitle track · <b>Z X</b> subtitle timing<br>Play, previous and next act on the selected tab: Scenes, Video or Music.</p>
           <div class="row"><button class="btn ghost" id="reset">Reset everything</button></div>
         </div>
       </div>
@@ -192,6 +231,7 @@
       <button class="icon" id="nextTrack" title="Next (→)">⏭</button>
       <span id="nowName"></span>
       <i class="sep"></i>
+      <button class="icon" id="vcc" title="Subtitles on / off (S)">CC</button>
       <button class="icon" id="vsound" title="Video sound on / off"></button>
       <input type="range" id="qvol" min="0" max="1" step="0.01">
       <i class="sep"></i>

@@ -193,3 +193,50 @@ body:has(#panel.show) #algo { opacity: 0; }
 .cc input[type=color]::-webkit-color-swatch { border: 0; border-radius: 5px; }
 #customDark { margin-left: auto; font-size: 12px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); background: rgba(255,255,255,.06); color: inherit; cursor: pointer; }
 #customDark:hover { background: rgba(255,255,255,.12); }
+
+/* ---------- subtitles ---------- */
+#subs { position: fixed; left: 0; right: 0; bottom: max(calc(5vh + var(--sub-lift, 0) * 1vh), var(--raise, 0px)); display: none; justify-content: center; padding: 0 6vw; pointer-events: none; transition: bottom .25s ease; }
+#subs.on { display: flex; }
+#subs.top { bottom: auto; top: 6vh; }
+#subText { max-width: 82vw; text-align: center; color: var(--sub-color, #fff); font: 600 calc(var(--sub-size, 1) * clamp(16px, 4.2vh, 72px))/1.28 "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif; letter-spacing: .01em; }
+#subs.bg-outline #subText { -webkit-text-stroke: .16em rgba(0,0,0,.9); paint-order: stroke fill; text-shadow: 0 .04em .2em rgba(0,0,0,.7); }
+#subs.bg-shadow #subText { text-shadow: 0 .05em .22em rgba(0,0,0,.95), 0 0 .7em rgba(0,0,0,.7); }
+#subs.bg-box #subText { background: rgba(0,0,0,.66); padding: .14em .55em .2em; border-radius: .28em; }
+#subBox { display: none; margin: 0 0 14px; padding: 12px 14px 2px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.03); }
+#subBox.on { display: block; }
+#subBox .row { margin-bottom: 10px; }
+#subBox #subTrack { flex: 1 1 220px; min-width: 160px; max-width: 420px; }
+#subBox .note { margin: 0; }
+#subBox p.note { margin: 0 0 10px; }
+#subOnline, #subLook { display: none; padding-top: 4px; border-top: 1px solid var(--line); margin-top: 2px; }
+#subBox.find #subOnline, #subBox.look #subLook { display: block; }
+#subBox.find #subFind, #subBox.look #subMore { color: var(--ink); border-color: var(--accent); }
+#subOnline .row:first-child, #subLook .grid4 { margin-top: 10px; }
+#subQ { flex: 1 1 200px; width: auto; }
+input.num { width: 46px; text-align: center; padding: 6px 4px; }
+.sublbl { color: var(--dim); font-size: 12px; }
+#subMatch { flex: 1 1 260px; max-width: 520px; }
+#subResults { display: grid; gap: 4px; max-height: 190px; overflow-y: auto; margin-bottom: 10px; }
+#subResults::-webkit-scrollbar { width: 8px; }
+#subResults::-webkit-scrollbar-thumb { background: rgba(255,255,255,.14); border-radius: 4px; }
+.subres { all: unset; cursor: pointer; display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; background: rgba(255,255,255,.05); font-size: 12.5px; color: var(--ink); min-width: 0; }
+.subres:hover { background: rgba(255,255,255,.12); }
+.subres b { flex: none; width: 84px; color: var(--dim); font-weight: 600; }
+.subres span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: text; }
+.subres em { flex: none; font-style: normal; font-size: 11px; padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 28%, transparent); color: var(--ink); }
+.subres.busy { opacity: .5; pointer-events: none; }
+.subres.done { outline: 1px solid var(--accent); }
+.grid4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1.1fr; gap: 18px; }
+.grid4 label { margin-bottom: 10px; }
+.substy { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.substy select { margin: 0; flex: 1; }
+.substy input[type=color] { width: 38px; height: 30px; padding: 0; border: 1px solid var(--line); border-radius: 7px; background: none; cursor: pointer; flex: none; }
+.substy input[type=color]::-webkit-color-swatch-wrapper { padding: 2px; }
+.substy input[type=color]::-webkit-color-swatch { border: 0; border-radius: 5px; }
+#subLook select { width: 100%; }
+#subLook #subPref { margin-top: 6px; }
+#subOff { min-width: 70px; text-align: center; font-variant-numeric: tabular-nums; color: var(--ink); }
+#subTiming .btn { padding: 6px 10px; }
+#vcc { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; color: var(--dim); }
+#vcc.on { color: #0b0d13; background: var(--ink); }
+@media (max-width: 760px) { .grid4 { grid-template-columns: 1fr 1fr; gap: 8px; } }

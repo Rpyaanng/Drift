@@ -263,6 +263,54 @@
     vaud.playbackRate = Math.abs(err) > 0.04 && Math.abs(err) < 2.5 ? Math.max(0.9, Math.min(1.1, 1 + err * 0.25)) : 1;
     if (init.testMode && Math.random() < 0.3) console.log(`fallback audio: video=${vt.toFixed(2)} audio=${(vaOffset + vaud.currentTime).toFixed(2)} ready=${vaud.readyState}`);
   }
+  // A copy of Drift without ffmpeg can't convert Dolby / DTS sound, so the picture plays in silence. Say why, once per video.
+  let silentFor = '', silentAt = 0;
+  function checkSilent() {
+    const va = S.videoAudio || {};
+    if (va.ffmpeg !== false || S.videoLeader !== me.key || !S.video.sound || shown !== 'video' || video.paused) { silentAt = 0; return; }
+    if (silentFor === S.videoUrl) return;
+    if (!silentAt) { silentAt = performance.now(); return; }
+    if (performance.now() - silentAt < 4000 || video.currentTime < 2) return;
+    silentFor = S.videoUrl;
+    if (!video.webkitAudioDecodedByteCount) toast('No sound? This video may use Dolby or DTS audio, and this copy of Drift is missing ffmpeg.exe to convert it.', 9000);
+  }
+  // ---------- subtitles ----------
+  const subsEl = $('#subs'), subText = $('#subText');
+  let cues = [], cueSeq = -1, cueKey = '', cueBusy = false, subAsk = false;
+  const subMine = () => { const U = me.union, mid = U.x + U.width / 2; return mid >= me.bounds.x && mid < me.bounds.x + me.bounds.width; };   // a spanned video shows them on the middle screen
+  async function syncSubs() {
+    const info = S.subsInfo || {}, st = S.subs || {};
+    subsEl.style.setProperty('--sub-size', st.size || 1);
+    subsEl.style.setProperty('--sub-color', st.color || '#ffffff');
+    subsEl.style.setProperty('--sub-lift', st.lift || 0);
+    for (const b of ['outline', 'shadow', 'box']) subsEl.classList.toggle('bg-' + b, (st.bg || 'outline') === b);
+    if (subAsk && !info.busy) { subAsk = false; const tr = (info.tracks || []).find((t) => t.id === info.sel); toast(info.note || (tr ? 'Subtitles: ' + tr.label : 'Subtitles off'), info.note ? 5000 : 2200); }
+    if (info.seq === cueSeq || cueBusy) return;
+    cueBusy = true;
+    try { const r = await api.subCues(); cues = r.cues || []; cueSeq = r.seq; } catch { cues = []; }
+    cueBusy = false; cueKey = '';
+    if (cueSeq !== (S.subsInfo || {}).seq) syncSubs();
+  }
+  function drawSubs() {
+    const info = S.subsInfo || {};
+    const spanIt = S.mode === 'span' && S.video.layout === 'span';
+    let html = '', top = false;
+    if (shown === 'video' && S.videoUrl && info.sel && cues.length && (!spanIt || subMine())) {
+      const t = video.currentTime - (info.offset || 0);
+      let lo = 0, hi = cues.length - 1, at = -1;
+      while (lo <= hi) { const mid = (lo + hi) >> 1; if (cues[mid].s <= t) { at = mid; lo = mid + 1; } else hi = mid - 1; }
+      const live = [];
+      for (let i = at; i >= 0 && i > at - 8; i--) if (cues[i].e > t) live.unshift(cues[i]);
+      html = live.map((c) => c.t).join('\n'); top = live.length > 0 && live.every((c) => c.top);
+    }
+    if (html) subsEl.style.setProperty('--raise', (panel.classList.contains('show') ? Math.min(innerHeight * 0.66, innerHeight - panel.getBoundingClientRect().top + 16) : 0) + 'px');
+    const key = html + '|' + top;
+    if (key === cueKey) return;
+    cueKey = key; subText.innerHTML = html.replace(/\n/g, '<br>');
+    subsEl.classList.toggle('on', !!html); subsEl.classList.toggle('top', top);
+  }
+  setInterval(drawSubs, 50);
+  setInterval(checkSilent, 1000);
   setInterval(syncVideo, 250);
   video.addEventListener('loadedmetadata', syncVideo);
   video.addEventListener('ended', () => { if (S.videoLeader === me.key) api.cmd({ type: 'video-next', index: S.video.index }); });
@@ -333,7 +381,8 @@
   const tileHtml = (s) => { const i = SCENES.indexOf(s); return `<button class="tile" data-id="${s.id}"><kbd>${i < 9 ? i + 1 : ''}</kbd><span>${s.name}</span></button>`; };
   $('#tiles').innerHTML = `<div class="tilegrid">${SCENES.filter((s) => !s.group).map(tileHtml).join('')}</div>`
     + `<h3 class="sub">Algorithms</h3><div class="tilegrid">${SCENES.filter((s) => s.group === 'algo').map(tileHtml).join('')}</div>`
-    + `<h3 class="sub">3D geometry</h3><div class="tilegrid">${SCENES.filter((s) => s.group === '3d').map(tileHtml).join('')}</div>`;
+    + `<h3 class="sub">3D geometry</h3><div class="tilegrid">${SCENES.filter((s) => s.group === '3d').map(tileHtml).join('')}</div>`
+    + `<h3 class="sub">Mathematical geometry</h3><div class="tilegrid">${SCENES.filter((s) => s.group === 'geo').map(tileHtml).join('')}</div>`;
   $('#palettes').innerHTML = Object.entries(PALETTES).map(([id, p]) => `<button class="sw" data-id="${id}" title="${p.name}" style="background:linear-gradient(90deg,${p.c.join(',')})"></button>`).join('')
     + `<button class="sw cyc" data-id="cycle" title="Cycle through every colour" style="background:linear-gradient(90deg,${Object.values(PALETTES).map((p) => p.c[2]).join(',')})">↻</button>`
     + `<button class="sw cus" data-id="custom" title="Your own colours">✎</button>`;
@@ -413,7 +462,9 @@
     $('#videoFit').value = S.video.fit; $('#videoLayout').value = S.video.layout; $('#videoSound').checked = !!S.video.sound;
     $('#stopVideo').style.display = cur === 'video' ? '' : 'none';
     const va = S.videoAudio || {};
+    syncSubUI();
     $('#vnote').textContent = !videoOn() ? 'Pick a video to play it on your monitors. Videos in the same folder play one after another.'
+      : va.ffmpeg === false ? `Now playing: ${S.videoName} — this copy of Drift is missing ffmpeg.exe, so Dolby / DTS sound can't be converted and subtitles stored inside a video can't be read. Put ffmpeg.exe in Drift's "resources" folder and restart.`
       : va.mode === 'transcode' ? `Now playing: ${S.videoName} — its ${va.codec.toUpperCase().replace('EAC3', 'Dolby Digital Plus (E-AC-3)').replace(/^AC3$/, 'Dolby Digital (AC-3)')} sound is being converted live so you can hear it.`
       : va.mode === 'none' ? `Now playing: ${S.videoName} — this file has no audio track.` : `Now playing: ${S.videoName}`;
     renderFolders(); markPlaying();
@@ -432,6 +483,100 @@
     $('#nowName').title = $('#nowName').textContent;
     renderMusicLib();
   }
+
+  // ---------- subtitles: the box in the Video tab ----------
+  const LANGS = init.langs || [['en', 'English']];
+  const langOpts = LANGS.map(([c, n]) => `<option value="${c}">${n}</option>`).join('');
+  $('#subPref').innerHTML = langOpts;
+  $('#subLang').innerHTML = langOpts + '<option value="">Any language</option>';
+  $('#subLang').value = (S.subs || {}).lang || 'en';
+  let subTrackKey = null, subFor = null, subRes = null, subJob = 0;
+  const offStr = (v) => (!v ? 'In sync' : (v > 0 ? '+' : '−') + Math.abs(v).toFixed(Math.abs(v * 10 % 1) > 0.01 ? 2 : 1) + ' s');
+  function syncSubUI() {
+    const si = S.subsInfo || { tracks: [] }, sb = S.subs || {}, box = $('#subBox'), tracks = si.tracks || [];
+    box.classList.toggle('on', videoOn());
+    const vcc = $('#vcc');
+    vcc.style.display = videoOn() ? '' : 'none'; vcc.classList.toggle('on', !!si.sel);
+    if (si.file !== subFor) {       // a different video: start the online search over with its name filled in
+      subFor = si.file; subRes = null; subJob++; renderSubResults();
+      const g = si.guess || {};
+      $('#subQ').value = g.title || ''; $('#subS').value = g.season || ''; $('#subE').value = g.episode || '';
+    }
+    const key = tracks.map((t) => t.id + t.label).join('|');
+    if (key !== subTrackKey) {
+      subTrackKey = key;
+      $('#subTrack').innerHTML = '<option value="off">Off</option>' + tracks.map((t) => `<option value="${esc(t.id)}"${t.usable ? '' : ' disabled'}>${esc(t.label)}</option>`).join('');
+    }
+    if (document.activeElement !== $('#subTrack')) $('#subTrack').value = si.sel || 'off';
+    $('#subNote').textContent = si.busy ? 'Reading subtitles…' : si.note ? si.note : !tracks.length ? 'None came with this video.' : !si.sel && tracks.some((t) => t.usable) ? `${tracks.filter((t) => t.usable).length} available` : '';
+    $('#subOff').textContent = offStr(si.offset || 0);
+    setVal($('#subSize'), sb.size || 1); setVal($('#subLift'), sb.lift || 0);
+    $('#o-subSize').textContent = Math.round((sb.size || 1) * 100) + '%';
+    $('#o-subLift').textContent = sb.lift ? '+' + Math.round(sb.lift) + '%' : 'Bottom';
+    if (document.activeElement !== $('#subColor')) $('#subColor').value = sb.color || '#ffffff';
+    $('#subBg').value = sb.bg || 'outline'; $('#subPref').value = sb.lang || 'en';
+  }
+  function renderSubResults() {
+    const box = $('#subResults'), row = $('#subMatchRow');
+    row.style.display = 'none';
+    if (!subRes) { box.innerHTML = ''; return; }
+    if (subRes.busy) { box.innerHTML = '<p class="note">Searching…</p>'; return; }
+    if (!subRes.ok) { box.innerHTML = `<p class="note">${esc(subRes.error || 'The search failed.')}</p>`; return; }
+    const titles = subRes.titles || [], pk = subRes.picked;
+    if (!pk) { box.innerHTML = '<p class="note">Nothing by that name was found. Check the spelling or try a shorter name.</p>'; return; }
+    if (titles.length > 1) {
+      row.style.display = '';
+      $('#subMatch').innerHTML = titles.map((t) => `<option value="${esc(t.id)}" data-type="${t.type}">${esc(t.name)}${t.year ? ' (' + t.year + ')' : ''} — ${t.type === 'series' ? 'show' : 'film'}</option>`).join('');
+      $('#subMatch').value = pk.id;
+    }
+    const want = $('#subLang').value, wantName = (LANGS.find((l) => l[0] === want) || [])[1];
+    if (!subRes.subs.length) {
+      const others = (subRes.langs || []).map((c) => (LANGS.find((l) => l[0] === c) || [])[1]).filter(Boolean);
+      box.innerHTML = `<p class="note">No ${wantName ? esc(wantName) + ' ' : ''}subtitles were found for ${esc(pk.name)}${pk.type === 'series' ? ' — check the season and episode numbers' : ''}.${others.length ? ' Other languages there: ' + esc(others.slice(0, 12).join(', ')) + '.' : ''}</p>`;
+      return;
+    }
+    box.innerHTML = subRes.subs.map((s, i) => `<button class="subres" data-i="${i}" title="Use these subtitles"><b>${esc(s.langName)}</b><span>${esc(s.name)}</span>${s.score >= 4 ? '<em>Likely match</em>' : ''}</button>`).join('');
+  }
+  async function subSearch(id, type) {
+    const text = $('#subQ').value.trim();
+    if (!text) { toast('Type the name of the film or show first', 2400); return; }
+    const job = ++subJob;
+    subRes = { busy: true }; renderSubResults();
+    const r = await api.subSearch({ text, season: parseInt($('#subS').value, 10) || 0, episode: parseInt($('#subE').value, 10) || 0, lang: $('#subLang').value, id, type });
+    if (job !== subJob) return;
+    subRes = r; renderSubResults();
+  }
+  $('#subTrack').addEventListener('change', (e) => { api.cmd({ type: 'sub-select', id: e.target.value }); e.target.blur(); });
+  $('#subFile').addEventListener('click', () => api.cmd({ type: 'sub-file' }));
+  $('#subFind').addEventListener('click', () => { const b = $('#subBox'); b.classList.remove('look'); if (b.classList.toggle('find')) $('#subQ').focus(); });
+  $('#subMore').addEventListener('click', () => { const b = $('#subBox'); b.classList.remove('find'); b.classList.toggle('look'); });
+  $('#subGo').addEventListener('click', () => subSearch());
+  for (const id of ['#subQ', '#subS', '#subE']) $(id).addEventListener('keydown', (e) => { if (e.key === 'Enter') subSearch(); });
+  $('#subLang').addEventListener('change', () => { if (subRes && !subRes.busy && $('#subQ').value.trim()) subSearch(subRes.picked && subRes.picked.id, subRes.picked && subRes.picked.type); });
+  $('#subMatch').addEventListener('change', (e) => subSearch(e.target.value, e.target.selectedOptions[0].dataset.type));
+  $('#subResults').addEventListener('click', async (e) => {
+    const el = e.target.closest('.subres'); if (!el || !subRes || !subRes.subs) return;
+    const it = subRes.subs[+el.dataset.i]; if (!it) return;
+    el.classList.add('busy');
+    const r = await api.subDownload({ id: it.id, url: it.url, name: it.name, lang: it.lang });
+    el.classList.remove('busy');
+    if (r && r.ok) { $$('.subres.done').forEach((x) => x.classList.remove('done')); el.classList.add('done'); toast('Subtitles added — now showing', 2600); }
+    else toast((r && r.error) || 'The download failed.', 5000);
+  });
+  $('#subPref').addEventListener('change', (e) => { api.cmd({ type: 'sub-lang', lang: e.target.value }); $('#subLang').value = e.target.value; });
+  $('#subSize').addEventListener('input', (e) => { fill(e.target); api.patch({ subs: { size: +e.target.value } }); });
+  $('#subLift').addEventListener('input', (e) => { fill(e.target); api.patch({ subs: { lift: +e.target.value } }); });
+  $('#subBg').addEventListener('change', (e) => api.patch({ subs: { bg: e.target.value } }));
+  $('#subColor').addEventListener('input', (e) => api.patch({ subs: { color: e.target.value } }));
+  $('#subTiming').addEventListener('click', (e) => { const d = e.target.dataset.d; if (d) api.cmd({ type: 'sub-offset', delta: +d }); });
+  $('#subOffReset').addEventListener('click', () => api.cmd({ type: 'sub-offset', value: 0 }));
+  $('#vcc').addEventListener('click', () => { subAsk = true; api.cmd({ type: 'sub-toggle' }); });
+  const subNudge = (d) => { const v = Math.round((((S.subsInfo || {}).offset || 0) + d) * 20) / 20; api.cmd({ type: 'sub-offset', value: v }); toast('Subtitle timing: ' + offStr(v), 1400); };
+  const subCycle = () => {
+    const si = S.subsInfo || {}, ids = ['off', ...(si.tracks || []).filter((t) => t.usable).map((t) => t.id)];
+    if (ids.length < 2) { toast('No subtitles for this video yet — use "Find online" in the Video tab.', 4000); return; }
+    subAsk = true; api.cmd({ type: 'sub-select', id: ids[(ids.indexOf(si.sel || 'off') + 1) % ids.length] });
+  };
 
   // ---------- video library (folders -> videos, with thumbnails) ----------
   let libRoot = '', libDir = '', lib = null, libJob = 0, folderKey = '';
@@ -688,6 +833,10 @@
     else if (k === ' ') { e.preventDefault(); ctxToggle(); }
     else if (k === 'n' || k === 'N') ctxStep(1);
     else if (k === 'p' || k === 'P') { const ids = [...Object.keys(PALETTES), 'cycle', ...(Array.isArray(S.customColors) ? ['custom'] : [])]; const n = ids[(ids.indexOf(S.palette) + 1) % ids.length]; P({ palette: n }); toast(n === 'cycle' ? 'Colour cycle' : n === 'custom' ? 'Your colours' : PALETTES[n].name, 1200); }
+    else if ((k === 's' || k === 'S') && videoOn()) { subAsk = true; api.cmd({ type: 'sub-toggle' }); }
+    else if ((k === 'v' || k === 'V') && videoOn()) subCycle();
+    else if ((k === 'z' || k === 'Z') && videoOn()) subNudge(-0.1);
+    else if ((k === 'x' || k === 'X') && videoOn()) subNudge(0.1);
     else if (k === 'c' || k === 'C') P({ clock: !S.clock });
     else if (k === 'b' || k === 'B') P({ breathing: !S.breathing });
     else if (/^[1-9]$/.test(k) && SCENES[+k - 1] && ctx() === 'scene') P(S.mode === 'mix' ? { perDisplay: { [me.key]: SCENES[+k - 1].id } } : { scene: SCENES[+k - 1].id });
@@ -699,6 +848,7 @@
     S = ns; resize();
     if (sceneFor(S) !== shown) setScene(sceneFor(S));
     syncVideo();
+    syncSubs();
     syncUI();
     if (prevPal !== S.palette + (S.customColors || []).join('') && panel.classList.contains('open')) { clearTimeout(thumbTimer); thumbTimer = setTimeout(makeThumbs, S.palette === 'custom' ? 350 : 0); }
   });
@@ -712,7 +862,7 @@
   api.on('now', (n) => { S.nowPlaying = n; syncUI(); });
   api.on('cmd', (c) => { if (c.type === 'show-panel') { tab = c.tab; showPanel(true); clearTimeout(hideTimer); syncUI(); } });
 
-  resize(); syncUI(); requestAnimationFrame(frame);
+  resize(); syncUI(); syncSubs(); requestAnimationFrame(frame);
   if (!R) toast('Your graphics driver has WebGL disabled — visuals cannot start.', 10000);
   else if (isCenter && !init.testMode) { toast('Move the mouse for controls  ·  Esc to exit', 5000); }
   document.body.classList.add('idle');

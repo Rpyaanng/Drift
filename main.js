@@ -1,11 +1,12 @@
 // Drift — main process: one fullscreen window per monitor, shared state, hidden audio engine window.
-const { app, BrowserWindow, ipcMain, screen, dialog, powerSaveBlocker, shell, session, desktopCapturer } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, dialog, powerSaveBlocker, shell, session, desktopCapturer, net } = require('electron');
 const { pathToFileURL } = require('url');
 const http = require('http');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const subsLib = require('./subtitles');
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
@@ -42,6 +43,8 @@ const DEFAULTS = {
   onTop: false,
   sleepAt: 0,
   video: { files: [], index: 0, layout: 'each', fit: 'auto', paused: false, sound: true, volume: 0.8, folders: [], foldersInit: false },
+  // subtitles: on = show them when a video has some; perFile remembers the track and timing chosen for each video
+  subs: { on: true, lang: 'en', size: 1, color: '#ffffff', bg: 'outline', lift: 0, perFile: {} },
   prevScene: 'aurora',
   frozen: false,           // scene animation paused
   settingsVersion: 4,
@@ -75,6 +78,8 @@ function loadSettings() {
     state = { ...DEFAULTS, ...s, music: { ...DEFAULTS.music, ...(s.music || {}), nature: { ...DEFAULTS.music.nature, ...((s.music || {}).nature || {}) } } };
     state.sleepAt = 0; state.frozen = false;
     state.video = { ...DEFAULTS.video, ...(s.video || {}) };
+    state.subs = { ...DEFAULTS.subs, ...(s.subs || {}) };
+    if (!state.subs.perFile || typeof state.subs.perFile !== 'object' || Array.isArray(state.subs.perFile)) state.subs.perFile = {};
     state.video.files = (state.video.files || []).filter((p) => { try { return fs.existsSync(p); } catch { return false; } });
     state.video.index = Math.min(state.video.index || 0, Math.max(0, state.video.files.length - 1));
     if (!state.video.files.length) dropVideoScene();
@@ -135,28 +140,173 @@ function unionOf(list) {
 // ffmpeg converts just the audio on the fly and serves it to the leading monitor over a private local port.
 const NATIVE_AUDIO = /^(aac|mp3|opus|vorbis|flac|pcm_|alac)/;
 const audioToken = crypto.randomBytes(16).toString('hex');
-let audioPort = 0, videoAudio = { mode: 'native', codec: '' }, probeSeq = 0;
+let audioPort = 0, videoAudio = { mode: 'native', codec: '', ffmpeg: true }, probeSeq = 0;
 const audioKids = new Set();
+// ffmpeg.exe normally sits in the app's resources folder. A copy run from source, or a build made without it, also
+// looks in vendor/ and then anywhere on the PATH, so sound conversion doesn't silently switch off.
+let ffFound = null;
 function ffmpegPath() {
-  const cands = [process.env.DRIFT_FFMPEG, path.join(process.resourcesPath || '', 'ffmpeg.exe'), path.join(__dirname, 'ffmpeg.exe')].filter(Boolean);
-  return cands.find((p) => { try { return fs.existsSync(p); } catch { return false; } }) || null;
+  if (ffFound) return ffFound;
+  if (process.env.DRIFT_NO_FFMPEG) return null;       // dev: behave like a copy that shipped without it
+  const exe = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+  const cands = [process.env.DRIFT_FFMPEG, path.join(process.resourcesPath || '', exe), path.join(__dirname, exe), path.join(__dirname, 'vendor', exe),
+    ...(process.env.PATH || '').split(path.delimiter).filter(Boolean).map((d) => path.join(d, exe))].filter(Boolean);
+  ffFound = cands.find((p) => { try { return fs.statSync(p).isFile(); } catch { return false; } }) || null;
+  return ffFound;
 }
 function probeAudio() {
   const f = state.video.files[state.video.index], ff = ffmpegPath(), seq = ++probeSeq;
-  videoAudio = { mode: 'native', codec: '' };
-  if (!f || !ff) return;
+  videoAudio = { mode: 'native', codec: '', ffmpeg: !!ff };
+  if (!f || !ff) { startSubs(f, []); return; }     // without ffmpeg only subtitle files next to the video can be used
+  startSubs(f, null);
   let err = '';
   const p = spawn(ff, ['-hide_banner', '-i', f], { windowsHide: true });
-  p.stderr.on('data', (d) => { if (err.length < 200000) err += d; });
+  p.stderr.on('data', (d) => { if (err.length < 400000) err += d; });
   p.on('error', () => {});
   p.on('close', () => {
     if (seq !== probeSeq) return;
     const m = /Stream #0:\d+[^\n]*?: Audio: ([a-z0-9_]+)/i.exec(err);
-    if (!m) videoAudio = { mode: /Stream #0:\d+[^\n]*?: Video:/.test(err) ? 'none' : 'native', codec: '' };
-    else videoAudio = { mode: NATIVE_AUDIO.test(m[1]) ? 'native' : 'transcode', codec: m[1] };
+    if (!m) videoAudio = { mode: /Stream #0:\d+[^\n]*?: Video:/.test(err) ? 'none' : 'native', codec: '', ffmpeg: true };
+    else videoAudio = { mode: NATIVE_AUDIO.test(m[1]) ? 'native' : 'transcode', codec: m[1], ffmpeg: true };
+    startSubs(f, embeddedSubs(err));
     pushState();
   });
 }
+
+// ---- subtitles ---------------------------------------------------------------------------------------
+// Sources: tracks inside the video (read with ffmpeg), subtitle files next to it, files the user loads, and online lookups.
+const SUB_EXT = ['.srt', '.vtt', '.ass', '.ssa'];
+const TEXT_SUB = /^(subrip|srt|ass|ssa|mov_text|webvtt|text)$/i;
+const SUB_BLANK = { file: '', tracks: [], sel: '', offset: 0, busy: false, note: '', guess: null };
+let subInfo = { ...SUB_BLANK, seq: 0 }, subCues = [], subJob = 0, subEmbedded = [];
+function embeddedSubs(err) {
+  const out = [], lines = String(err).split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^\s*Stream #0:(\d+)(?:\[[^\]]*\])?(?:\(([a-z]{2,3})\))?: Subtitle: ([a-z0-9_]+)(.*)$/i.exec(lines[i]);
+    if (!m) continue;
+    let title = '';
+    for (let j = i + 1; j < lines.length && !/^\s*Stream #/.test(lines[j]); j++) { const t = /^\s*title\s*:\s*(.+)$/i.exec(lines[j]); if (t) { title = t[1].trim(); break; } }
+    const lang = (subsLib.langOf(m[2]) || { code: '' }).code, usable = TEXT_SUB.test(m[3]);
+    const name = subsLib.langName(lang) || (m[2] && m[2] !== 'und' ? m[2].toUpperCase() : 'Unknown language');
+    out.push({ id: 'e:' + m[1], kind: 'embedded', stream: +m[1], lang, usable, def: /\(default\)/.test(m[4]), forced: /\(forced\)/.test(m[4]) || /forced/i.test(title),
+      sdh: /sdh|hearing|\bcc\b|comment/i.test(title),
+      label: name + (title && title.toLowerCase() !== name.toLowerCase() ? ' — ' + title : '') + (usable ? ' · in the video' : ' · picture-based, can\'t be shown') });
+  }
+  return out;
+}
+function sidecarSubs(f) {
+  const dir = path.dirname(f), stem = path.basename(f, path.extname(f)).toLowerCase(), out = [], seen = new Set();
+  for (const d of [dir, path.join(dir, 'Subs'), path.join(dir, 'Subtitles')]) {
+    let names = [];
+    try { names = fs.readdirSync(d); } catch { continue; }
+    for (const n of names) {
+      const ext = path.extname(n).toLowerCase(), full = path.join(d, n);
+      if (!SUB_EXT.includes(ext) || !n.toLowerCase().startsWith(stem) || seen.has(full.toLowerCase()) || out.length >= 40) continue;
+      seen.add(full.toLowerCase());
+      const rest = n.slice(stem.length, n.length - ext.length).split(/[._\s()[\]-]+/).filter(Boolean);
+      const lang = rest.map((w) => subsLib.langOf(w)).find(Boolean);
+      out.push({ id: 'f:' + full, kind: 'file', path: full, lang: lang ? lang.code : '', usable: true, sdh: rest.some((w) => /^(sdh|cc|hi)$/i.test(w)), forced: rest.some((w) => /^forced$/i.test(w)),
+        label: (lang ? lang.name : 'Subtitle file') + ' · ' + n });
+    }
+  }
+  return out;
+}
+function subPrefs(f, make) {
+  let p = state.subs.perFile[f];
+  if (!p && make) {
+    const keys = Object.keys(state.subs.perFile);
+    if (keys.length >= 300) for (const k of keys.slice(0, keys.length - 299)) delete state.subs.perFile[k];    // remember the most recent 300 videos
+    p = state.subs.perFile[f] = {};
+  }
+  return p || {};
+}
+function autoSub(tracks) {
+  const ok = tracks.filter((t) => t.usable), want = state.subs.lang;
+  const rank = (t) => (t.kind !== 'embedded' ? 4 : 0) + (t.sdh ? 0 : 2) + (t.def ? 1 : 0) - (t.forced ? 8 : 0);
+  const inLang = ok.filter((t) => t.lang === want).sort((a, b) => rank(b) - rank(a));
+  if (inLang.length) return inLang[0].id;
+  const loose = ok.filter((t) => t.kind !== 'embedded' && !t.lang);       // "movie.srt" beside "movie.mkv" is almost always meant for it
+  if (loose.length) return loose[0].id;
+  const emb = ok.filter((t) => t.kind === 'embedded');
+  return emb.length === 1 && !emb[0].lang ? emb[0].id : '';
+}
+// embedded === null means the video is still being examined.
+function startSubs(f, embedded) {
+  const job = ++subJob;
+  subCues = [];
+  if (!f) { subEmbedded = []; subInfo = { ...SUB_BLANK, seq: subInfo.seq + 1 }; return; }
+  if (embedded) subEmbedded = embedded; else if (subInfo.file !== f) subEmbedded = [];
+  const prefs = subPrefs(f);
+  const added = (prefs.added || []).filter((a) => { try { return fs.statSync(a.path).isFile(); } catch { return false; } })
+    .map((a) => ({ id: 'f:' + a.path, kind: 'added', path: a.path, lang: a.lang || '', usable: true, label: a.label }));
+  const files = sidecarSubs(f).filter((t) => !added.some((a) => a.id === t.id));
+  const tracks = [...added, ...files, ...subEmbedded];
+  let sel = '';
+  if (state.subs.on && embedded) sel = tracks.some((t) => t.id === prefs.sel && t.usable) ? prefs.sel : autoSub(tracks);
+  subInfo = { file: f, tracks, sel, offset: +prefs.offset || 0, busy: !!sel || (!embedded && state.subs.on), note: '', guess: subsLib.parseName(f), seq: subInfo.seq + 1 };
+  if (sel) loadSub(job, tracks.find((t) => t.id === sel));
+}
+function embeddedCues(f, stream) {
+  return new Promise((resolve, reject) => {
+    const ff = ffmpegPath();
+    if (!ff) { reject(new Error('no ffmpeg')); return; }
+    let st = { size: 0, mtimeMs: 0 };
+    try { st = fs.statSync(f); } catch { /* read it anyway */ }
+    const dir = path.join(app.getPath('userData'), 'subcache'), cache = path.join(dir, subsLib.hash(`${f}|${st.size}|${st.mtimeMs}|${stream}`) + '.vtt');
+    try { resolve(subsLib.parseSubtitle(fs.readFileSync(cache), 'vtt')); return; } catch { /* not read before */ }
+    const chunks = []; let size = 0;
+    const kid = spawn(ff, ['-hide_banner', '-loglevel', 'error', '-i', f, '-map', '0:' + stream, '-f', 'webvtt', 'pipe:1'], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    audioKids.add(kid);
+    kid.stdout.on('data', (d) => { size += d.length; if (size < 30e6) chunks.push(d); });
+    kid.on('error', (e) => { audioKids.delete(kid); reject(e); });
+    kid.on('close', (code) => {
+      audioKids.delete(kid);
+      const buf = Buffer.concat(chunks);
+      if (code !== 0 && !buf.length) { reject(new Error('ffmpeg exit ' + code)); return; }
+      try { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(cache, buf); } catch { /* cache is optional */ }
+      resolve(subsLib.parseSubtitle(buf, 'vtt'));
+    });
+  });
+}
+async function loadSub(job, tr) {
+  let cues = [], note = '';
+  try {
+    cues = tr.kind === 'embedded' ? await embeddedCues(subInfo.file, tr.stream) : subsLib.parseSubtitle(await fs.promises.readFile(tr.path), path.extname(tr.path));
+    if (!cues.length) note = 'That subtitle track has nothing in it.';
+  } catch { note = 'Those subtitles could not be read.'; }
+  if (job !== subJob) return;
+  subCues = cues; subInfo = { ...subInfo, busy: false, note, seq: subInfo.seq + 1 };
+  pushState();
+}
+function selectSub(id) {
+  const f = subInfo.file; if (!f) return;
+  const job = ++subJob;
+  subCues = [];
+  if (!id || id === 'off') { state.subs.on = false; subInfo = { ...subInfo, sel: '', busy: false, note: '', seq: subInfo.seq + 1 }; pushState(); saveSoon(); return; }
+  const tr = subInfo.tracks.find((t) => t.id === id && t.usable);
+  if (!tr) return;
+  state.subs.on = true; subPrefs(f, true).sel = id;
+  subInfo = { ...subInfo, sel: id, busy: true, note: '', seq: subInfo.seq + 1 };
+  pushState(); saveSoon();
+  loadSub(job, tr);
+}
+function toggleSubs() {
+  if (!subInfo.file) return;
+  if (state.subs.on && subInfo.sel) { selectSub('off'); return; }
+  state.subs.on = true;
+  startSubs(subInfo.file, subEmbedded);
+  if (!subInfo.sel) subInfo = { ...subInfo, busy: false, note: subInfo.tracks.some((t) => t.usable) ? 'No subtitles in your language here — pick a track in the Video tab.' : 'No subtitles for this video yet — use "Find online" in the Video tab.' };
+  pushState(); saveSoon();
+}
+function addSubFile(p, label, lang) {
+  const f = subInfo.file; if (!f) return;
+  const prefs = subPrefs(f, true);
+  prefs.added = [{ path: p, label, lang: lang || '' }, ...(prefs.added || []).filter((a) => a.path !== p)].slice(0, 12);
+  prefs.sel = 'f:' + p; state.subs.on = true;
+  startSubs(f, subEmbedded);
+  pushState(); saveSoon();
+}
+const webFetch = (url, opts) => net.fetch(url, opts);
 function startAudioServer() {
   const srv = http.createServer((req, res) => {
     const u = new URL(req.url, 'http://127.0.0.1');
@@ -310,7 +460,7 @@ function publicState() {
   const f = state.video.files[state.video.index];
   const showing = (key) => (state.mode === 'mix' ? (state.perDisplay[key] || state.scene) : state.scene) === 'video';
   const lead = visWins.find((v) => showing(v.key));
-  return { ...state, time: clock, nowPlaying, vclock,
+  return { ...state, subs: { ...state.subs, perFile: undefined }, subsInfo: subInfo, time: clock, nowPlaying, vclock,
     videoUrl: f ? pathToFileURL(f).href : '', videoName: f ? path.basename(f) : '', videoPath: f || '', videoLeader: lead && f ? lead.key : '',
     spotify, videoAudio, audioBase: audioPort ? `http://127.0.0.1:${audioPort}/a?k=${audioToken}&i=${state.video.index}` : '' };
 }
@@ -329,6 +479,7 @@ function initFor(wc) {
     union: unionOf(act),
     displays: allDisplays().map((d) => ({ index: d.index, key: d.key, width: d.bounds.width, height: d.bounds.height, primary: d.primary })),
     state: publicState(),
+    langs: subsLib.LANGS.map(([code, name]) => [code, name]),
     testMode: !!SHOT_DIR, freeze: !!process.env.DRIFT_FREEZE,
   };
 }
@@ -405,7 +556,8 @@ function applySideEffects(prev) {
 
 const SCENES = ['aurora', 'nebula', 'silk', 'water', 'stars', 'lava', 'ridges', 'ripples', 'mandala', 'bokeh', 'lines',
   'sierpinski', 'sorting', 'life', 'maze', 'julia', 'hilbert', 'voronoi',
-  'polyhedra', 'globe', 'tunnel', 'cubes', 'lattice', 'menger'];
+  'polyhedra', 'globe', 'tunnel', 'cubes', 'lattice', 'menger',
+  'quasi', 'hyperbolic', 'apollonian', 'phyllotaxis', 'rose', 'chladni'];
 function stepScene(dir, shuffle, auto) {
   const next = (cur) => {
     if (auto && cur === 'video') return cur;   // auto-change never interrupts your video
@@ -437,6 +589,13 @@ function patch(p) {
       state.music = { ...state.music, ...p.music };
       if (p.music.nature) state.music.nature = { ...prev.music.nature, ...p.music.nature };
     } else if (k === 'perDisplay') state.perDisplay = { ...state.perDisplay, ...p.perDisplay };
+    else if (k === 'subs') {       // look only; which track is showing goes through the sub-* commands
+      const q = p.subs || {}, t = state.subs;
+      if (isFinite(q.size)) t.size = Math.max(0.5, Math.min(2.5, +q.size));
+      if (/^#[0-9a-f]{6}$/i.test(q.color || '')) t.color = q.color.toLowerCase();
+      if (['outline', 'box', 'shadow'].includes(q.bg)) t.bg = q.bg;
+      if (isFinite(q.lift)) t.lift = Math.max(0, Math.min(70, +q.lift));
+    }
     else if (k === 'customColors') { if (Array.isArray(p[k]) && p[k].length === 4 && p[k].every((c) => /^#[0-9a-f]{6}$/i.test(c))) state.customColors = p[k].map((c) => c.toLowerCase()); }
     else if (k in DEFAULTS) state[k] = p[k];
   }
@@ -535,6 +694,30 @@ ipcMain.handle('read-file', async (_e, p) => {
   const buf = await fs.promises.readFile(p);
   return { data: buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength), mime: MIME[path.extname(p).toLowerCase()] || 'audio/mpeg' };
 });
+ipcMain.handle('sub-cues', () => ({ seq: subInfo.seq, cues: subCues }));
+// Looks a video up online. Nothing is sent anywhere until the user presses Search: then only the title typed in the box goes out.
+ipcMain.handle('sub-search', async (_e, q) => {
+  q = q || {};
+  try {
+    const r = await subsLib.searchOnline(webFetch, { text: String(q.text || '').slice(0, 120), season: Math.max(0, q.season | 0), episode: Math.max(0, q.episode | 0),
+      year: (subInfo.guess || {}).year || 0, lang: (subsLib.langOf(q.lang) || { code: '' }).code, id: /^tt\d+$/.test(q.id || '') ? q.id : '', type: q.type === 'series' ? 'series' : 'movie',
+      videoName: path.basename(subInfo.file || '') });
+    return { ok: true, ...r };
+  } catch (err) { return { ok: false, error: /abort|timeout/i.test(String(err && err.name) + String(err && err.message)) ? 'The subtitle service took too long to answer. Try again in a moment.' : 'Could not reach the subtitle service. Check your internet connection.' }; }
+});
+ipcMain.handle('sub-download', async (_e, it) => {
+  const f = subInfo.file;
+  if (!f || !it || !subsLib.okHost(it.url)) return { ok: false, error: 'That subtitle can\'t be downloaded.' };
+  try {
+    const buf = await subsLib.downloadSub(webFetch, it.url);
+    const dir = path.join(app.getPath('userData'), 'subtitles'), file = path.join(dir, `${subsLib.hash(f)}-${String(it.id || '').replace(/[^a-z0-9]/gi, '').slice(0, 20) || subsLib.hash(it.url)}.srt`);
+    fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file, buf);
+    if (subInfo.file !== f) return { ok: false, error: 'The video changed before the download finished.' };
+    const lang = subsLib.langOf(it.lang);
+    addSubFile(file, (lang ? lang.name : 'Subtitles') + ' · ' + String(it.name || 'downloaded').slice(0, 90) + ' · downloaded', lang ? lang.code : '');
+    return { ok: true };
+  } catch (err) { return { ok: false, error: /^(That|HTTP)/.test(String(err && err.message)) ? (String(err.message).startsWith('HTTP') ? 'The server didn\'t have that file any more — try another one in the list.' : err.message) : 'The download failed. Check your internet connection and try again.' }; }
+});
 ipcMain.on('cmd', async (e, c) => {
   const parent = BrowserWindow.fromWebContents(e.sender);
   switch (c.type) {
@@ -574,6 +757,31 @@ ipcMain.on('cmd', async (e, c) => {
     }
     case 'spotify': spotifyDo(c.action); break;
     case 'spotify-volume': spotifyVolSet(c.value); break;
+    case 'sub-select': selectSub(c.id); break;
+    case 'sub-toggle': toggleSubs(); break;
+    case 'sub-offset': {
+      if (!subInfo.file) break;
+      const v = Math.max(-600, Math.min(600, Math.round((c.value !== undefined ? +c.value : subInfo.offset + (+c.delta || 0)) * 20) / 20)) || 0;
+      subPrefs(subInfo.file, true).offset = v; subInfo = { ...subInfo, offset: v };
+      pushState(); saveSoon();
+      break;
+    }
+    case 'sub-lang': {
+      const l = subsLib.langOf(c.lang); if (!l) break;
+      state.subs.lang = l.code;
+      if (subInfo.file && state.subs.on && !subPrefs(subInfo.file).sel) startSubs(subInfo.file, subEmbedded);     // re-pick for the new language unless a track was chosen by hand
+      pushState(); saveSoon();
+      break;
+    }
+    case 'sub-file': {
+      if (!subInfo.file) break;
+      const r = await dialog.showOpenDialog(parent, { title: 'Choose a subtitle file', properties: ['openFile'], defaultPath: path.dirname(subInfo.file),
+        filters: [{ name: 'Subtitles', extensions: SUB_EXT.map((x) => x.slice(1)) }] });
+      if (r.canceled || !r.filePaths.length) break;
+      const sp = r.filePaths[0], lang = path.basename(sp, path.extname(sp)).split(/[._\s()[\]-]+/).map((w) => subsLib.langOf(w)).find(Boolean);
+      addSubFile(sp, (lang ? lang.name : 'Subtitle file') + ' · ' + path.basename(sp), lang ? lang.code : '');
+      break;
+    }
     case 'add-video-folder': {
       const r = await dialog.showOpenDialog(parent, { title: 'Add a video folder', properties: ['openDirectory'], defaultPath: app.getPath('videos') });
       if (!r.canceled && !state.video.folders.includes(r.filePaths[0])) patch({ video: { folders: [...state.video.folders, r.filePaths[0]] } });
@@ -618,6 +826,7 @@ ipcMain.on('cmd', async (e, c) => {
     case 'reset': {
       const keep = state.music.playlist, folders = state.video.folders, mf = state.music.folders;
       state = JSON.parse(JSON.stringify(DEFAULTS)); state.music.playlist = keep; state.video.folders = folders; state.video.foldersInit = true; state.music.folders = mf; state.music.foldersInit = true;
+      startSubs(state.video.files[state.video.index], subEmbedded);
       applySideEffects(null); pushState(); saveSoon(); rebuildSoon();
       break;
     }
@@ -697,6 +906,29 @@ async function runShots() {
     log.push('videoAudio: ' + JSON.stringify(videoAudio));
     await snap('video-spanlayout'); patch({ video: { layout: 'each', fit: 'auto', sound: true } }); await wait(1500);
     ipcMain.emit('cmd', { sender: visWins[0].win.webContents }, { type: 'video-jump', pos: 9 }); await wait(1500); await snap('video-each');
+  }
+  if (process.env.DRIFT_TESTSUBS) {     // exercise subtitles: auto-pick, styling, timing, online lookup, on / off (run with DRIFT_TESTVIDEO)
+    const wc = visWins[0].win.webContents, js = (c) => wc.executeJavaScript(c);
+    ipcMain.emit('cmd', { sender: wc }, { type: 'video-jump', pos: +process.env.DRIFT_TESTSUBS || 20 }); await wait(9000);
+    log.push('subs: ' + JSON.stringify({ ...subInfo, tracks: subInfo.tracks.length, first: subInfo.tracks.slice(0, 3).map((t) => t.label) }) + ' cues=' + subCues.length);
+    const seen = new Set();
+    for (let i = 0; i < 14; i++) { seen.add(await js("document.querySelector('#subText').innerHTML + ' @' + document.querySelector('#v').currentTime.toFixed(1)")); await wait(300); }
+    log.push('subs on screen: ' + [...seen].join(' || '));
+    await snap('subs-auto');
+    wc.send('cmd', { type: 'show-panel', tab: 'video' }); await wait(1500);
+    await js("document.querySelector('#subMore').click()"); await wait(600); await snap('subs-look');
+    patch({ subs: { size: 1.5, bg: 'box', color: '#ffe46b', lift: 12 } }); ipcMain.emit('cmd', { sender: wc }, { type: 'sub-offset', delta: 0.5 }); await wait(900); await snap('subs-styled');
+    log.push('styled: ' + JSON.stringify({ ...state.subs, perFile: Object.keys(state.subs.perFile).length }) + ' offset=' + subInfo.offset);
+    if (process.env.DRIFT_TESTSUBS_ONLINE) {
+      await js("document.querySelector('#subFind').click()");
+      await js(`(() => { document.querySelector('#subQ').value = ${JSON.stringify(process.env.DRIFT_TESTSUBS_ONLINE)}; document.querySelector('#subS').value = '1'; document.querySelector('#subE').value = '1'; document.querySelector('#subGo').click(); })()`); await wait(8000);
+      log.push('online results: ' + await js("document.querySelectorAll('.subres').length + ' | ' + (document.querySelector('#subResults').innerText || '').slice(0, 160).replace(/\\n/g, ' / ')"));
+      await snap('subs-online');
+      await js("(document.querySelectorAll('.subres')[1] || document.querySelector('.subres')).click()"); await wait(7000);
+      log.push('after download: sel=' + subInfo.sel + ' cues=' + subCues.length + ' note=' + subInfo.note + ' tracks=' + subInfo.tracks.length);
+    }
+    selectSub('off'); await wait(600); log.push('off: ' + JSON.stringify([state.subs.on, subInfo.sel]) + ' shown=' + await js("document.querySelector('#subs').classList.contains('on')"));
+    toggleSubs(); await wait(3000); log.push('toggle on: sel=' + subInfo.sel + ' cues=' + subCues.length + ' note=' + subInfo.note);
   }
   if (process.env.DRIFT_TESTMUSIC) {
     const dir = process.env.DRIFT_TESTMUSIC;
