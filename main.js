@@ -49,7 +49,7 @@ const DEFAULTS = {
   sleepAt: 0,
   // hdr: auto = convert HDR videos to SDR on screens that aren't showing HDR | always | never; tone = how bright highlights are squeezed in;
   // enc = which ffmpeg encoder converts (auto = the fastest that works on this PC); xq = picture height of converted video (auto = the screen's)
-  video: { files: [], index: 0, layout: 'each', fit: 'auto', paused: false, sound: true, volume: 0.8, folders: [], foldersInit: false,
+  video: { files: [], index: 0, fit: 'auto', paused: false, sound: true, autoplay: true, volume: 0.8, folders: [], foldersInit: false,
     hdr: 'auto', tone: 'hable', enc: 'auto', xq: 'auto' },
   // watch together: internet = ask the router to let friends outside the home in; control = friends may play / pause / seek;
   // wait = pause for everyone while someone is loading; quality = picture size sent to (and asked from) friends
@@ -58,7 +58,7 @@ const DEFAULTS = {
   subs: { on: true, lang: 'en', size: 1, color: '#ffffff', bg: 'outline', lift: 0, perFile: {} },
   prevScene: 'aurora',
   frozen: false,           // scene animation paused
-  settingsVersion: 4,
+  settingsVersion: 5,
   music: {
     playing: true,
     source: 'generative',  // generative | files | spotify | off
@@ -77,6 +77,7 @@ let visWins = [];          // [{win, key, index, bounds}]
 let audioWin = null;
 let nowPlaying = { title: '', index: -1 };
 let vclock = { startedAt: Date.now(), pos: 0 };   // shared video timeline so every monitor stays in step
+let vEnded = false;      // autoplay is off and the video stopped at its end, so play starts it again from the top
 let videoFails = 0, xcAt = 0, goodbye = false;
 let clock = { base: 0, ref: Date.now() };   // visual time: t = base + (now-ref)/1000*speed
 let saveTimer = null, cycleTimer = null, sleepTimer = null, rebuildTimer = null;
@@ -96,13 +97,14 @@ function loadSettings() {
     state.video.index = Math.min(state.video.index || 0, Math.max(0, state.video.files.length - 1));
     if (!state.video.files.length) dropVideoScene();
     if ((s.settingsVersion || 1) < 2) state.video.sound = true;     // video sound used to default to off, which read as "broken audio"
-    if ((s.settingsVersion || 1) < 3) {       // layout and fit used to be one setting
+    if ((s.settingsVersion || 1) < 3) {       // fit used to hold the layout too
       const old = (s.video || {}).fit;
-      state.video.layout = old && old !== 'each' ? 'span' : 'each';
       state.video.fit = old === 'contain' || old === 'fill' ? old : 'auto';
     }
     if ((s.settingsVersion || 1) < 4 && state.reactivity === 0.5) state.reactivity = 0.7;   // sound reactions are stronger by default now
-    state.settingsVersion = 4; state.video.paused = false;
+    delete state.video.layout;                // Span / Mirror / Mix now covers videos too, so videos no longer have their own layout
+    if (!['span', 'mirror', 'mix'].includes(state.mode)) state.mode = 'span';
+    state.settingsVersion = 5; state.video.paused = false;
     const known = (id) => id === 'video' || SCENES.includes(id);
     if (!known(state.scene)) state.scene = 'aurora';
     for (const k of Object.keys(state.perDisplay || {})) if (!known(state.perDisplay[k])) delete state.perDisplay[k];
@@ -282,7 +284,7 @@ function xcHeight() {
   const q = parseInt(state.video.xq, 10);
   if (q) return q;
   const act = activeDisplays(), scale = Math.max(...act.map((d) => d.scale || 1));
-  const h = state.mode === 'span' && state.video.layout === 'span' ? unionOf(act).height : Math.max(...act.map((d) => d.bounds.height));
+  const h = state.mode === 'span' ? unionOf(act).height : Math.max(...act.map((d) => d.bounds.height));
   return Math.max(480, Math.round(h * scale));
 }
 // Starts the stream again from where playback is (or from `from`). A stream can't be searched, so every jump needs a new one.
@@ -648,7 +650,7 @@ function shareSnapshot() {
     ctrl: state.share.control, cap: state.share.quality, xc: !!ffmpegPath() };
 }
 function videoJump(pos, play) {
-  pos = Math.max(0, +pos || 0);
+  pos = Math.max(0, +pos || 0); vEnded = false;
   vclock = { startedAt: Date.now() - pos * 1000, pos, seq: (vclock.seq || 0) + 1 };
   if (play) state.video.paused = false;
   pushState();
@@ -656,6 +658,7 @@ function videoJump(pos, play) {
 }
 function videoStep(dir) {
   const n = state.video.files.length; if (!n) return;
+  vEnded = false;
   videoFails = 0; xcFails = 0;
   state.video.index = (state.video.index + (dir < 0 ? -1 : 1) + n) % n;
   state.video.paused = false;
@@ -882,6 +885,7 @@ function patch(p) {
     const now = Date.now();   // keep visual time continuous when speed changes or the scene is paused / resumed
     clock = { base: state.frozen ? clock.base : clock.base + ((now - clock.ref) / 1000) * state.speed, ref: now };
   }
+  const replay = !!(p.video && p.video.paused === false && vEnded && state.video.paused);
   if (p.video && p.video.paused !== undefined && p.video.paused !== state.video.paused) {   // pause / resume the shared video timeline
     if (p.video.paused) vclock.pos = (Date.now() - vclock.startedAt) / 1000;
     else vclock.startedAt = Date.now() - vclock.pos * 1000;
@@ -890,6 +894,8 @@ function patch(p) {
   for (const k of Object.keys(p)) {
     if (k === 'video') {
       const v = state.video = { ...state.video, ...p.video };
+      delete v.layout;
+      v.autoplay = v.autoplay !== false;
       if (!['auto', 'always', 'never'].includes(v.hdr)) v.hdr = 'auto';
       if (!['hable', 'mobius', 'reinhard'].includes(v.tone)) v.tone = 'hable';
       if (!/^[a-z0-9_]{1,24}$/.test(v.enc)) v.enc = 'auto';
@@ -908,6 +914,7 @@ function patch(p) {
       if (isFinite(q.lift)) t.lift = Math.max(0, Math.min(70, +q.lift));
     }
     else if (k === 'customColors') { if (Array.isArray(p[k]) && p[k].length === 4 && p[k].every((c) => /^#[0-9a-f]{6}$/i.test(c))) state.customColors = p[k].map((c) => c.toLowerCase()); }
+    else if (k === 'mode') { if (['span', 'mirror', 'mix'].includes(p[k])) state.mode = p[k]; }
     else if (k in DEFAULTS) state[k] = p[k];
   }
   if (allDisplays().every((d) => state.displaysOff.includes(d.index))) state.displaysOff = prev.displaysOff;
@@ -916,12 +923,21 @@ function patch(p) {
   if (pv.enc !== nv.enc) encFallback = false;
   // anything that changes what the converted stream looks like, or who needs it, starts a new one
   if (cur() && (pv.hdr !== nv.hdr || pv.tone !== nv.tone || pv.enc !== nv.enc || pv.xq !== nv.xq || prev.share.quality !== state.share.quality
-    || (xcActive() && (pv.layout !== nv.layout || prev.mode !== state.mode) && nv.xq === 'auto'))) xcRestart();
+    || (xcActive() && prev.mode !== state.mode && nv.xq === 'auto'))) xcRestart();
   else pushState();
+  if (replay) videoJump(0, true);
   saveSoon();
 }
 
 function setVideos(files, key, index = 0) {
+  const c = cur(), shows = key && state.mode === 'mix' ? { [key]: 'video' } : null;
+  if (!remote && c && c.path && files[index] === c.path && visWins.some((v) => showsVideo(v.key))) {      // already playing on a monitor: join it where it is
+    const p = { video: { files, index } };
+    if (shows) p.perDisplay = shows; else p.scene = 'video';
+    patch(p);
+    return;
+  }
+  vEnded = false;
   videoFails = 0; xcFails = 0;
   vclock = { startedAt: Date.now(), pos: 0, seq: (vclock.seq || 0) + 1 };
   xc = { epoch: xc.epoch + 1, start: 0 };
@@ -1039,6 +1055,13 @@ ipcMain.on('cmd', async (e, c) => {
   const parent = BrowserWindow.fromWebContents(e.sender);
   switch (c.type) {
     case 'quit': quitting = true; app.quit(); break;
+    case 'monitor-off': {      // from the "Close Drift?" prompt: leave this one monitor alone and keep Drift on the others
+      const i = c.index | 0;
+      if (state.displaysOff.includes(i) || activeDisplays().length < 2) break;
+      patch({ displaysOff: [...state.displaysOff, i] });
+      setTimeout(() => say(`Monitor ${i + 1} is off. Turn it back on in Settings.`), 2500);
+      break;
+    }
     case 'step-scene': stepScene(c.dir || 1, false); break;
     case 'add-files': {
       const r = await dialog.showOpenDialog(parent, { title: 'Add music', properties: ['openFile', 'multiSelections'],
@@ -1165,6 +1188,7 @@ ipcMain.on('cmd', async (e, c) => {
       break;
     case 'video-next':   // sent by the leading monitor when a clip ends
       if (remote || c.index !== state.video.index) break;        // with a friend, their PC decides what comes next
+      if (!state.video.autoplay) { if (!state.video.paused) { setPaused(true); vEnded = true; pushState(); } break; }     // autoplay off: stay on the last frame
       if (state.video.files.length < 2) { if (c.stream) videoJump(0); break; }      // a converted stream can't loop by itself
       videoFails = 0; xcFails = 0;
       state.video.index = (state.video.index + 1) % state.video.files.length;
@@ -1284,10 +1308,10 @@ async function runShots() {
   }
   if (process.env.DRIFT_TESTVIDEO) {
     state.video.folders = [path.dirname(process.env.DRIFT_TESTVIDEO)];
-    patch({ video: { layout: 'span', fit: 'auto' } });
+    patch({ mode: 'span', video: { fit: 'auto' } });
     setVideos(listDir(path.dirname(process.env.DRIFT_TESTVIDEO)).videos.map((v) => v.path)); await wait(7000); await snap('video-span');
     log.push('videoAudio: ' + JSON.stringify(videoAudio));
-    await snap('video-spanlayout'); patch({ video: { layout: 'each', fit: 'auto', sound: true } }); await wait(1500);
+    await snap('video-spanlayout'); patch({ mode: 'mirror', video: { fit: 'auto', sound: true } }); await wait(1500);
     ipcMain.emit('cmd', { sender: visWins[0].win.webContents }, { type: 'video-jump', pos: 9 }); await wait(1500); await snap('video-each');
   }
   if (process.env.DRIFT_TESTSUBS) {     // exercise subtitles: auto-pick, styling, timing, online lookup, on / off (run with DRIFT_TESTVIDEO)
@@ -1423,6 +1447,27 @@ async function runShots() {
     key('Escape'); await wait(500); log.push('quit: after a second Esc, asking=' + await up());
     v.win.close(); await wait(500); log.push('quit: after closing the window, asking=' + await up() + ' window still there=' + !v.win.isDestroyed());
     key('Escape'); await wait(300);
+  }
+  if (process.env.DRIFT_TESTAUTO) {      // a folder of short clips: autoplay off stops at the end and play starts over; on moves to the next
+    const dir = path.resolve(process.env.DRIFT_TESTAUTO); state.video.folders = [dir]; const files = listDir(dir).videos.map((v) => v.path), st = () => `index=${state.video.index} paused=${state.video.paused} ended=${vEnded} pos=${vpos().toFixed(1)}`;
+    patch({ video: { autoplay: false } }); setVideos(files); await wait(7000);
+    log.push('autoplay off, after the end: ' + st());
+    patch({ video: { paused: false } }); await wait(1500);
+    log.push('autoplay off, after play: ' + st());
+    patch({ video: { autoplay: true } }); await wait(6000);
+    log.push('autoplay on, after the end: ' + st());
+  }
+  if (process.env.DRIFT_TESTJOIN) {      // a folder of clips 15 s or longer, with two monitors: a second monitor joins the video where it is, then is turned off from the exit prompt
+    const dir = path.resolve(process.env.DRIFT_TESTJOIN); state.video.folders = [dir]; const files = listDir(dir).videos.map((v) => v.path);
+    const [a, b] = visWins.map((v) => v.key), send = (w, c) => ipcMain.emit('cmd', { sender: visWins[w].win.webContents }, c);
+    patch({ mode: 'mix', perDisplay: { [b]: 'aurora' } }); setVideos(files, a); await wait(6000);
+    const before = vpos();
+    send(1, { type: 'play-videos', files, index: 0, key: b }); await wait(1000);
+    log.push(`join: before=${before.toFixed(1)} after=${vpos().toFixed(1)} second monitor shows video=${showsVideo(b)}`); await look('join');
+    visWins[1].win.webContents.send('cmd', { type: 'ask-quit' }); await wait(800); await snap('monitor-off-ask');
+    send(1, { type: 'monitor-off', index: 1 }); await wait(4000);
+    log.push(`monitor off: windows=${visWins.length} off=${JSON.stringify(state.displaysOff)}`);
+    patch({ displaysOff: [] }); await wait(3000);
   }
   if (process.env.DRIFT_PANEL) {
     for (const tab of ['scenes', 'video', 'music', 'settings']) { visWins[0].win.webContents.send('cmd', { type: 'show-panel', tab }); await wait(tab === 'scenes' || tab === 'video' ? 6000 : 1500); await snap('panel-' + tab); }

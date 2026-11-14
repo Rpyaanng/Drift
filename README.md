@@ -15,8 +15,12 @@ Ambient visuals and soundscapes across all your monitors. Built with Electron.
 - **Colour**: palette swatches, including a dim Dark palette for night, one that cycles through every
   colour at an adjustable speed, and your own colours.
 - **React to sound**: scenes respond to the music, with an optional spectrum or waveform overlay.
-- **Video**: play your own video folders, mirrored or spanned across monitors. Dolby / DTS audio tracks
-  are converted on the fly with ffmpeg.
+- **Monitors**: one setting in **Settings → Across monitors** decides how scenes and videos fill your
+  screens: **Span** (one picture across all of them), **Mirror** (the same on each) or **Mix** (each monitor
+  picks its own). Close Drift on a single monitor from the exit prompt to keep that screen free.
+- **Video**: play your own video folders, one after another or one at a time (**Autoplay**). A monitor
+  that switches to the video already playing joins it where it is. Dolby / DTS audio tracks are converted
+  on the fly with ffmpeg.
 - **HDR and unusual formats**: HDR videos (HDR10, HLG, Dolby Vision) are converted to SDR on screens that
   aren't showing HDR, and formats the built-in player can't play (MPEG-2, Xvid, WMV, AVI...) are converted
   live. You choose the encoder (NVIDIA, Intel, AMD or the processor; H.264, H.265 or AV1), the look and the size.

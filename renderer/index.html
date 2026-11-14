@@ -14,18 +14,14 @@
 <div id="breath"><div class="ring"></div><span></span></div>
 <div id="toast"></div>
 <div id="algo"></div>
-<div id="confirm"><div class="box"><b>Close Drift?</b><p id="confirmNote"></p><div class="row"><button class="btn" id="confirmNo">Stay</button><button class="btn danger" id="confirmYes">Close Drift</button></div></div></div>
+<div id="confirm"><div class="box"><b>Close Drift?</b><p id="confirmNote"></p><div class="row"><button class="btn" id="confirmNo">Stay</button><button class="btn ghost" id="confirmMon" title="Turn Drift off on this monitor only. Turn it back on in Settings.">Close this monitor</button><button class="btn danger" id="confirmYes">Close Drift</button></div></div></div>
 
 <div id="panel">
   <div id="content">
     <section data-tab="scenes">
       <div class="row head">
         <h3>Scene</h3>
-        <div class="seg" id="mode">
-          <button data-v="span" title="One scene flowing across every monitor">Span</button>
-          <button data-v="mirror" title="The same scene repeated on each monitor">Mirror</button>
-          <button data-v="mix" title="A different scene per monitor — pick from the panel on each one">Mix</button>
-        </div>
+        <button class="btn ghost" id="modeHint" title="Change how scenes and videos fill your monitors in Settings"></button>
       </div>
       <div id="tiles"></div>
       <div class="row">
@@ -72,10 +68,6 @@
             <div id="vcrumb"></div>
             <input type="search" id="vsearch" placeholder="Search this folder…" spellcheck="false">
             <div class="row" style="margin:0">
-              <select id="videoLayout" title="Where the video goes">
-                <option value="each">Mirror on every screen</option>
-                <option value="span">Span across all screens</option>
-              </select>
               <select id="videoFit" title="How the video is sized inside the screen">
                 <option value="auto">Auto fit</option>
                 <option value="contain">Fit — whole video, no cropping</option>
@@ -83,6 +75,7 @@
                 <option value="fill">Stretch</option>
               </select>
               <label class="chk"><input type="checkbox" id="videoSound"><i></i>Sound</label>
+              <label class="chk" title="Play the next video in the folder when one finishes. Off: stop at the end."><input type="checkbox" id="videoAuto"><i></i>Autoplay</label>
               <button class="btn ghost" id="pickVideo">Open file…</button>
               <button class="btn ghost" id="stopVideo">Stop video</button>
             </div>
@@ -235,6 +228,15 @@
           <h3>Monitors</h3>
           <div id="monitors"></div>
           <p class="note">Turn a monitor off here to keep it free for other things.</p>
+          <div class="row head" id="modeRow">
+            <h3 class="sub">Across monitors</h3>
+            <div class="seg" id="mode">
+              <button data-v="span" title="One scene or video stretched across every monitor">Span</button>
+              <button data-v="mirror" title="The same scene or video repeated on each monitor">Mirror</button>
+              <button data-v="mix" title="A different scene or video per monitor — pick from the panel on each one">Mix</button>
+            </div>
+          </div>
+          <p class="note" id="modeNote"></p>
           <div class="grid2">
             <label>Render quality
               <select id="quality"><option value="0.5">Light (best for 4K / laptops)</option><option value="0.75">Balanced</option><option value="1">Full resolution</option></select>

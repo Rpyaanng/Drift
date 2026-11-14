@@ -233,13 +233,13 @@
     const x = useX(), url = x ? `${S.xc.base}&t=${S.xc.start}&e=${S.xc.epoch}` : S.videoUrl;
     if (curUrl !== url) { curUrl = url; xOn = x; xStart = x ? S.xc.start : 0; xBehind = 0; farAt = 0; video.src = url; seekHold = 0; xSetAt = x ? performance.now() : 0; }
     const lead = S.videoLeader === me.key;
-    video.loop = !xOn && S.video.files.length === 1;
+    video.loop = !xOn && S.video.files.length === 1 && S.video.autoplay !== false;
     const converted = !xOn && S.videoAudio && S.videoAudio.mode === 'transcode' && !!S.audioBase;      // a converted stream carries its own sound
     video.muted = !(lead && S.video.sound) || converted;
     syncSound(lead && S.video.sound && converted);
     video.volume = S.video.volume;
     // Fit: Auto keeps the whole picture when its shape doesn't match the screen (vertical phone video), and fills when it nearly does.
-    const spanIt = S.mode === 'span' && S.video.layout === 'span';
+    const spanIt = S.mode === 'span';
     const ta = spanIt ? me.union.width / me.union.height : innerWidth / innerHeight;
     const va = video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : ta;
     let fit = S.video.fit;
@@ -347,7 +347,7 @@
   }
   function drawSubs() {
     const info = S.subsInfo || {};
-    const spanIt = S.mode === 'span' && S.video.layout === 'span';
+    const spanIt = S.mode === 'span';
     let html = '', top = false;
     if (shown === 'video' && S.videoUrl && info.sel && cues.length && (!spanIt || subMine())) {
       const t = vTime() - (info.offset || 0);
@@ -441,6 +441,7 @@
     const p = S.p2p || {}, n = (p.peers || []).length;
     $('#confirmNote').textContent = p.role === 'host' && n ? `${n === 1 ? p.peers[0].name : n + ' friends'} will stop seeing your video.`
       : p.role === 'guest' ? `You'll leave ${p.host || 'your friend'}'s video.` : 'Your settings are saved for next time.';
+    $('#confirmMon').style.display = init.displays.filter((d) => !S.displaysOff.includes(d.index)).length > 1 ? '' : 'none';
     confirmEl.classList.add('on'); $('#confirmYes').focus();
   }
   function closeAsk() { confirmEl.classList.remove('on'); document.activeElement?.blur(); }
@@ -505,6 +506,13 @@
     $('#customRow').classList.toggle('on', S.palette === 'custom');
     $$('#customRow input').forEach((el) => { if (document.activeElement !== el) el.value = cc[+el.dataset.i]; });
     $$('#mode button').forEach((x) => x.classList.toggle('active', x.dataset.v === S.mode));
+    const multi = init.displays.filter((d) => !S.displaysOff.includes(d.index)).length > 1;
+    $('#modeHint').textContent = S.mode === 'span' ? 'Spanned across monitors' : S.mode === 'mirror' ? 'Mirrored on each monitor' : 'Mix: picking for this monitor';
+    $('#modeHint').style.display = multi ? '' : 'none';
+    $('#modeNote').textContent = !multi ? 'Only one monitor is on, so this changes nothing yet.'
+      : S.mode === 'span' ? 'Scenes and videos stretch as one picture across all monitors.'
+      : S.mode === 'mirror' ? 'Each monitor shows the whole scene or video.'
+      : 'Each monitor plays its own scene or video: open the panel on a monitor and pick one there.';
     $$('#source button').forEach((x) => x.classList.toggle('active', x.dataset.v === S.music.source));
     $$('.preset').forEach((x) => x.classList.toggle('active', x.dataset.id === S.music.preset));
     $$('.mon').forEach((x) => x.classList.toggle('on', !S.displaysOff.includes(+x.dataset.i)));
@@ -530,12 +538,12 @@
     $('#spVolNote').textContent = !spOn || sp.status === 'unsupported' ? '' : sp.volMode === 'app' ? 'The volume bar controls Spotify\'s own volume.' : sp.volMode === 'system' ? 'The volume bar controls your PC\'s main volume until Spotify starts playing.' : 'Volume control is starting…';
     $('#offnote').style.display = S.music.source === 'off' ? '' : 'none';
     const sc = SCENES.find((x) => x.id === cur);
-    $('#videoFit').value = S.video.fit; $('#videoLayout').value = S.video.layout; $('#videoSound').checked = !!S.video.sound;
+    $('#videoFit').value = S.video.fit; $('#videoSound').checked = !!S.video.sound; $('#videoAuto').checked = S.video.autoplay !== false;
     $('#stopVideo').style.display = cur === 'video' ? '' : 'none';
     const va = S.videoAudio || {}, vi = S.videoInfo || {}, pp = S.p2p || {}, guest = pp.role === 'guest';
     syncSubUI(); syncShareUI(); syncConvertUI();
     const from = guest ? ` (shared by ${pp.host || 'a friend'})` : '';
-    $('#vnote').textContent = !videoOn() ? (guest ? `${pp.host || 'Your friend'} isn't playing a video right now.` : 'Pick a video to play it on your monitors. Videos in the same folder play one after another.')
+    $('#vnote').textContent = !videoOn() ? (guest ? `${pp.host || 'Your friend'} isn't playing a video right now.` : 'Pick a video to play it on your monitors.' + (S.video.autoplay !== false ? ' Videos in the same folder play one after another.' : ' Autoplay is off, so each video stops when it ends.'))
       : useX() ? `Now playing: ${S.videoName}${from} — ${pp.viaHost ? `${pp.host}'s PC is sending a ${pp.quality === 'original' ? 'converted' : pp.quality + 'p'} copy.`
         : vi.hdr && !vi.force ? 'this HDR video is being converted to SDR for this screen.' : vi.hdr ? 'it is being converted (HDR to SDR) so it can play here.' : 'the built-in player can\'t play this format, so it is being converted live.'}`
       : va.ffmpeg === false && !guest ? `Now playing: ${S.videoName} — this copy of Drift is missing ffmpeg.exe, so Dolby / DTS sound and HDR video can't be converted and subtitles stored inside a video can't be read. Put ffmpeg.exe in Drift's "resources" folder and restart.`
@@ -850,6 +858,7 @@
   $('#cycleSecs').addEventListener('change', (e) => P({ cycleSecs: +e.target.value }));
   $('#overlay').addEventListener('change', (e) => P({ overlay: e.target.value }));
   $('#algoInfo').addEventListener('change', (e) => P({ algoInfo: e.target.checked }));
+  $('#modeHint').addEventListener('click', () => setTab('settings'));
   $('#mode').addEventListener('click', (e) => { const v = e.target.dataset.v; if (v) P({ mode: v }); });
   $('#source').addEventListener('click', (e) => { const v = e.target.dataset.v; if (v) P({ music: { source: v, playing: true } }); });
   $('#presets').addEventListener('click', (e) => { const t = e.target.closest('.preset'); if (t) P({ music: { preset: t.dataset.id, playing: true } }); });
@@ -881,8 +890,8 @@
   for (const [id, k] of [['#shControl', 'control'], ['#shWait', 'wait'], ['#shInternet', 'internet']]) $(id).addEventListener('change', (e) => P({ share: { [k]: e.target.checked } }));
   $('#shQuality').addEventListener('change', (e) => P({ share: { quality: e.target.value } }));
   $('#videoFit').addEventListener('change', (e) => P({ video: { fit: e.target.value } }));
-  $('#videoLayout').addEventListener('change', (e) => P({ video: { layout: e.target.value } }));
   $('#videoSound').addEventListener('change', (e) => P({ video: { sound: e.target.checked } }));
+  $('#videoAuto').addEventListener('change', (e) => P({ video: { autoplay: e.target.checked } }));
   $('#stopVideo').addEventListener('click', () => api.cmd({ type: 'stop-video', key: me.key }));
   $('#addVFolder').addEventListener('click', () => api.cmd({ type: 'add-video-folder' }));
   $('#vfolders').addEventListener('click', (e) => {
@@ -958,6 +967,7 @@
   $('#exit').addEventListener('click', askQuit);
   $('#confirmYes').addEventListener('click', () => api.cmd({ type: 'quit' }));
   $('#confirmNo').addEventListener('click', closeAsk);
+  $('#confirmMon').addEventListener('click', () => { closeAsk(); api.cmd({ type: 'monitor-off', index: me.index }); });
   confirmEl.addEventListener('mousedown', (e) => { if (e.target === confirmEl) closeAsk(); });      // a click outside the box means "stay"
 
   function stepScene(dir) {
@@ -972,7 +982,10 @@
       e.preventDefault();
       if (e.key === 'Enter') api.cmd({ type: 'quit' });
       else if (e.key === 'Escape') closeAsk();
-      else if (e.key === 'Tab' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') $(document.activeElement === $('#confirmNo') ? '#confirmYes' : '#confirmNo').focus();
+      else if (e.key === 'Tab' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {      // move between the buttons that are showing
+        const bs = $$('#confirm .btn').filter((b) => b.offsetParent), i = bs.indexOf(document.activeElement);
+        bs[(i + ((e.key === 'ArrowLeft' || (e.key === 'Tab' && e.shiftKey)) ? -1 : 1) + bs.length) % bs.length].focus();
+      }
       return;
     }
     if (e.target.tagName === 'SELECT') return;
