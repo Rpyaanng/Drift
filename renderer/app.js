@@ -222,12 +222,26 @@
   let seekHold = 0, curUrl = '', lastSeq, seeking = false, lastJump = 0;
   const clockStr = (s) => { s = Math.max(0, Math.floor(s || 0)); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = String(s % 60).padStart(2, '0'); return h ? `${h}:${String(m).padStart(2, '0')}:${x}` : `${m}:${x}`; };
   const videoOn = () => sceneFor(S) === 'video' && !!S.videoUrl;
-  // The toolbar's play / previous / next / volume act on whichever tab is selected: Scenes, Video or Music.
+  // The toolbar's play / previous / next / volume act on whichever tab is selected: Scenes, Media or Surf.
   let lastCtx = 'scene';
-  const ctx = () => { if (tab !== 'settings') lastCtx = { scenes: 'scene', video: 'video', music: 'music', share: 'video' }[tab]; return lastCtx; };
-  const volIsSpotify = () => !volIsVideo() && S.music.source === 'spotify';
+  // In Media they act on whichever is playing, the video or the music. While Spotify plays and Drift has no video or music of its own on
+  // (main works that out: spotify.lead), they are Spotify's, in Scenes and Media alike.
+  const filesOn = () => S.music.source === 'files' && S.music.playlist.length > 0;      // music from the library is up (playing or paused)
+  const musicOn = () => !!theirMusic() || filesOn();
+  const musicPlaying = () => (theirMusic() ? !!theirMusic().on : filesOn() && S.music.playing);
+  const spLead = () => !!(S.spotify || {}).lead;
+  const mediaCtx = () => (videoOn() ? 'video' : musicPlaying() ? 'music' : spLead() ? 'spotify' : musicOn() ? 'music' : 'video');
+  const ctx = () => {
+    if (tab === 'share') { if (lastCtx !== 'surf') lastCtx = mediaCtx(); }
+    else if (tab !== 'settings') lastCtx = tab === 'media' ? mediaCtx() : tab === 'surf' ? 'surf' : spLead() ? 'spotify' : 'scene';
+    return lastCtx;
+  };
+  // watching with a friend who has music on: theirs plays here in place of ours, and the Music controls are for theirs
+  const theirMusic = () => ((S.p2p || {}).role === 'guest' && S.p2p.music) || null;
+  const hostMusic = (what) => api.cmd({ type: 'share-music', do: what });
+  const volIsSpotify = () => ctx() === 'spotify';
   const volNow = () => (volIsVideo() ? S.video.volume : volIsSpotify() ? ((S.spotify || {}).vol || 0) : S.music.volume);
-  const volIsVideo = () => (ctx() === 'video' ? true : ctx() === 'music' ? false : videoOn() && S.video.sound);
+  const volIsVideo = () => (ctx() === 'video' ? true : ctx() === 'music' || ctx() === 'spotify' ? false : videoOn() && S.video.sound);
   // A video this screen can't show as it is (HDR on an SDR screen, a codec the player lacks, a smaller copy from a friend's PC)
   // arrives converted, as a live stream that begins at S.xc.start. A stream can't be searched: every jump is a new stream.
   const useX = () => { const x = S.xc || {}; return !!x.base && (x.all || (x.sdr && !myHdr())); };
@@ -462,7 +476,12 @@
 
   // ---------- panel ----------
   const panel = $('#panel');
-  let tab = 'scenes', hideTimer = null, overPanel = false;
+  let hideTimer = null, overPanel = false;
+  // After the monitors change, the windows are made again: carry on with the tab this screen was on. Surf if the browser is here;
+  // Surf's tab without its browser (that monitor went off and the browser moved) falls back to Scenes.
+  const TAB_IDS = ['scenes', 'media', 'surf', 'share', 'settings'];
+  const webHere = () => { const w = S.web || {}; return !!w.open && w.key === me.key; };
+  let tab = webHere() ? 'surf' : TAB_IDS.includes(init.tab) && init.tab !== 'surf' ? init.tab : 'scenes';
   const tileHtml = (s) => { const i = SCENES.indexOf(s); return `<button class="tile" data-id="${s.id}"><i class="rot" role="checkbox" aria-checked="true" title="Include in automatic scene changes"></i><kbd>${i < 9 ? i + 1 : ''}</kbd><span>${s.name}</span></button>`; };
   $('#tiles').innerHTML = `<div class="tilegrid">${SCENES.filter((s) => !s.group).map(tileHtml).join('')}</div>`
     + `<h3 class="sub">Landscapes</h3><div class="tilegrid">${SCENES.filter((s) => s.group === 'land').map(tileHtml).join('')}</div>`
@@ -472,7 +491,8 @@
   $('#palettes').innerHTML = Object.entries(PALETTES).map(([id, p]) => `<button class="sw" data-id="${id}" title="${p.name}" style="background:linear-gradient(90deg,${p.c.join(',')})"></button>`).join('')
     + `<button class="sw cyc" data-id="cycle" title="Cycle through every colour" style="background:linear-gradient(90deg,${Object.values(PALETTES).map((p) => p.c[2]).join(',')})">↻</button>`
     + `<button class="sw cus" data-id="custom" title="Your own colours">✎</button>`;
-  $('#presets').innerHTML = PRESETS.map((p) => `<button class="preset" data-id="${p.id}"><b>${p.name}</b><span>${p.desc}</span></button>`).join('');
+  $('#presets').innerHTML = PRESETS.map((p) => `<button class="preset" data-id="${p.id}"><b>${p.name}</b><span>${p.desc}</span></button>`).join('')
+    + '<button class="preset off" data-id="off"><b>Off</b><span>Silence, or just nature sounds</span></button>';
   $('#monitors').innerHTML = init.displays.map((d) => `<button class="mon" data-i="${d.index}"><b>Monitor ${d.index + 1}</b>${d.width} × ${d.height}${d.index === me.index ? '<em>this screen</em>' : ''}</button>`).join('');
 
   function showPanel(open) {
@@ -488,18 +508,32 @@
   }
   function setTab(t, toggle) {
     const same = t === tab && panel.classList.contains('open');
-    tab = t;
-    panel.classList.toggle('open', !(toggle && same));
+    tab = t; surfFor(t); tellTab();
+    panel.classList.toggle('open', t !== 'surf' && !(toggle && same));       // Surf has no page of its own in the panel: the browser is it
     syncUI(); if (panel.classList.contains('open')) makeThumbs();
+  }
+  // Friends watching together see how many people are on each tab.
+  const tellTab = () => api.cmd({ type: 'tab-focus', tab });
+  // The browser belongs to the Surf tab. Choosing Surf shows it on this screen, opening a first tab on Drift's start page if there is
+  // none yet. Choosing Scenes or Media on its screen puts it away (its tabs are kept) so they can be seen. Together and Settings leave it be.
+  function surfFor(t) {
+    const w = S.web || {}, p = S.p2p || {};
+    if (t === 'surf') {
+      if (w.has) { if (!w.open) surf('show'); else if (w.key !== me.key) surf('move'); }
+      else if (p.role === 'guest') toast(`When ${p.host || 'your friend'} opens a web page, you see it here`, 3200);
+      else surf('new');
+    }
+    else if (t !== 'settings' && t !== 'share' && w.open && w.key === me.key) surf('hide');
   }
   panel.addEventListener('mouseenter', () => { overPanel = true; });
   panel.addEventListener('mouseleave', () => { overPanel = false; armHide(); });
   let lastMove = [0, 0];
   addEventListener('mousemove', (e) => {
+    if (e.target === vidEl || surfBar.contains(e.target) || e.target === surfEdge) return;       // over a friend's web page the mouse is theirs to follow, not a call for the panel; nor is the browser's own bar
     if (Math.abs(e.screenX - lastMove[0]) + Math.abs(e.screenY - lastMove[1]) < 4) return;   // ignore jitter
     lastMove = [e.screenX, e.screenY]; showPanel();
   });
-  addEventListener('mousedown', (e) => { if (!panel.contains(e.target) && !confirmEl.contains(e.target)) { if (panel.classList.contains('open')) { panel.classList.remove('open'); } else showPanel(); } });
+  addEventListener('mousedown', (e) => { if (e.target === vidEl || surfBar.contains(e.target)) return; if (!panel.contains(e.target) && !confirmEl.contains(e.target)) { if (panel.classList.contains('open')) { panel.classList.remove('open'); } else showPanel(); } });
 
   const fill = (el) => el.style.setProperty('--fill', ((el.value - el.min) / (el.max - el.min)) * 100 + '%');
   const setVal = (el, v) => { if (document.activeElement !== el || el.tagName !== 'INPUT') { el.value = v; } if (el.type === 'range') fill(el); };
@@ -513,6 +547,7 @@
     const cur = sceneFor(S);
     $$('.tabs button').forEach((x) => x.classList.toggle('active', x.dataset.tab === tab));
     $$('#content section').forEach((x) => x.classList.toggle('active', x.dataset.tab === tab));
+    panel.classList.toggle('notab', tab === 'surf');
     $$('.tile').forEach((x) => x.classList.toggle('active', x.dataset.id === cur));
     const skip = S.cycleSkip || [];                  // ticks for which scenes the automatic changes may pick
     $('#tiles').classList.toggle('rotating', S.autoCycle > 0);
@@ -531,8 +566,9 @@
       : S.mode === 'span' ? 'Scenes and videos stretch as one picture across all monitors.'
       : S.mode === 'mirror' ? 'Each monitor shows the whole scene or video.'
       : 'Each monitor plays its own scene or video: open the panel on a monitor and pick one there.';
-    $$('#source button').forEach((x) => x.classList.toggle('active', x.dataset.v === S.music.source));
-    $$('.preset').forEach((x) => x.classList.toggle('active', x.dataset.id === S.music.preset));
+    const ambOn = !S.music.ambientOff && S.music.source !== 'off';       // the ambient choice (it waits while your music plays)
+    $$('.preset').forEach((x) => x.classList.toggle('active', x.dataset.id === (ambOn ? S.music.preset : 'off')));
+    $('#presets').classList.toggle('waiting', S.music.source === 'files' || !!theirMusic());
     $$('.mon').forEach((x) => x.classList.toggle('on', !S.displaysOff.includes(+x.dataset.i)));
     for (const k of ['speed', 'brightness', 'reactivity']) setVal($('#' + k), S[k]);
     setVal($('#volume'), S.music.volume);
@@ -542,46 +578,293 @@
     $('#o-reactivity').textContent = S.reactivity < 0.01 ? 'Off' : Math.round(S.reactivity * 100) + '%';
     $('#o-volume').textContent = Math.round(S.music.volume * 100) + '%';
     for (const k of ['autoCycle', 'quality', 'fps']) $('#' + k).value = String(S[k]);
-    for (const k of ['cycleShuffle', 'clock', 'breathing', 'keepAwake', 'onTop']) $('#' + k).checked = !!S[k];
+    for (const k of ['cycleShuffle', 'clock', 'breathing', 'keepAwake', 'onTop', 'autoUpdate']) $('#' + k).checked = !!S[k];
+    syncUpdate();
     $('#shuffle').checked = !!S.music.shuffle;
     if (!(S.sleepAt > Date.now())) $('#sleep').value = '0';
-    $('#presets').style.display = S.music.source === 'generative' ? '' : 'none';
-    $('#files').style.display = S.music.source === 'files' ? '' : 'none';
-    const sp = S.spotify || { status: 'unsupported', title: '' }, spOn = S.music.source === 'spotify';
-    $('#spotify').style.display = spOn ? '' : 'none';
-    $('.spnow').classList.toggle('live', sp.status === 'playing');
-    $('#spTitle').textContent = sp.status === 'playing' ? sp.title : { paused: 'Spotify is paused', running: 'Spotify is running', closed: 'Spotify isn\'t open', unsupported: 'Spotify control needs Windows' }[sp.status];
-    $('#spSub').textContent = sp.status === 'playing' ? 'Playing in Spotify' : sp.status === 'closed' ? 'Press Open Spotify, then start a song.' : sp.status === 'running' ? 'Open its window to see the song name here.' : sp.status === 'paused' ? 'Press play to continue.' : '';
+    const sp = S.spotify || { status: 'unsupported', title: '' }, spOn = ctx() === 'spotify';
     $('#qvol').disabled = volIsSpotify() && !sp.volMode; $('#qvol').style.opacity = $('#qvol').disabled ? 0.35 : 1;
-    $('#spVolNote').textContent = !spOn || sp.status === 'unsupported' ? '' : sp.volMode === 'app' ? 'The volume bar controls Spotify\'s own volume.' : sp.volMode === 'system' ? 'The volume bar controls your PC\'s main volume until Spotify starts playing.' : 'Volume control is starting…';
-    $('#offnote').style.display = S.music.source === 'off' ? '' : 'none';
+    const tm0 = theirMusic();
+    $('#ambNote').textContent = tm0 ? `Waiting while you listen to ${(S.p2p || {}).host || 'your friend'}'s music` : S.music.source === 'files' ? 'Waiting while your music plays — it comes back when you stop it'
+      : ambOn && S.music.playing && spLead() && sp.status === 'playing' ? 'Spotify is playing too. Choose Off to hear only Spotify.' : '';
+    $('#stopMusic').style.display = S.music.source === 'files' ? '' : 'none';
     const sc = SCENES.find((x) => x.id === cur);
     $('#videoFit').value = S.video.fit; $('#videoSound').checked = !!S.video.sound; $('#videoAuto').checked = S.video.autoplay !== false;
     $('#stopVideo').style.display = cur === 'video' ? '' : 'none';
     const va = S.videoAudio || {}, vi = S.videoInfo || {}, pp = S.p2p || {}, guest = pp.role === 'guest';
     syncSubUI(); syncShareUI(); syncConvertUI();
     const from = guest ? ` (shared by ${pp.host || 'a friend'})` : '';
-    $('#vnote').textContent = !videoOn() ? (guest ? `${pp.host || 'Your friend'} isn't playing a video right now.` : 'Pick a video to play it on your monitors.' + (S.video.autoplay !== false ? ' Videos in the same folder play one after another.' : ' Autoplay is off, so each video stops when it ends.'))
+    $('#vnote').textContent = !videoOn() ? (guest ? `${pp.host || 'Your friend'} isn't playing a video right now.`
+      : filesOn() && S.nowPlaying.title ? `Music: ${S.nowPlaying.title}${S.music.playing ? '' : ' (paused)'} — the scene and its visualizer play along. Songs in the same folder play one after another.`
+      : 'Pick a video or a song to play it. Videos fill your monitors; music plays over the scene.' + (S.video.autoplay !== false ? ' Files in the same folder play one after another.' : ' Video autoplay is off, so each video stops when it ends.'))
       : useX() ? `Now playing: ${S.videoName}${from} — ${pp.viaHost ? `${pp.host}'s PC is sending a ${pp.quality === 'original' ? 'converted' : pp.quality + 'p'} copy.`
         : vi.hdr && !vi.force ? 'this HDR video is being converted to SDR for this screen.' : vi.hdr ? 'it is being converted (HDR to SDR) so it can play here.' : 'the built-in player can\'t play this format, so it is being converted live.'}`
       : va.ffmpeg === false && !guest ? `Now playing: ${S.videoName} — this copy of Drift is missing ffmpeg.exe, so Dolby / DTS sound and HDR video can't be converted and subtitles stored inside a video can't be read. Put ffmpeg.exe in Drift's "resources" folder and restart.`
       : va.mode === 'transcode' && va.ffmpeg !== false ? `Now playing: ${S.videoName}${from} — its ${va.codec.toUpperCase().replace('EAC3', 'Dolby Digital Plus (E-AC-3)').replace(/^AC3$/, 'Dolby Digital (AC-3)')} sound is being converted live so you can hear it.`
       : va.mode === 'none' ? `Now playing: ${S.videoName}${from} — this file has no audio track.` : `Now playing: ${S.videoName}${from}${pp.own ? ' — playing your own copy of this file.' : ''}`;
     renderFolders(); markPlaying();
-    panel.classList.toggle('hasvideo', videoOn());
+    panel.classList.toggle('hasvideo', videoOn()); panel.classList.toggle('surf', ctx() === 'surf');
     $('#vsound').style.display = videoOn() || ctx() === 'video' ? '' : 'none';
     $('#vsound').textContent = S.video.sound ? '🔊' : '🔇';
     setVal($('#qvol'), volNow());
     $('#qvol').title = volIsVideo() ? 'Video volume' : !volIsSpotify() ? 'Music volume' : sp.volMode === 'app' ? 'Spotify volume' : sp.volMode === 'system' ? 'PC volume (Spotify is not playing yet)' : 'Spotify volume is not available';
-    const c = ctx(), pr = PRESETS.find((x) => x.id === S.music.preset);
-    $('#ctxTag').textContent = { scene: 'Scene', video: 'Video', music: 'Music' }[c];
-    const playing = c === 'scene' ? !S.frozen : c === 'video' ? videoOn() && !S.video.paused : spOn ? sp.status === 'playing' : S.music.playing && S.music.source !== 'off';
+    const c = ctx();
+    $('#ctxTag').textContent = { scene: 'Scene', video: 'Video', music: 'Music', surf: 'Surf', spotify: 'Spotify' }[c];
+    $('#play').style.display = c === 'surf' ? 'none' : '';
+    $('#prevTrack').title = c === 'surf' ? 'Back (←)' : 'Previous (←)'; $('#nextTrack').title = c === 'surf' ? 'Forward (→)' : 'Next (→)';
+    const tm = theirMusic(), tmName = tm ? (tm.src === 'files' ? tm.title || 'Music' : (PRESETS.find((x) => x.id === tm.preset) || { name: 'Ambient' }).name) : '';
+    const playing = c === 'scene' ? !S.frozen : c === 'video' ? videoOn() && !S.video.paused : c === 'surf' ? false : spOn ? sp.status === 'playing' : musicPlaying();
     $('#play').textContent = playing ? '⏸' : '▶';
     $('#nowName').textContent = c === 'scene' ? (cur === 'video' ? 'My Video' : sc ? sc.name : '')
       : c === 'video' ? (S.videoName ? S.videoName.replace(/\.[^.]+$/, '') : 'No video chosen')
-      : spOn ? (sp.title || 'Spotify') : S.music.source === 'off' ? 'Music off' : S.music.source === 'files' ? (S.nowPlaying.title || 'My music') : (pr ? pr.name : '');
+      : c === 'surf' ? ((S.web || {}).has ? (S.web.title || S.web.url || 'New tab') : 'No page open')
+      : spOn ? (sp.title || 'Spotify (paused)') : tm ? `${tmName} · from ${S.p2p.host || 'your friend'}` : filesOn() ? (S.nowPlaying.title || 'Music') : 'No music chosen';
     $('#nowName').title = $('#nowName').textContent;
-    renderMusicLib();
+    const pp2 = S.p2p || {}, mine = S.music.source === 'files' || S.music.source === 'generative';
+    $('#mShare').textContent = tm ? `You are listening to ${pp2.host || 'your friend'}'s music${tm.on ? '' : ' (paused)'}: ${tmName}. Your own music waits until you leave${pp2.ctrl ? '. Play, pause and skip work on theirs' : `. Only ${pp2.host || 'your friend'} can change it`}.`
+      : pp2.role === 'host' ? (spOn ? 'Spotify can\'t be sent to friends. Ambient sound and music from your library can.' : mine ? `Friends${(pp2.peers || []).length ? '' : ' who join'} hear your ${S.music.source === 'files' ? 'music' : 'ambient sound'} with you.` : '') : '';
+  }
+
+  // ---------- a web page on this screen (watching a web page together): main's web.js loads and steers it ----------
+  const webEls = new Map(), surfBar = $('#surfBar'), surfEdge = $('#surfEdge');       // one <webview> for each of the browser's tabs
+  let webEl = null, webGen = 0, capSid = '';       // webEl: the tab in front
+  const edgeHint = () => { if (!init.testMode) toast('Mouse to the top edge for tabs and the address  ·  to the bottom edge for Drift’s controls', 7000); };
+  function syncWeb() {
+    const w = S.web || {}, here = !!w.open && w.key === me.key, pages = here && !w.stream, live = (S.p2p || {}).status === 'connected';
+    if (webEls.size && (!pages || w.gen !== webGen)) { for (const el of webEls.values()) el.remove(); webEls.clear(); webEl = null; dropPeers(); }
+    if (pages) {
+      const first = !webEls.size, was = webEl;
+      webGen = w.gen;
+      for (const [id, el] of webEls) if (!(w.tabs || []).some((t) => t.id === id)) { el.remove(); webEls.delete(id); }
+      for (const t of w.tabs || []) {
+        if (webEls.has(t.id)) continue;
+        const el = document.createElement('webview');
+        el.className = 'web'; el.setAttribute('partition', 'persist:web'); el.setAttribute('src', 'about:blank');
+        const tell = () => { try { api.cmd({ type: 'surf', do: 'attached', tab: t.id, wc: el.getWebContentsId() }); return true; } catch { return false; } };       // main matches the page to its tab
+        el.addEventListener('did-attach', () => { if (!tell()) el.addEventListener('dom-ready', tell, { once: true }); });
+        document.body.insertBefore(el, $('#webEdge'));
+        webEls.set(t.id, el);
+      }
+      webEl = webEls.get(w.active) || null;
+      for (const el of webEls.values()) el.classList.toggle('on', el === webEl);
+      if (webEl && webEl !== was && !surfBar.contains(document.activeElement) && !panel.contains(document.activeElement)) { try { webEl.focus(); } catch { /* not ready to take the keys yet */ } }
+      if (first) { edgeHint(); surfPeek(); }
+    }
+    if ((w.sid || '') !== capSid) { capSid = w.sid || ''; dropPeers(); }       // another tab came to the front: friends ask for its picture
+    if (pcs.size && (S.p2p || {}).role !== 'host') dropPeers();
+    if (vidEl && !(here && w.stream)) { vidEl.meEl.remove(); vidEl.remove(); vidEl = null; hangUp(); gsid = ''; }
+    if (here && w.stream && !vidEl) { makeStreamView(); edgeHint(); surfPeek(); }
+    if (vidEl && live && (w.sid !== gsid || !gLive)) { gsid = w.sid; ask(); }       // a new page, or the connection came back
+    gLive = live;
+    document.body.classList.toggle('web', !!webEls.size || !!vidEl);
+    document.body.classList.toggle('surfing', here && (!w.stream || !!(S.p2p || {}).ctrl));       // the bar is for whoever may steer the browser
+    if (!here) surfBar.classList.remove('show');
+    syncSurfBar();
+  }
+
+  // ---------- other people's pointers over the page: a small arrow in their colour, with their name ----------
+  const ptrBox = $('#ptrs'), ptrEls = new Map();
+  const ptrColor = (name) => { let h = 0; for (const ch of String(name)) h = (h * 31 + ch.charCodeAt(0)) % 360; return `hsl(${h} 90% 62%)`; };       // a person's colour comes from their name, so it is the same on every PC
+  // a soft, rounded arrow in the person's colour with a white edge. Its point is 3px in from the box's top left
+  const PTR = '<svg viewBox="0 0 20 24" width="20" height="24"><path d="M3.2 4Q3.2 2.4 4.5 3.4L16.6 13.2Q17.8 14.3 16.2 14.6L10.8 15.2Q9.6 15.3 8.8 16.2L5.2 20.4Q3.2 22.4 3.2 19.8Z"/></svg><b></b>';
+  // where the page is on this screen: all of it here, or the picture inside a friend's stream (which may have bars beside it)
+  function pageBox() {
+    if (webEl) return { l: 0, t: 0, w: innerWidth, h: innerHeight };
+    if (!vidEl || !vidEl.videoWidth) return null;
+    const r = vidEl.getBoundingClientRect(), k = Math.min(r.width / vidEl.videoWidth, r.height / vidEl.videoHeight), w = vidEl.videoWidth * k, h = vidEl.videoHeight * k;
+    return { l: r.left + (r.width - w) / 2, t: r.top + (r.height - h) / 2, w, h };
+  }
+  function showPtrs(list) {
+    const box = pageBox(), now = Date.now();
+    if (!box) list = [];
+    for (const [id, q] of ptrEls) if (!list.some((x) => x.id === id)) { q.el.remove(); ptrEls.delete(id); }
+    for (const x of list) {
+      let q = ptrEls.get(x.id);
+      if (!q) {
+        const el = document.createElement('div'); el.className = 'ptr';
+        el.style.setProperty('--c', ptrColor(x.name)); el.innerHTML = PTR;
+        ptrBox.appendChild(el); ptrEls.set(x.id, q = { el, x: -1, y: -1, at: now });
+      }
+      if (q.x !== x.x || q.y !== x.y) { q.x = x.x; q.y = x.y; q.at = now; }
+      q.el.lastChild.textContent = x.name;
+      q.el.style.left = (box.l + x.x * box.w).toFixed(1) + 'px'; q.el.style.top = (box.t + x.y * box.h).toFixed(1) + 'px';
+      q.el.classList.toggle('idle', now - q.at > 6000);
+    }
+  }
+  setInterval(() => {       // a pointer that has stopped fades; one whose page has gone is taken away
+    if (!ptrEls.size) return;
+    if (!pageBox()) { showPtrs([]); return; }
+    for (const q of ptrEls.values()) q.el.classList.toggle('idle', Date.now() - q.at > 6000);
+  }, 1000);
+
+  // ---------- the browser's bar: tabs, back and forward, home and the address. It floats at the top and keeps out of the way ----------
+  const surf = (what, more) => api.cmd({ type: 'surf', do: what, ...more });
+  let sbTimer = null, sbOver = false, sbKey = '';
+  function surfHideSoon(ms = 900) {
+    clearTimeout(sbTimer);
+    sbTimer = setTimeout(() => { if (sbOver || document.activeElement === $('#sbUrl')) surfHideSoon(); else surfBar.classList.remove('show'); }, ms);
+  }
+  const surfPeek = () => { surfBar.classList.add('show'); surfHideSoon(3500); };       // a first look at where it is
+  surfEdge.addEventListener('mouseenter', () => { surfBar.classList.add('show'); surfHideSoon(1500); });
+  surfBar.addEventListener('mouseenter', () => { sbOver = true; surfBar.classList.add('show'); });
+  surfBar.addEventListener('mouseleave', () => { sbOver = false; surfHideSoon(); });
+  const tabsHtml = (w, cls) => (w.tabs || []).map((t) => `<button class="${cls}${t.id === w.active ? ' active' : ''}" data-id="${t.id}" title="${esc(t.title)}"><span>${esc(t.title)}</span><i data-x="1" title="Close this tab">✕</i></button>`).join('');
+  function syncSurfBar() {
+    const w = S.web || {}, k = JSON.stringify([w.tabs, w.active]);
+    if (k !== sbKey) { sbKey = k; $('#sbTabs').innerHTML = tabsHtml(w, 'sbTab') + '<button class="sbAdd" data-new="1" title="New tab">+</button>'; }
+    $('#sbBack').classList.toggle('off', !w.back); $('#sbFwd').classList.toggle('off', !w.fwd);
+    const u = $('#sbUrl'), url = /^drift:\/\/home\//i.test(w.url || '') ? '' : w.url || '';       // Drift's start page: an empty box to type in
+    if (document.activeElement !== u && u.value !== url) u.value = url;
+  }
+  const tabClick = (e) => {
+    const b = e.target.closest('[data-id]');
+    if (e.target.closest('[data-new]')) { surf('new'); $('#sbUrl').value = ''; $('#sbUrl').focus(); }
+    else if (b) surf(e.target.dataset.x ? 'close' : 'tab', { id: +b.dataset.id });
+  };
+  $('#sbTabs').addEventListener('click', tabClick);
+  $('#sbTabs').addEventListener('auxclick', (e) => { const b = e.target.closest('[data-id]'); if (b && e.button === 1) surf('close', { id: +b.dataset.id }); });       // middle click closes
+  $('#sbBack').addEventListener('click', () => surf('back'));
+  $('#sbFwd').addEventListener('click', () => surf('fwd'));
+  $('#sbReload').addEventListener('click', () => surf('reload'));
+  $('#sbHome').addEventListener('click', () => surf('home'));
+  $('#sbUrl').addEventListener('focus', (e) => e.target.select());
+  $('#sbUrl').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    surf('go', { text: e.target.value.trim() }); e.target.blur();
+    if (webEl) webEl.focus(); else if (vidEl) vidEl.focus();       // the keys go back to the page
+    surfHideSoon();
+  });
+
+  // The page's picture and sound travel straight between the PCs over WebRTC. The messages that set that up go through
+  // main, over the watch-together connection. Friends outside the home network are found with a public STUN server.
+  const rtcConf = (stun) => ({ iceServers: stun ? [{ urls: 'stun:stun.l.google.com:19302' }] : [] });
+  const stereo = (sdp) => sdp.replace(/useinbandfec=1/g, 'useinbandfec=1;stereo=1;maxaveragebitrate=192000');       // it is a soundtrack, not a phone call
+  const signal = (d, to) => api.cmd({ type: 'rtc', to, d });
+
+  // -- sharing: one connection per friend, all fed by a single capture of the page --
+  const pcs = new Map(), asks = new Map();
+  let cap = null;
+  function capture() {
+    if (!cap) {
+      const el = webEl;
+      const got = navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+      const late = new Promise((_r, no) => setTimeout(() => no(new Error('no answer')), 2500));       // it has been known not to answer at all
+      got.then((st) => { if (cap !== mine || webEl !== el) st.getTracks().forEach((t) => t.stop()); }, () => {});
+      const mine = cap = Promise.race([got, late])
+        .then((st) => (cap === mine && webEl === el ? st : null))
+        .catch((e) => { console.log('the page could not be captured: ' + e.message); if (cap === mine) cap = null; return null; });
+    }
+    return cap;
+  }
+  function uncapture() { const c = cap; cap = null; if (c) c.then((st) => { if (st) st.getTracks().forEach((t) => t.stop()); }); }
+  function dropPeer(id) { asks.delete(id); const pc = pcs.get(id); if (pc) { pcs.delete(id); pc.close(); } if (!pcs.size && !asks.size) uncapture(); }
+  function dropPeers() { for (const id of [...pcs.keys(), ...asks.keys()]) dropPeer(id); uncapture(); }
+  async function rtcHost(id, d) {
+    if (d.type === 'bye') { dropPeer(id); return; }
+    if (d.type === 'want') {       // a friend asks for the page
+      dropPeer(id);
+      if (!webEl || d.sid !== (S.web || {}).sid) return;       // not this page: they will ask again when they hear of the new one
+      const my = {}, el = webEl; asks.set(id, my);
+      let st = null;
+      for (let i = 0; i < 8 && !st; i++) {       // a page that has only just appeared can't be captured straight away
+        if (i) await new Promise((r) => setTimeout(r, 400));
+        if (asks.get(id) !== my) return;
+        st = await capture();
+        if (asks.get(id) !== my) return;
+      }
+      asks.delete(id);
+      if (!st || webEl !== el) { if (!pcs.size && !asks.size) uncapture(); return; }
+      const stun = !!(S.share || {}).internet, pc = new RTCPeerConnection(rtcConf(stun));
+      pcs.set(id, pc); pc.early = [];
+      for (const t of st.getTracks()) pc.addTrack(t, st);
+      pc.onicecandidate = (e) => { if (e.candidate) signal({ type: 'ice', c: e.candidate.toJSON() }, id); };
+      pc.onconnectionstatechange = () => { if (pc.connectionState === 'failed' && pcs.get(id) === pc) dropPeer(id); };       // they ask again
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription({ type: 'offer', sdp: stereo(offer.sdp) });
+      const out = pc.getSenders().find((x) => x.track && x.track.kind === 'video'), prm = out && out.getParameters();
+      if (prm && prm.encodings && prm.encodings[0]) { prm.encodings[0].maxBitrate = 8e6; out.setParameters(prm).catch(() => {}); }
+      if (pcs.get(id) === pc) signal({ type: 'offer', sdp: pc.localDescription.sdp, sid: d.sid, stun }, id);
+      return;
+    }
+    const pc = pcs.get(id);
+    if (!pc) return;
+    if (d.type === 'answer') { await pc.setRemoteDescription({ type: 'answer', sdp: String(d.sdp) }); for (const c of pc.early.splice(0)) pc.addIceCandidate(c).catch(() => {}); }
+    else if (d.type === 'ice' && d.c) { if (pc.remoteDescription) await pc.addIceCandidate(d.c); else pc.early.push(d.c); }
+  }
+
+  // -- watching: the friend's page is a video here, and this PC's mouse and keyboard over it are sent back --
+  let vidEl = null, gpc = null, gsid = '', gLive = false, gAsked = 0, gGood = 0;
+  function hangUp() { if (gpc) { const pc = gpc; gpc = null; pc.close(); } if (vidEl) vidEl.srcObject = null; }
+  function ask() { hangUp(); gAsked = Date.now(); signal({ type: 'want', sid: gsid }); }
+  setInterval(() => {       // no picture for a while (their capture restarted, the route failed…): ask again
+    if (!vidEl || !gLive) return;
+    const now = Date.now();
+    if (gpc && gpc.connectionState === 'connected') gGood = now; else if (now - Math.max(gAsked, gGood) > 6000) ask();
+  }, 2000);
+  async function rtcGuest(d) {
+    if (!vidEl) return;
+    if (d.type === 'offer') {
+      if (d.sid !== gsid) return;
+      hangUp();
+      const pc = gpc = new RTCPeerConnection(rtcConf(!!d.stun));
+      pc.ontrack = (e) => {
+        if (gpc !== pc || !vidEl) return;
+        try { e.receiver.jitterBufferTarget = 0; } catch { /* older Chromium */ }       // as little delay as the network allows: clicks should feel close
+        if (vidEl.srcObject !== e.streams[0]) vidEl.srcObject = e.streams[0];
+      };
+      pc.onicecandidate = (e) => { if (e.candidate) signal({ type: 'ice', c: e.candidate.toJSON() }); };
+      pc.setRemoteDescription({ type: 'offer', sdp: String(d.sdp) }).catch(() => {});       // candidates that follow wait their turn behind this
+      const ans = await pc.createAnswer();
+      await pc.setLocalDescription({ type: 'answer', sdp: stereo(ans.sdp) });
+      if (gpc === pc) signal({ type: 'answer', sdp: pc.localDescription.sdp });
+    } else if (d.type === 'ice' && d.c && gpc) await gpc.addIceCandidate(d.c);
+  }
+  const onRtc = (c) => { if (!c.d || typeof c.d !== 'object') return; (c.from ? rtcHost(c.from, c.d) : rtcGuest(c.d)).catch((e) => console.log('stream set-up: ' + e.message)); };
+
+  function makeStreamView() {
+    const v = vidEl = document.createElement('video');
+    v.id = 'webStream'; v.autoplay = true; v.playsInline = true; v.tabIndex = 0;
+    document.body.insertBefore(v, $('#webEdge'));
+    const may = () => !!(S.p2p || {}).ctrl;
+    let told = 0;
+    const refuse = () => { if (Date.now() - told > 8000) { told = Date.now(); toast(`Only ${(S.p2p || {}).host || 'the host'} can control this page`); } };
+    // where on the page the mouse is, as fractions of its width and height (the picture may have bars beside it)
+    const at = (e) => {
+      const r = v.getBoundingClientRect(), vw = v.videoWidth, vh = v.videoHeight;
+      if (!vw || !vh) return null;
+      const k = Math.min(r.width / vw, r.height / vh), w = vw * k, h = vh * k;
+      return { x: Math.max(0, Math.min(1, (e.clientX - r.left - (r.width - w) / 2) / w)), y: Math.max(0, Math.min(1, (e.clientY - r.top - (r.height - h) / 2) / h)) };
+    };
+    const mods = (e) => [e.shiftKey && 'shift', e.ctrlKey && 'control', e.altKey && 'alt', e.metaKey && 'meta'].filter(Boolean);
+    const send = (e, p, more) => { if (p) api.cmd({ type: 'web-input', e: { ...p, ...more, m: mods(e) } }); };
+    // over the page this PC's own mouse is drawn as the others see it: the same arrow, colour and name
+    const meEl = v.meEl = document.createElement('div'); meEl.className = 'ptr me'; meEl.innerHTML = PTR; meEl.style.display = 'none';
+    ptrBox.appendChild(meEl);
+    const myName = () => String((S.share || {}).name || (S.p2p || {}).defaultName || '').replace(/[\x00-\x1f<>]/g, '').trim().slice(0, 24) || 'Friend';
+    const meAt = (e) => { const n = myName(); meEl.lastChild.textContent = n; meEl.style.setProperty('--c', ptrColor(n)); meEl.style.left = e.clientX + 'px'; meEl.style.top = e.clientY + 'px'; meEl.style.display = ''; };
+    v.addEventListener('mouseleave', () => { meEl.style.display = 'none'; });
+    let move = null, ptrAt = 0;
+    const point = (e, gone) => { const q = gone ? null : at(e); ptrAt = Date.now(); api.cmd(q ? { type: 'web-ptr', x: q.x, y: q.y } : { type: 'web-ptr', x: -1, y: -1 }); };       // so the others can see where this mouse is
+    v.addEventListener('mouseleave', (e) => point(e, true));
+    v.addEventListener('mousemove', (e) => {       // at most one a frame
+      meAt(e);
+      if (Date.now() - ptrAt > 45) point(e);
+      if (!may()) return;
+      const first = !move; move = e;
+      if (first) requestAnimationFrame(() => { const m = move; move = null; if (vidEl === v) send(m, at(m), { k: 'move', bt: m.buttons }); });
+    });
+    v.addEventListener('mousedown', (e) => { e.preventDefault(); v.focus(); if (!may()) { refuse(); return; } send(e, at(e), { k: 'down', b: e.button, n: e.detail }); });
+    v.addEventListener('mouseup', (e) => { if (may()) send(e, at(e), { k: 'up', b: e.button, n: e.detail }); });
+    v.addEventListener('wheel', (e) => { e.preventDefault(); if (!may()) return; const u = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 800 : 1; send(e, at(e), { k: 'wheel', dx: e.deltaX * u, dy: e.deltaY * u }); }, { passive: false });
+    v.addEventListener('contextmenu', (e) => e.preventDefault());
+    const key = (d) => (e) => {
+      if (e.key === 'Escape') { if (d) { v.blur(); tab = 'surf'; showPanel(true); syncUI(); } e.stopPropagation(); return; }       // Esc: our controls, and the keys come back to us
+      if (!may()) return;       // Drift's own shortcuts then
+      e.preventDefault(); e.stopPropagation();
+      api.cmd({ type: 'web-input', e: { k: 'key', d, key: e.key, m: mods(e) } });
+    };
+    v.addEventListener('keydown', key(true)); v.addEventListener('keyup', key(false));
+    v.focus();
   }
 
   // ---------- watch together: the Together tab ----------
@@ -599,7 +882,7 @@
       $('#shTitle').textContent = p.status !== 'ready' ? 'Starting…' : wait.length ? `Paused while ${wait.join(' and ')} ${wait.length > 1 ? 'load' : 'loads'}…`
         : n ? `Sharing with ${n === 1 ? peers[0].name : n + ' friends'}` : 'Sharing — waiting for friends to join';
       $('#shSub').textContent = p.settling ? 'Getting your invite code ready…' : (p.reach === 'internet' ? 'Friends anywhere can join with this code.' : 'Friends on your network can join with this code.')
-        + (videoOn() ? '' : ' Play a video and they will see it too.');
+        + (videoOn() ? '' : ' Play a video, open a page in Surf or put music on, and they get it too.');
       const shown = p.settling ? '' : p.code || '';
       if ($('#shCodeOut').textContent !== shown) $('#shCodeOut').textContent = shown;
       $('#shCopy').style.opacity = p.settling ? 0.4 : 1; $('#shCopy').style.pointerEvents = p.settling ? 'none' : '';
@@ -619,7 +902,18 @@
     const nm = $('#shName');
     nm.placeholder = p.defaultName || 'Your name';
     if (document.activeElement !== nm) nm.value = sh.name || '';
-    $('#shControl').checked = !!sh.control; $('#shWait').checked = !!sh.wait; $('#shInternet').checked = !!sh.internet;
+    $('#shControl').checked = !!sh.control; $('#shWait').checked = !!sh.wait; $('#shInternet').checked = !!sh.internet; $('#shAdblock').checked = !!sh.adblock;
+    $('#shAdblock').closest('label').style.display = p.role === 'guest' ? 'none' : '';       // a friend's pages are theirs
+    // a badge on each tab: how many people in the session (you included) are looking at it
+    const counts = (p.role === 'host' && n) || (p.role === 'guest' && p.status === 'connected') ? p.tabs || {} : {};
+    for (const b of $$('.tabs button')) {
+      const k = counts[b.dataset.tab] || 0;
+      let el = b.querySelector('.cnt');
+      if (!k) { if (el) el.remove(); continue; }
+      if (!el) { el = document.createElement('b'); el.className = 'cnt'; b.appendChild(el); }
+      if (el.textContent !== String(k)) el.textContent = k;
+      el.title = `${k} ${k === 1 ? 'person is' : 'people are'} on this tab`;
+    }
     $('#shQuality').value = sh.quality || 'original';
     $('#shQNote').textContent = p.role === 'guest' && sh.quality !== p.quality ? `${p.host || 'Your friend'} is sending ${QNAME[p.quality] || p.quality} at most.` : '';
   }
@@ -645,7 +939,7 @@
         + ' Drift also converts videos in formats the built-in player can\'t play.';
   }
 
-  // ---------- subtitles: the box in the Video tab ----------
+  // ---------- subtitles: the box in the Media tab ----------
   const LANGS = init.langs || [['en', 'English']];
   const langOpts = LANGS.map(([c, n]) => `<option value="${c}">${n}</option>`).join('');
   $('#subPref').innerHTML = langOpts;
@@ -735,7 +1029,7 @@
   const subNudge = (d) => { const v = Math.round((((S.subsInfo || {}).offset || 0) + d) * 20) / 20; api.cmd({ type: 'sub-offset', value: v }); toast('Subtitle timing: ' + offStr(v), 1400); };
   const subCycle = () => {
     const si = S.subsInfo || {}, ids = ['off', ...(si.tracks || []).filter((t) => t.usable).map((t) => t.id)];
-    if (ids.length < 2) { toast('No subtitles for this video yet — use "Find online" in the Video tab.', 4000); return; }
+    if (ids.length < 2) { toast('No subtitles for this video yet — use "Find online" in the Media tab.', 4000); return; }
     subAsk = true; api.cmd({ type: 'sub-select', id: ids[(ids.indexOf(si.sel || 'off') + 1) % ids.length] });
   };
 
@@ -748,77 +1042,50 @@
   function renderFolders() {
     const fs = S.video.folders || [];
     if (!fs.includes(libRoot)) { libRoot = fs[0] || ''; libDir = ''; }
-    const key = fs.join('|') + '>' + libRoot;
+    const key = fs.join('|');
     if (key !== folderKey) {
       folderKey = key;
-      $('#vfolders').innerHTML = fs.length ? fs.map((f) => `<div class="vf${f === libRoot ? ' active' : ''}" data-p="${esc(f)}" title="${esc(f)}">📁<span>${esc(folderName(f))}</span><button title="Remove from this list (files are not deleted)">✕</button></div>`).join('')
+      $('#vfolders').innerHTML = fs.length ? fs.map((f) => `<div class="vf" data-p="${esc(f)}" title="${esc(f)}">📁<span>${esc(folderName(f))}</span><button title="Remove from this list (files are not deleted)">✕</button></div>`).join('')
         : '<p class="note">No folders yet.</p>';
     }
-    if (tab === 'video' && panel.classList.contains('open') && libRoot && !libDir) openDir(libRoot);
+    $$('#vfolders .vf').forEach((x) => x.classList.toggle('active', x.dataset.p === libRoot));       // every time: choosing a folder doesn't wait for new state
+    if (tab === 'media' && panel.classList.contains('open') && libRoot && !libDir) openDir(libRoot);
     if (!libRoot && lib) { lib = null; $('#vgrid').innerHTML = '<p>Add a folder to see your videos here.</p>'; $('#vcrumb').innerHTML = ''; }
   }
+  // A folder's (or a search's) files, split into videos and music. Each kind plays as its own list.
+  const fileTiles = (l, full) => l.videos.map((v, i) => `<button class="vt" data-i="${i}" title="${esc(full ? v.path : v.name)}"><div class="th">▶<i></i></div><div class="nm">${esc(v.name.replace(/\.[^.]+$/, ''))}</div><div class="sz">${sizeStr(v.size)}</div></button>`).join('')
+    + l.tracks.map((v, i) => `<button class="vt song" data-t="${i}" title="${esc(full ? v.path : v.name)}"><div class="th">♪<i></i></div><div class="nm">${esc(v.name.replace(/\.[^.]+$/, ''))}</div><div class="sz">${sizeStr(v.size)}</div></button>`).join('');
+  const splitKinds = (files) => ({ videos: files.filter((f) => f.kind !== 'audio'), tracks: files.filter((f) => f.kind === 'audio') });
+  const counted = (n, one, many) => `${n} ${n === 1 ? one : many}`;
   async function openDir(dir) {
     libDir = dir; const job = ++libJob;
-    const data = await api.listDir(dir);
+    const data = await api.listDir(dir, 'media');
     if (job !== libJob) return;
-    lib = data;
-    $('#vcrumb').innerHTML = (data.parent ? '<button class="icon" title="Back">‹</button>' : '') + `<b>${esc(data.name || '')}</b><span class="note" style="margin:0">${data.videos.length} video${data.videos.length === 1 ? '' : 's'}</span>`;
-    $('#vgrid').innerHTML = (data.dirs.map((d) => `<button class="vt dir" data-dir="${esc(d.path)}"><div class="th">📁</div><div class="nm">${esc(d.name)}</div></button>`).join('')
-      + data.videos.map((v, i) => `<button class="vt" data-i="${i}" title="${esc(v.name)}"><div class="th">▶<i></i></div><div class="nm">${esc(v.name.replace(/\.[^.]+$/, ''))}</div><div class="sz">${sizeStr(v.size)}</div></button>`).join(''))
-      || '<p>No videos in this folder.</p>';
+    lib = { ...data, ...splitKinds(data.videos) };
+    const what = [lib.videos.length || !lib.tracks.length ? counted(lib.videos.length, 'video', 'videos') : '', lib.tracks.length ? counted(lib.tracks.length, 'song', 'songs') : ''].filter(Boolean).join(' · ');
+    $('#vcrumb').innerHTML = (data.parent ? '<button class="icon" title="Back">‹</button>' : '') + `<b>${esc(data.name || '')}</b><span class="note" style="margin:0">${what}</span>`;
+    $('#vgrid').innerHTML = (data.dirs.map((d) => `<button class="vt dir" data-dir="${esc(d.path)}" title="${esc(d.name)}"><div class="th">📁</div><div class="nm">${esc(d.name)}</div></button>`).join('') + fileTiles(lib, false))
+      || '<p>No videos or music in this folder.</p>';
     markPlaying(); $('#content').scrollTop = 0;
     makeVideoThumbs(job);
   }
   async function searchVideos(q) {
-    const job = ++libJob, res = await api.searchLib('video', libRoot, q);
+    const job = ++libJob, res = await api.searchLib('media', libRoot, q);
     if (job !== libJob) return;
-    lib = { dir: libRoot, name: `Results for "${q}"`, parent: null, dirs: [], videos: res }; libDir = libRoot;
+    lib = { dir: libRoot, name: `Results for "${q}"`, parent: null, dirs: [], ...splitKinds(res) }; libDir = libRoot;
     $('#vcrumb').innerHTML = `<b>${esc(lib.name)}</b><span class="note" style="margin:0">${res.length}${res.length >= 300 ? '+' : ''} found</span>`;
-    $('#vgrid').innerHTML = res.map((v, i) => `<button class="vt" data-i="${i}" title="${esc(v.path)}"><div class="th">▶<i></i></div><div class="nm">${esc(v.name.replace(/\.[^.]+$/, ''))}</div><div class="sz">${sizeStr(v.size)}</div></button>`).join('') || '<p>Nothing matches.</p>';
+    $('#vgrid').innerHTML = fileTiles(lib, true) || '<p>Nothing matches.</p>';
     markPlaying(); makeVideoThumbs(job);
   }
 
-  // ---------- music library ----------
-  let mRoot = '', mDir = '', mLib = null, mJob = 0, mKey = '';
-  function renderMusicLib() {
-    const fs = S.music.folders || [];
-    if (!fs.includes(mRoot)) { mRoot = fs[0] || ''; mDir = ''; }
-    const key = fs.join('|') + '>' + mRoot;
-    if (key !== mKey) {
-      mKey = key;
-      $('#mfolders').innerHTML = fs.map((f) => `<div class="vf${f === mRoot ? ' active' : ''}" data-p="${esc(f)}" title="${esc(f)}">📁<span>${esc(folderName(f))}</span><button title="Remove from this list (files are not deleted)">✕</button></div>`).join('') + '<button class="add">+ Add folder…</button>';
-    }
-    if (tab === 'music' && S.music.source === 'files' && panel.classList.contains('open') && mRoot && !mDir) openMusicDir(mRoot);
-    if (!mRoot) { mLib = null; $('#playlist').innerHTML = '<p>Add a folder to browse your music here.</p>'; $('#mcrumb').innerHTML = ''; }
-    markTrack();
-  }
-  function paintMusic(data, label) {
-    mLib = data;
-    $('#mcrumb').innerHTML = (data.parent ? '<button class="icon" title="Back">‹</button>' : '') + `<b>${esc(label)}</b>`;
-    $('#playlist').innerHTML = (data.dirs.map((d) => `<div class="dir" data-dir="${esc(d.path)}">📁&nbsp; ${esc(d.name)}</div>`).join('')
-      + data.videos.slice(0, 600).map((v, i) => `<div data-i="${i}" title="${esc(v.path)}">♪&nbsp; ${esc(v.name.replace(/\.[^.]+$/, ''))}</div>`).join(''))
-      || '<p>No music here. Try another folder, or add one.</p>';
-    $('#playlist').scrollTop = 0; markTrack();
-  }
-  async function openMusicDir(dir) {
-    mDir = dir; const job = ++mJob, data = await api.listDir(dir, 'audio');
-    if (job === mJob) paintMusic(data, data.name || '');
-  }
-  async function searchMusic(q) {
-    const job = ++mJob, res = await api.searchLib('audio', mRoot, q);
-    if (job === mJob) paintMusic({ parent: null, dirs: [], videos: res }, `${res.length}${res.length >= 300 ? '+' : ''} results`);
-  }
-  function markTrack() {
-    if (!mLib) return;
-    const cur = S.music.source === 'files' ? S.music.playlist[S.nowPlaying.index] : '';
-    $$('#playlist div[data-i]').forEach((d) => d.classList.toggle('active', mLib.videos[+d.dataset.i].path === cur));
-  }
   function markPlaying() {
     if (!lib) return;
     $$('#vgrid .vt[data-i]').forEach((t) => t.classList.toggle('active', videoOn() && lib.videos[+t.dataset.i].path === S.videoPath));
+    const song = filesOn() ? S.music.playlist[S.nowPlaying.index] : '';
+    $$('#vgrid .vt[data-t]').forEach((t) => t.classList.toggle('active', !!song && lib.tracks[+t.dataset.t].path === song));
   }
-  function paintThumb(i, t) {
-    const el = $(`#vgrid .vt[data-i="${i}"] .th`); if (!el) return;
+  function paintThumb(sel, t) {
+    const el = $(`#vgrid .vt[${sel}] .th`); if (!el) return;
     if (t.img) { el.style.backgroundImage = `url(${t.img})`; el.firstChild.textContent = ''; }
     if (t.dur) el.querySelector('i').textContent = clockStr(t.dur);
   }
@@ -842,13 +1109,13 @@
       tv.src = url;
     });
   }
-  async function makeVideoThumbs(job) {
-    const vids = lib.videos;
-    for (let i = 0; i < vids.length; i++) {
+  async function makeVideoThumbs(job) {       // a picture and the length for each video; the length for each song
+    const all = [...lib.videos.map((v, i) => [v, `data-i="${i}"`]), ...lib.tracks.map((v, i) => [v, `data-t="${i}"`])];
+    for (const [v, sel] of all) {
       if (job !== libJob) return;
-      let t = thumbs.get(vids[i].path);
-      if (!t) { t = await grab(vids[i].url); thumbs.set(vids[i].path, t); }
-      if (job === libJob) paintThumb(i, t);
+      let t = thumbs.get(v.path);
+      if (!t) { t = await grab(v.url); thumbs.set(v.path, t); }
+      if (job === libJob) paintThumb(sel, t);
     }
   }
 
@@ -886,8 +1153,13 @@
   $('#algoInfo').addEventListener('change', (e) => P({ algoInfo: e.target.checked }));
   $('#modeHint').addEventListener('click', () => setTab('settings'));
   $('#mode').addEventListener('click', (e) => { const v = e.target.dataset.v; if (v) P({ mode: v }); });
-  $('#source').addEventListener('click', (e) => { const v = e.target.dataset.v; if (v) P({ music: { source: v, playing: true } }); });
-  $('#presets').addEventListener('click', (e) => { const t = e.target.closest('.preset'); if (t) P({ music: { preset: t.dataset.id, playing: true } }); });
+  // Ambient sound, in Scenes: a preset, or Off. Music from the library takes over from it while it plays, and it comes back after.
+  $('#presets').addEventListener('click', (e) => {
+    const t = e.target.closest('.preset'); if (!t) return;
+    if (t.dataset.id === 'off') P({ music: { ambientOff: true, ...(S.music.source === 'generative' ? { source: 'off' } : {}) } });
+    else P({ music: { preset: t.dataset.id, ambientOff: false, source: 'generative', playing: true } });
+  });
+  $('#stopMusic').addEventListener('click', () => P({ music: { source: S.music.ambientOff ? 'off' : 'generative', playing: true } }));
   $('#monitors').addEventListener('click', (e) => {
     const t = e.target.closest('.mon'); if (!t) return; const i = +t.dataset.i;
     const off = S.displaysOff.includes(i) ? S.displaysOff.filter((x) => x !== i) : [...S.displaysOff, i];
@@ -898,8 +1170,25 @@
   $('#volume').addEventListener('input', (e) => { fill(e.target); P({ music: { volume: +e.target.value } }); });
   $$('[data-nature]').forEach((x) => x.addEventListener('input', () => { fill(x); P({ music: { nature: { [x.dataset.nature]: +x.value } } }); }));
   for (const k of ['autoCycle', 'quality', 'fps']) $('#' + k).addEventListener('change', (e) => P({ [k]: +e.target.value }));
-  for (const k of ['cycleShuffle', 'clock', 'breathing', 'keepAwake', 'onTop']) $('#' + k).addEventListener('change', (e) => P({ [k]: e.target.checked }));
+  for (const k of ['cycleShuffle', 'clock', 'breathing', 'keepAwake', 'onTop', 'autoUpdate']) $('#' + k).addEventListener('change', (e) => P({ [k]: e.target.checked }));
   $('#shuffle').addEventListener('change', (e) => P({ music: { shuffle: e.target.checked } }));
+  // Settings → Updates: what the updater is doing, and the one button that does the next thing
+  function syncUpdate() {
+    const u = S.update, b = $('#updBtn'), n = $('#updNote');
+    $('#updRow').style.display = u && u.supported ? '' : 'none';
+    if (!u || !u.supported) return;
+    const pct = Math.round((u.progress || 0) * 100);
+    b.textContent = { ready: `Restart to update to ${u.version}`, manual: `Download ${u.version}`, checking: 'Checking…', downloading: `Downloading ${u.version}… ${pct}%` }[u.status] || 'Check for updates';
+    b.classList.toggle('ghost', !['ready', 'manual'].includes(u.status));
+    b.style.pointerEvents = ['checking', 'downloading'].includes(u.status) ? 'none' : '';
+    n.textContent = u.error || { latest: `Drift ${u.current} is the latest version`, ready: 'Or it installs by itself when you close Drift', manual: 'This copy can’t update itself here: get the new one from the releases page' }[u.status] || `You have Drift ${u.current}`;
+  }
+  $('#updBtn').addEventListener('click', () => {
+    const u = S.update || {};
+    if (u.status === 'ready') api.cmd({ type: 'update-install' });
+    else if (u.status === 'manual') api.cmd({ type: 'update-page' });
+    else api.cmd({ type: 'update-check' });
+  });
   $('#sleep').addEventListener('change', (e) => P({ sleepAt: +e.target.value ? Date.now() + +e.target.value * 60000 : 0 }));
   $('#pickVideo').addEventListener('click', () => api.cmd({ type: 'pick-video', key: me.key }));
   for (const [id, k] of [['#vHdr', 'hdr'], ['#vTone', 'tone'], ['#vEnc', 'enc'], ['#vXq', 'xq']]) $(id).addEventListener('change', (e) => P({ video: { [k]: e.target.value } }));
@@ -913,7 +1202,7 @@
   $('#shCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') joinNow(); });
   $('#shName').addEventListener('change', (e) => P({ share: { name: e.target.value.trim() } }));
   $('#shName').addEventListener('keydown', (e) => { if (e.key === 'Enter') e.target.blur(); });
-  for (const [id, k] of [['#shControl', 'control'], ['#shWait', 'wait'], ['#shInternet', 'internet']]) $(id).addEventListener('change', (e) => P({ share: { [k]: e.target.checked } }));
+  for (const [id, k] of [['#shControl', 'control'], ['#shWait', 'wait'], ['#shInternet', 'internet'], ['#shAdblock', 'adblock']]) $(id).addEventListener('change', (e) => P({ share: { [k]: e.target.checked } }));
   $('#shQuality').addEventListener('change', (e) => P({ share: { quality: e.target.value } }));
   $('#videoFit').addEventListener('change', (e) => P({ video: { fit: e.target.value } }));
   $('#videoSound').addEventListener('change', (e) => P({ video: { sound: e.target.checked } }));
@@ -923,11 +1212,12 @@
   $('#vfolders').addEventListener('click', (e) => {
     const f = e.target.closest('.vf'); if (!f) return;
     if (e.target.tagName === 'BUTTON') { if (libRoot === f.dataset.p) { libRoot = ''; libDir = ''; } api.cmd({ type: 'remove-video-folder', path: f.dataset.p }); }
-    else { libRoot = f.dataset.p; openDir(libRoot); }
+    else { libRoot = f.dataset.p; $('#vsearch').value = ''; openDir(libRoot); renderFolders(); }
   });
   $('#vgrid').addEventListener('click', (e) => {
     const t = e.target.closest('.vt'); if (!t || !lib) return;
     if (t.dataset.dir) openDir(t.dataset.dir);
+    else if (t.dataset.t) api.cmd({ type: 'play-tracks', files: lib.tracks.map((v) => v.path), index: +t.dataset.t });
     else api.cmd({ type: 'play-videos', files: lib.videos.map((v) => v.path), index: +t.dataset.i, key: me.key });
   });
   $('#vcrumb').addEventListener('click', (e) => { if (e.target.closest('button') && lib && lib.parent) openDir(lib.parent); });
@@ -941,52 +1231,50 @@
     if (performance.now() - lastJump > 140) { lastJump = performance.now(); api.cmd({ type: 'video-jump', pos: +seekEl.value }); }
   });
   seekEl.addEventListener('change', () => { api.cmd({ type: 'video-jump', pos: +seekEl.value, final: true }); setTimeout(() => { seeking = false; }, 400); });
-  $('#addFiles').addEventListener('click', () => api.cmd({ type: 'add-files' }));
-  // play / pause: Spotify when that's the music source (and no video is up), otherwise Drift's own sound + video
+  // play / pause: whatever the toolbar is on (see ctx): the scene, the video, the music, or Spotify
   const ctxToggle = () => {
     const c = ctx();
     if (c === 'scene') P({ frozen: !S.frozen });
+    else if (c === 'surf') { /* the page has its own play button */ }
     else if (c === 'video') {
       if (videoOn()) P({ video: { paused: !S.video.paused } });
       else if (S.video.files.length) P({ ...(S.mode === 'mix' ? { perDisplay: { [me.key]: 'video' } } : { scene: 'video' }), video: { paused: false } });   // bring the last video back
-      else toast('Pick a video in the Video tab first', 1800);
+      else toast('Pick a video in the Media tab first', 1800);
     }
-    else if (S.music.source === 'spotify') api.cmd({ type: 'spotify', action: 'toggle' });
-    else if (S.music.source === 'off') toast('Music is off — choose Ambient, My music or Spotify', 2200);
-    else P({ music: { playing: !S.music.playing } });
+    else if (c === 'spotify') api.cmd({ type: 'spotify', action: 'toggle' });
+    else if (theirMusic()) hostMusic('toggle');
+    else if (filesOn()) P({ music: { playing: !S.music.playing } });
+    else toast('Pick a song in the Media tab first', 1800);
   };
   const ctxStep = (dir) => {
     const c = ctx();
     if (c === 'scene') stepScene(dir);
+    else if (c === 'surf') { if ((S.web || {}).open) surf(dir < 0 ? 'back' : 'fwd'); }
     else if (c === 'video') {
-      if (!videoOn()) toast('Pick a video in the Video tab first', 1800);
+      if (!videoOn()) toast('Pick a video in the Media tab first', 1800);
       else if (dir < 0 && vTime() > 4) api.cmd({ type: 'video-jump', pos: 0, final: true });      // first press of "previous" restarts the video
       else api.cmd({ type: 'video-step', dir });
     }
-    else if (S.music.source === 'spotify') api.cmd({ type: 'spotify', action: dir > 0 ? 'next' : 'prev' });
-    else if (S.music.source === 'files') api.cmd({ type: dir > 0 ? 'next' : 'prev' });
-    else if (S.music.source === 'generative') { const i = PRESETS.findIndex((x) => x.id === S.music.preset), n = PRESETS[(i + dir + PRESETS.length) % PRESETS.length]; P({ music: { preset: n.id, playing: true } }); toast(n.name, 1200); }
+    else if (c === 'spotify') api.cmd({ type: 'spotify', action: dir > 0 ? 'next' : 'prev' });
+    else if (theirMusic()) hostMusic(dir > 0 ? 'next' : 'prev');
+    else if (filesOn()) api.cmd({ type: dir > 0 ? 'next' : 'prev' });
+    else toast('Pick a song in the Media tab first', 1800);
   };
-  $('#spPlay').addEventListener('click', () => api.cmd({ type: 'spotify', action: 'toggle' }));
-  $('#spPrev').addEventListener('click', () => api.cmd({ type: 'spotify', action: 'prev' }));
-  $('#spNext').addEventListener('click', () => api.cmd({ type: 'spotify', action: 'next' }));
-  $('#spOpen').addEventListener('click', () => api.cmd({ type: 'spotify', action: 'open' }));
-  $('#mfolders').addEventListener('click', (e) => {
-    if (e.target.closest('.add')) { api.cmd({ type: 'add-music-folder' }); return; }
-    const f = e.target.closest('.vf'); if (!f) return;
-    if (e.target.tagName === 'BUTTON') { if (mRoot === f.dataset.p) { mRoot = ''; mDir = ''; } api.cmd({ type: 'remove-music-folder', path: f.dataset.p }); }
-    else { mRoot = f.dataset.p; $('#msearch').value = ''; openMusicDir(mRoot); }
-  });
-  $('#mcrumb').addEventListener('click', (e) => { if (e.target.closest('button') && mLib && mLib.parent) { $('#msearch').value = ''; openMusicDir(mLib.parent); } });
-  $('#playlist').addEventListener('click', (e) => {
-    const d = e.target.closest('div'); if (!d || !mLib) return;
-    if (d.dataset.dir) { $('#msearch').value = ''; openMusicDir(d.dataset.dir); }
-    else if (d.dataset.i) api.cmd({ type: 'play-tracks', files: mLib.videos.map((v) => v.path), index: +d.dataset.i });
-  });
-  let mTimer, vTimer;
-  $('#msearch').addEventListener('input', (e) => { clearTimeout(mTimer); mTimer = setTimeout(() => { const q = e.target.value.trim(); if (q) searchMusic(q); else openMusicDir(mDir && mDir !== '?' ? mDir : mRoot); }, 250); });
+  let vTimer;
   $('#vsearch').addEventListener('input', (e) => { clearTimeout(vTimer); vTimer = setTimeout(() => { const q = e.target.value.trim(); if (q) searchVideos(q); else openDir(libRoot); }, 250); });
   $('#reset').addEventListener('click', () => api.cmd({ type: 'reset' }));
+  // It signs you out everywhere in Surf, so the first click asks and a second click within a few seconds does it.
+  let forgetArm = 0;
+  $('#forgetSurf').addEventListener('click', (e) => {
+    const b = e.currentTarget;
+    if (Date.now() - forgetArm > 4000) {
+      forgetArm = Date.now(); b.textContent = 'Sign out everywhere in Surf? Click again'; b.classList.add('danger');
+      setTimeout(() => { if (Date.now() - forgetArm >= 4000) { b.textContent = 'Forget Surf\'s sign-ins and history'; b.classList.remove('danger'); } }, 4100);
+      return;
+    }
+    forgetArm = 0; b.textContent = 'Forget Surf\'s sign-ins and history'; b.classList.remove('danger');
+    api.cmd({ type: 'surf-forget' });
+  });
   $('#play').addEventListener('click', ctxToggle);
   $('#prevTrack').addEventListener('click', () => ctxStep(-1));
   $('#nextTrack').addEventListener('click', () => ctxStep(1));
@@ -1036,13 +1324,13 @@
     else if ((k === 'x' || k === 'X') && videoOn()) subNudge(0.1);
     else if (k === 'c' || k === 'C') P({ clock: !S.clock });
     else if (k === 'b' || k === 'B') P({ breathing: !S.breathing });
-    else if (/^[1-9]$/.test(k) && SCENES[+k - 1] && ctx() === 'scene') P(S.mode === 'mix' ? { perDisplay: { [me.key]: SCENES[+k - 1].id } } : { scene: SCENES[+k - 1].id });
+    else if (/^[1-9]$/.test(k) && SCENES[+k - 1] && (ctx() === 'scene' || tab === 'scenes')) P(S.mode === 'mix' ? { perDisplay: { [me.key]: SCENES[+k - 1].id } } : { scene: SCENES[+k - 1].id });
   });
 
   // ---------- state sync ----------
   api.on('state', (ns) => {
     const prevPal = S.palette + (S.customColors || []).join('');
-    S = ns; resize();
+    S = ns; resize(); syncWeb();
     if (sceneFor(S) !== shown) setScene(sceneFor(S));
     syncVideo();
     syncSubs();
@@ -1058,15 +1346,19 @@
   });
   api.on('now', (n) => { S.nowPlaying = n; syncUI(); });
   api.on('cmd', (c) => {
-    if (c.type === 'show-panel') { tab = c.tab; showPanel(true); clearTimeout(hideTimer); syncUI(); }
+    if (c.type === 'show-panel') { tab = c.tab === 'video' || c.tab === 'music' ? 'media' : c.tab; tellTab(); showPanel(true); clearTimeout(hideTimer); syncUI(); }
     else if (c.type === 'toast') { if (isCenter || panel.classList.contains('show')) toast(c.text, Math.max(3200, Math.min(9000, c.text.length * 70))); }     // one screen is enough
     else if (c.type === 'ask-quit') { if (confirmEl.classList.contains('on')) api.cmd({ type: 'quit' }); else askQuit(); }
+    else if (c.type === 'rtc') onRtc(c);
+    else if (c.type === 'ptrs') showPtrs(Array.isArray(c.list) ? c.list : []);
+    else if (c.type === 'web-esc') { if (webEl) webEl.blur(); window.focus(); tab = 'surf'; showPanel(true); syncUI(); }       // Esc in the web page: our controls, and the keys come back to us
     else if (c.type === 'share-code') { $('#shCode').value = c.code; $('#shCode').focus(); }
   });
   hdrQuery.addEventListener('change', () => { tellHdr(); syncUI(); });
   tellHdr();
 
-  resize(); syncUI(); syncSubs(); requestAnimationFrame(frame);
+  resize(); syncWeb(); syncUI(); syncSubs(); tellTab(); requestAnimationFrame(frame);
+  if (init.reopen && tab !== 'surf') { showPanel(true); syncUI(); }       // the window in use when the monitors changed: its panel is back where it was
   if (!R) toast('Your graphics driver has WebGL disabled — visuals cannot start.', 10000);
   else if (isCenter && !init.testMode) { toast('Move the mouse for controls  ·  Esc to exit', 5000); }
   document.body.classList.add('idle');

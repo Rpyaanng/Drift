@@ -79,10 +79,12 @@
     droneGain.gain.setTargetAtTime(P.drone, T(), 2.5);
   }
 
+  // watching with a friend who has music on: theirs plays here in place of ours
+  const theirs = () => !!S.p2p && S.p2p.role === 'guest' && !!S.p2p.music;
   let genOn = false, curPreset = null;
   function tickMusic() {
     const P = PRESETS[S.music.preset] || PRESETS.pads;
-    const on = S.music.playing && S.music.source === 'generative';
+    const on = S.music.playing && S.music.source === 'generative' && !theirs();
     if (on !== genOn || curPreset !== S.music.preset) {
       if (on && (curPreset !== S.music.preset || !genOn)) { chord = 0; nextChord = T() + rand(35, 60); nextNote = T() + 0.3; tuneDrone(P, 0.8); }
       genOn = on; curPreset = S.music.preset;
@@ -163,7 +165,8 @@
   player.addEventListener('ended', () => step(1));
   player.addEventListener('error', () => { if (player.src) skipBroken(); });
 
-  // ---------- Spotify mode: listen to what the PC is playing so the visuals can react (analysis only, never recorded or replayed) ----------
+  // ---------- Spotify: while it has the toolbar (main's spotify.lead), listen to what the PC is playing so the visuals can react
+  // (analysis only, never recorded or replayed) ----------
   let pcStream = null, pcAnalyser = null, pcBusy = false, pcFailed = false;
   async function listenToPC(on) {
     if (!on) { pcFailed = false; if (pcStream) { pcStream.getTracks().forEach((t) => t.stop()); pcStream = null; pcAnalyser = null; } return; }
@@ -173,10 +176,79 @@
       const st = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
       st.getVideoTracks().forEach((t) => t.stop());
       if (!st.getAudioTracks().length) throw new Error('no system audio');
-      if (S.music.source !== 'spotify') { st.getTracks().forEach((t) => t.stop()); }
+      if (!(S.spotify || {}).lead) { st.getTracks().forEach((t) => t.stop()); }
       else { pcStream = st; pcAnalyser = ctx.createAnalyser(); pcAnalyser.fftSize = 2048; pcAnalyser.smoothingTimeConstant = 0.75; ctx.createMediaStreamSource(st).connect(pcAnalyser); }
     } catch (e) { pcFailed = true; console.log('system audio not available: ' + e.message); }
     pcBusy = false;
+  }
+
+  // ---------- watch together: this PC's music goes to friends, or a friend's music plays here ----------
+  // Ambient and My music are sent as one live stream (WebRTC, straight between the PCs), so everyone hears the same moment
+  // of it. Main passes the set-up messages along, over the watch-together connection. Spotify isn't ours to send.
+  const rtcConf = (stun) => ({ iceServers: stun ? [{ urls: 'stun:stun.l.google.com:19302' }] : [] });
+  const stereo = (sdp) => sdp.replace(/useinbandfec=1/g, 'useinbandfec=1;stereo=1;maxaveragebitrate=192000');       // it is music, not a phone call
+  const signal = (d, to) => api.cmd({ type: 'rtc', to, d: { ...d, ch: 'music' } });
+  // -- sharing: the music before this PC's own volume, so friends set theirs --
+  const shareBus = G(0); genBus.connect(shareBus); fileBus.connect(shareBus);
+  const pcs = new Map();
+  let tap = null;
+  function dropPeer(id) { const pc = pcs.get(id); if (pc) { pcs.delete(id); pc.close(); } }
+  async function rtcHost(id, d) {
+    if (d.type === 'bye') { dropPeer(id); return; }
+    if (d.type === 'want') {
+      dropPeer(id);
+      if (S.p2p.role !== 'host') return;
+      if (!tap) { tap = ctx.createMediaStreamDestination(); shareBus.connect(tap); }
+      const stun = !!S.share.internet, pc = new RTCPeerConnection(rtcConf(stun));
+      pcs.set(id, pc); pc.early = [];
+      for (const t of tap.stream.getTracks()) pc.addTrack(t, tap.stream);
+      pc.onicecandidate = (e) => { if (e.candidate) signal({ type: 'ice', c: e.candidate.toJSON() }, id); };
+      pc.onconnectionstatechange = () => { if (pc.connectionState === 'failed' && pcs.get(id) === pc) dropPeer(id); };       // they ask again
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription({ type: 'offer', sdp: stereo(offer.sdp) });
+      if (pcs.get(id) === pc) signal({ type: 'offer', sdp: pc.localDescription.sdp, stun }, id);
+      return;
+    }
+    const pc = pcs.get(id);
+    if (!pc) return;
+    if (d.type === 'answer') { await pc.setRemoteDescription({ type: 'answer', sdp: String(d.sdp) }); for (const c of pc.early.splice(0)) pc.addIceCandidate(c).catch(() => {}); }
+    else if (d.type === 'ice' && d.c) { if (pc.remoteDescription) await pc.addIceCandidate(d.c); else pc.early.push(d.c); }
+  }
+  // -- listening: their stream joins our sound after the music volume, so the visuals move to it too --
+  const remoteBus = G(0); remoteBus.connect(comp);
+  const remoteEl = new Audio(); remoteEl.muted = true;       // Chromium only runs a stream from another PC while an element plays it
+  let gpc = null, gsrc = null, gWant = false, gAsked = 0, gGood = 0;
+  function hangUp() { if (gpc) { const pc = gpc; gpc = null; pc.close(); } if (gsrc) { gsrc.disconnect(); gsrc = null; } remoteEl.srcObject = null; }
+  function ask() { hangUp(); gAsked = Date.now(); signal({ type: 'want' }); }
+  async function rtcGuest(d) {
+    if (!gWant) return;
+    if (d.type === 'offer') {
+      hangUp();
+      const pc = gpc = new RTCPeerConnection(rtcConf(!!d.stun));
+      pc.ontrack = (e) => {
+        if (gpc !== pc || gsrc) return;
+        remoteEl.srcObject = e.streams[0]; remoteEl.play().catch(() => {});
+        gsrc = ctx.createMediaStreamSource(e.streams[0]); gsrc.connect(remoteBus);
+      };
+      pc.onicecandidate = (e) => { if (e.candidate) signal({ type: 'ice', c: e.candidate.toJSON() }); };
+      pc.setRemoteDescription({ type: 'offer', sdp: String(d.sdp) }).catch(() => {});       // candidates that follow wait their turn behind this
+      const ans = await pc.createAnswer();
+      await pc.setLocalDescription({ type: 'answer', sdp: stereo(ans.sdp) });
+      if (gpc === pc) signal({ type: 'answer', sdp: pc.localDescription.sdp });
+    } else if (d.type === 'ice' && d.c && gpc) await gpc.addIceCandidate(d.c);
+  }
+  setInterval(() => {       // no sound for a while (the route failed, their Drift restarted…): ask again
+    if (!gWant) return;
+    const now = Date.now();
+    if (gpc && gpc.connectionState === 'connected') gGood = now; else if (now - Math.max(gAsked, gGood) > 6000) ask();
+  }, 2000);
+  function syncShare(videoSound) {
+    const m = S.music, p = S.p2p || {}, t = T();
+    if (p.role !== 'host') for (const id of [...pcs.keys()]) dropPeer(id);
+    shareBus.gain.setTargetAtTime(m.playing && (m.source === 'files' || m.source === 'generative') && !videoSound ? 1 : 0, t, m.playing ? 0.1 : 0.35);       // when a video's sound takes over here, it does for friends too
+    const want = theirs() && p.status === 'connected';
+    if (want && !gWant) { gWant = true; ask(); } else if (!want && gWant) { gWant = false; hangUp(); }
+    remoteBus.gain.setTargetAtTime(theirs() && !videoSound ? m.volume * m.volume * 1.4 : 0, t, 0.08);
   }
 
   // ---------- apply state ----------
@@ -186,15 +258,16 @@
     const m = S.music, t = T();
     if (!fading) master.gain.setTargetAtTime(m.playing ? 1 : 0, t, 0.35);
     const videoSound = S.video.sound && !!S.videoLeader;   // the video's own soundtrack takes over from the music
-    musicBus.gain.setTargetAtTime(m.source === 'off' || m.source === 'spotify' || videoSound ? 0 : m.volume * m.volume * 1.4, t, videoSound ? 0.5 : 0.08);
+    syncShare(videoSound);
+    musicBus.gain.setTargetAtTime(m.source === 'off' || videoSound || theirs() ? 0 : m.volume * m.volume * 1.4, t, videoSound ? 0.5 : 0.08);
     for (const k of Object.keys(N)) N[k].gain.setTargetAtTime(Math.pow(m.nature[k] || 0, 1.6), t, 0.1);
     // files
-    const wantFiles = m.source === 'files' && m.playing && m.playlist.length > 0;
+    const wantFiles = m.source === 'files' && m.playing && m.playlist.length > 0 && !theirs();
     if (curPath && !m.playlist.includes(curPath)) { player.pause(); player.removeAttribute('src'); player.load(); cur = -1; curPath = ''; api.now({ title: '', index: -1 }); }
     else if (curPath) { const i = m.playlist.indexOf(curPath); if (i !== cur) { cur = i; api.now({ title: title(curPath), index: i }); } }
     if (wantFiles) { if (!curPath) playIndex(0); else if (player.paused && player.src) player.play().catch(() => {}); }
     else if (!player.paused) player.pause();
-    listenToPC(m.source === 'spotify');
+    listenToPC(!!(S.spotify || {}).lead);
     tickMusic();
   }
   api.on('state', (ns) => { S = ns; apply(); });
@@ -202,6 +275,7 @@
     if (c.type === 'next') step(1);
     else if (c.type === 'prev') { if (player.currentTime > 4) player.currentTime = 0; else step(-1); }
     else if (c.type === 'play-index') playIndex(c.index);
+    else if (c.type === 'rtc') { if (c.d && typeof c.d === 'object') (c.from ? rtcHost(c.from, c.d) : rtcGuest(c.d)).catch((e) => console.log('music stream set-up: ' + e.message)); }
     else if (c.type === 'fadeout') { fading = true; master.gain.cancelScheduledValues(T()); master.gain.setTargetAtTime(0, T(), 2.2); }
   });
 

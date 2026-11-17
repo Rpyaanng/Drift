@@ -1,5 +1,5 @@
 // Drift — main process: one fullscreen window per monitor, shared state, hidden audio engine window.
-const { app, BrowserWindow, ipcMain, screen, dialog, powerSaveBlocker, shell, session, desktopCapturer, net, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, dialog, powerSaveBlocker, shell, session, desktopCapturer, net, clipboard, webContents, protocol } = require('electron');
 const { pathToFileURL } = require('url');
 const http = require('http');
 const os = require('os');
@@ -10,13 +10,16 @@ const fs = require('fs');
 const subsLib = require('./subtitles');
 const createXcoder = require('./xcode');
 const createP2P = require('./p2p');
+const createWeb = require('./web');
+const createUpdater = require('./updater');
 
 if (process.env.DRIFT_USERDATA) app.setPath('userData', path.resolve(process.env.DRIFT_USERDATA));   // dev: a second copy with its own settings (e.g. to try sharing on one PC)
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
-app.commandLine.appendSwitch('disable-features', 'HardwareMediaKeyHandling');   // media keys must reach Spotify, not Drift
+app.commandLine.appendSwitch('disable-features', 'HardwareMediaKeyHandling,WebRtcHideLocalIpsWithMdns');   // media keys must reach Spotify, not Drift; a shared web page's stream is offered on this PC's real local address
 app.commandLine.appendSwitch('disable-background-timer-throttling');
+protocol.registerSchemesAsPrivileged([{ scheme: 'drift', privileges: { standard: true, secure: true } }]);       // drift://home/, the Surf tab's own start page: see web.js
 
 const FAKE = parseInt(process.env.DRIFT_FAKE_DISPLAYS || '0', 10); // dev: split one screen into N panes
 const SHOT_DIR = process.env.DRIFT_SHOTS || '';                    // dev: write screenshots here
@@ -47,6 +50,7 @@ const DEFAULTS = {
   breathing: false,
   keepAwake: true,
   onTop: false,
+  autoUpdate: true,        // look for a new release now and then, download it and install it when Drift closes
   sleepAt: 0,
   // hdr: auto = convert HDR videos to SDR on screens that aren't showing HDR | always | never; tone = how bright highlights are squeezed in;
   // enc = which ffmpeg encoder converts (auto = the fastest that works on this PC); xq = picture height of converted video (auto = the screen's)
@@ -54,17 +58,18 @@ const DEFAULTS = {
     hdr: 'auto', tone: 'hable', enc: 'auto', xq: 'auto' },
   // watch together: internet = ask the router to let friends outside the home in; control = friends may play / pause / seek;
   // wait = pause for everyone while someone is loading; quality = picture size sent to (and asked from) friends
-  share: { name: '', internet: true, control: true, wait: true, quality: 'original', port: 47800 },
+  share: { name: '', internet: true, control: true, wait: true, quality: 'original', port: 47800, adblock: true },
   // subtitles: on = show them when a video has some; perFile remembers the track and timing chosen for each video
   subs: { on: true, lang: 'en', size: 1, color: '#ffffff', bg: 'outline', lift: 0, perFile: {} },
   prevScene: 'aurora',
   frozen: false,           // scene animation paused
-  settingsVersion: 5,
+  settingsVersion: 6,
   music: {
     playing: true,
-    source: 'generative',  // generative | files | spotify | off
+    source: 'generative',  // generative (Ambient) | files (music from the library) | off
     folders: [], foldersInit: false,
     preset: 'pads',
+    ambientOff: false,     // Ambient sound (in Scenes) set to Off: what comes back when music from the library stops
     volume: 0.6,
     nature: { rain: 0, waves: 0, wind: 0, fire: 0 },
     playlist: [],
@@ -84,6 +89,7 @@ let clock = { base: 0, ref: Date.now() };   // visual time: t = base + (now-ref)
 let saveTimer = null, cycleTimer = null, sleepTimer = null, rebuildTimer = null;
 let blockerId = null;
 let quitting = false;
+let updater = null, updTold = '';
 
 function loadSettings() {
   try {
@@ -105,7 +111,13 @@ function loadSettings() {
     if ((s.settingsVersion || 1) < 4 && state.reactivity === 0.5) state.reactivity = 0.7;   // sound reactions are stronger by default now
     delete state.video.layout;                // Span / Mirror / Mix now covers videos too, so videos no longer have their own layout
     if (!['span', 'mirror', 'mix'].includes(state.mode)) state.mode = 'span';
-    state.settingsVersion = 5; state.video.paused = false;
+    if ((s.settingsVersion || 1) < 6) {       // music and videos share one library now, and Spotify is no longer a music source (Drift follows it by itself)
+      for (const f of (s.music || {}).folders || []) if (!state.video.folders.includes(f)) state.video.folders.push(f);
+      state.music.folders = []; state.music.foldersInit = true; state.video.foldersInit = true;
+      state.music.ambientOff = state.music.source === 'off' || state.music.source === 'spotify';
+    }
+    if (!['generative', 'files', 'off'].includes(state.music.source)) state.music.source = 'off';
+    state.settingsVersion = 6; state.video.paused = false;
     const known = (id) => id === 'video' || SCENES.includes(id);
     if (!known(state.scene)) state.scene = 'aurora';
     for (const k of Object.keys(state.perDisplay || {})) if (!known(state.perDisplay[k])) delete state.perDisplay[k];
@@ -113,13 +125,12 @@ function loadSettings() {
     if (state.palette === 'custom' && !Array.isArray(state.customColors)) state.palette = 'aurora';
     state.video.folders = (state.video.folders || []).filter((p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } });
     state.music.playlist = (state.music.playlist || []).filter((p) => { try { return fs.existsSync(p); } catch { return false; } });
-    if (state.music.source === 'files' && !state.music.playlist.length) state.music.source = 'generative';
-    state.music.folders = (state.music.folders || []).filter((p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } });
+    if (state.music.source === 'files' && !state.music.playlist.length) state.music.source = state.music.ambientOff ? 'off' : 'generative';
   } catch { /* first run */ }
 }
 const QUALITY = { original: { h: 0, kbps: 0 }, 1080: { h: 1080, kbps: 6000 }, 720: { h: 720, kbps: 3000 }, 480: { h: 480, kbps: 1200 } };
 function cleanShare(q) {
-  return { name: String(q.name || '').replace(/[\x00-\x1f<>]/g, '').slice(0, 24), internet: !!q.internet, control: !!q.control, wait: !!q.wait,
+  return { name: String(q.name || '').replace(/[\x00-\x1f<>]/g, '').slice(0, 24), internet: !!q.internet, control: !!q.control, wait: !!q.wait, adblock: !!q.adblock,
     quality: QUALITY[q.quality] ? String(q.quality) : 'original', port: q.port >= 1024 && q.port <= 65535 ? Math.round(q.port) : DEFAULTS.share.port };
 }
 function dropVideoScene() {
@@ -441,7 +452,7 @@ function toggleSubs() {
   if (state.subs.on && subInfo.sel) { selectSub('off'); return; }
   state.subs.on = true;
   startSubs(subSrc, subEmbedded);
-  if (!subInfo.sel) subInfo = { ...subInfo, busy: false, note: subInfo.tracks.some((t) => t.usable) ? 'No subtitles in your language here — pick a track in the Video tab.' : 'No subtitles for this video yet — use "Find online" in the Video tab.' };
+  if (!subInfo.sel) subInfo = { ...subInfo, busy: false, note: subInfo.tracks.some((t) => t.usable) ? 'No subtitles in your language here — pick a track in the Media tab.' : 'No subtitles for this video yet — use "Find online" in the Media tab.' };
   pushState(); saveSoon();
 }
 function addSubFile(p, label, lang) {
@@ -484,7 +495,9 @@ function startLocalServer() {
 
 // ---- Spotify desktop app -------------------------------------------------------------------------
 // No account or API key: Drift presses the same media keys a keyboard has, and reads the song from Spotify's window title.
-let spotify = { status: process.platform === 'win32' ? 'closed' : 'unsupported', title: '', volMode: '', vol: 0 }, spotifyProc = null;
+// It is watched all the time: whenever Spotify is playing and Drift itself has no video or music on, the toolbar's controls are Spotify's.
+// `had`: it has played since it was opened, so "paused" means a song is paused (not just an idle window).
+let spotify = { status: process.platform === 'win32' ? 'closed' : 'unsupported', title: '', volMode: '', vol: 0, had: false }, spotifyProc = null;
 const ps = (script, opts) => spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { windowsHide: true, ...opts });
 const SPOTIFY_WATCH = `
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -512,7 +525,9 @@ function spotifyWatch(on) {
       : /^Spotify( |$)/i.test(t) ? { status: 'paused', title: '' } : { status: 'playing', title: t };
     if (next.status !== spotify.status || next.title !== spotify.title) {
       const started = next.status === 'playing' && spotify.status !== 'playing';
-      spotify = { ...spotify, ...next }; pushState();
+      spotify = { ...spotify, ...next, had: next.status === 'playing' || (spotify.had && next.status !== 'closed') };
+      spotifyVolWatch(next.status !== 'closed');
+      pushState();
       if (started) setTimeout(() => spotifyVolSend('?'), 800);   // Spotify's mixer slot appears once it plays
     }
   });
@@ -527,7 +542,7 @@ function spotifyDo(action) {
   p.on('error', () => {});
 }
 
-// Volume while Spotify is the music source. Drift turns down Spotify's own slot in the Windows volume mixer;
+// Volume while Spotify has the toolbar. Drift turns down Spotify's own slot in the Windows volume mixer;
 // if Spotify has no slot there (it has not played anything yet), it changes the PC's main volume instead.
 const SPOTIFY_VOL = `
 $src = @'
@@ -613,15 +628,26 @@ function spotifyVolSet(v) {
 }
 
 const showsVideo = (key) => (state.mode === 'mix' ? (state.perDisplay[key] || state.scene) : state.scene) === 'video';
+// Spotify takes the toolbar (and the visuals listen to the PC's sound) while a song is on in it and nothing of Drift's own is playing:
+// no video running and no music from the library (or a friend's).
+function spotifyLead() {
+  if (!(spotify.status === 'playing' || (spotify.status === 'paused' && spotify.had))) return false;
+  if (remote && remote.music && remote.music.on) return false;
+  if (state.music.source === 'files' && state.music.playing && state.music.playlist.length) return false;
+  return !(cur() && !state.video.paused && visWins.some((v) => showsVideo(v.key)));
+}
 function publicState() {
   const c = cur(), lead = visWins.find((v) => showsVideo(v.key));
   // while watching with a friend, the list, position and pause state are theirs
   const video = remote ? { ...state.video, files: remote.files.map((f) => f.name), index: remote.index, paused: !!remote.paused } : state.video;
   return { ...state, video, subs: { ...state.subs, perFile: undefined }, subsInfo: subInfo, time: clock, nowPlaying, vclock,
     videoUrl: c ? (c.path ? pathToFileURL(c.path).href : c.src) : '', videoName: c ? c.name : '', videoPath: c ? c.path : '', videoLeader: lead && c ? lead.key : '',
-    spotify, videoAudio, videoInfo, audioBase: audioPort && c ? local(`/a?i=${c.index}`) : '',
+    spotify: { ...spotify, lead: spotifyLead() }, videoAudio, videoInfo, audioBase: audioPort && c ? local(`/a?i=${c.index}`) : '',
     xc: { ...xc, ...xcWant(), base: xcBase() }, encoders: xcoder.list(), canTonemap: !xcoder.ready() || xcoder.canTonemap(),
-    p2p: { ...p2p.info(), ctrl: !remote || !!remote.ctrl, own: !!(c && c.remote && c.path), viaHost: viaHost(), quality: shareQuality(), waitingFor: heldFor || [], defaultName: shareName(true), file: remote ? remote.file || '' : '' } };
+    p2p: { ...p2p.info(), ctrl: !remote || !!remote.ctrl, own: !!(c && c.remote && c.path), viaHost: viaHost(), quality: shareQuality(), waitingFor: heldFor || [], defaultName: shareName(true), file: remote ? remote.file || '' : '', music: remote ? remote.music : null },       // music: a friend's, playing here in place of ours
+    // a friend's page arrives as a stream; our own is a page in one of our windows
+    update: updater ? updater.info() : null,
+    web: remote ? { open: !!remote.web && streamShown, has: !!remote.web, stream: true, key: remote.web && streamShown ? screenFor(streamKey) : '', ...(remote.web || {}) } : web.info() };
 }
 function broadcast(channel, payload, includeAudio = true) {
   for (const v of visWins) if (!v.win.isDestroyed()) v.win.webContents.send(channel, payload);
@@ -642,6 +668,13 @@ function setPaused(v) {
   if (v) vclock.pos = (Date.now() - vclock.startedAt) / 1000; else vclock.startedAt = Date.now() - vclock.pos * 1000;
   state.video.paused = v;
 }
+// The music friends hear too (Ambient or My music; Spotify isn't ours to send). It reaches them as a live stream from the
+// audio window: see renderer/audio.js. `video` says a video is up here, whose sound takes over from the music.
+function sharedMusic(video) {
+  const m = state.music;
+  if (m.source !== 'files' && m.source !== 'generative') return null;
+  return { on: !!m.playing && !(video && state.video.sound), src: m.source, title: m.source === 'files' ? String(nowPlaying.title || '') : '', preset: m.preset };
+}
 function shareSnapshot() {
   const on = !remote && visWins.some((v) => showsVideo(v.key)), c = on ? cur() : null;
   return { files: on ? state.video.files.map((f) => ({ name: path.basename(f), size: sizeOf(f) })) : [], index: on ? state.video.index : 0,
@@ -649,7 +682,7 @@ function shareSnapshot() {
     info: videoInfo, audio: { mode: videoAudio.mode, codec: videoAudio.codec },
     // subtitle tracks are named by a hash so no folder names leave this PC
     tracks: probing ? null : subInfo.tracks.filter((t) => t.usable && t.kind !== 'shared').map((t) => ({ id: subsLib.hash(t.id), kind: t.kind, lang: t.lang, label: t.label, def: !!t.def, forced: !!t.forced, sdh: !!t.sdh })),
-    ctrl: state.share.control, cap: state.share.quality, xc: !!ffmpegPath() };
+    ctrl: state.share.control, cap: state.share.quality, xc: !!ffmpegPath(), web: remote ? null : web.shared(), music: remote ? null : sharedMusic(on && !!cur()) };
 }
 function videoJump(pos, play) {
   pos = Math.max(0, +pos || 0); vEnded = false;
@@ -716,7 +749,12 @@ function onRemote(s, why) {
     return;
   }
   const was = remote, wasKey = (cur() || {}).key;
-  remote = { ...s, files: (Array.isArray(s.files) ? s.files : []).slice(0, 5000).map((f) => ({ name: path.basename(String(f.name || 'video')).slice(0, 200), size: +f.size || 0 })),
+  if (!was) web.close();       // their page, if they have one open, is shown here in place of ours
+  const w = s.web && typeof s.web === 'object' && s.web.sid ? { url: String(s.web.url || '').slice(0, 2000), title: String(s.web.title || '').slice(0, 200), sid: String(s.web.sid).slice(0, 40),
+    tabs: (Array.isArray(s.web.tabs) ? s.web.tabs : []).slice(0, 20).map((t) => ({ id: +(t || {}).id || 0, title: String((t || {}).title || '').slice(0, 200) })), active: +s.web.active || 0, back: !!s.web.back, fwd: !!s.web.fwd } : null;
+  if (w && !(was && was.web)) streamShown = true;       // they opened their browser: it comes up here too
+  const mu = s.music && typeof s.music === 'object' ? { on: !!s.music.on, src: s.music.src === 'files' ? 'files' : 'generative', title: String(s.music.title || '').slice(0, 200), preset: String(s.music.preset || '').slice(0, 40) } : null;
+  remote = { ...s, web: w, music: mu, files: (Array.isArray(s.files) ? s.files : []).slice(0, 5000).map((f) => ({ name: path.basename(String(f.name || 'video')).slice(0, 200), size: +f.size || 0 })),
     index: Math.max(0, s.index | 0), pos: +s.pos || 0, seq: s.seq | 0 };
   vclock = { startedAt: +s.startedAt || Date.now(), pos: remote.pos, seq: remote.seq };
   if (!was) {
@@ -741,7 +779,56 @@ function guestCmd(m) {
   if (m.a === 'pause' || m.a === 'play') patch({ video: { paused: m.a === 'pause' } });
   else if (m.a === 'jump' && isFinite(m.pos)) videoJump(m.pos, !!m.play);
   else if (m.a === 'step') videoStep(m.dir < 0 ? -1 : 1);
+  else if (m.a === 'music') {       // their play / pause / next / previous for our music
+    if (!sharedMusic(false)) return;
+    if (m.do === 'toggle') patch({ music: { playing: !state.music.playing } });
+    else if ((m.do === 'next' || m.do === 'prev') && state.music.source === 'files' && audioWin && !audioWin.isDestroyed()) audioWin.webContents.send('cmd', { type: m.do });
+  }
+  else if (m.a === 'surf') { if (web.info().open && m.m && typeof m.m === 'object' && SURF.includes(m.m.do)) web.act({ do: m.m.do, text: m.m.text, id: m.m.id }); }       // the browser's own controls: tabs, back, the address…
+  else if (m.a === 'input') web.input(m.e);       // their mouse or keyboard, over the picture of our web page
 }
+// The Surf tab's browser, which friends see too while this PC shares: see web.js.
+const SURF = ['go', 'home', 'new', 'tab', 'close', 'back', 'fwd', 'reload'];
+const screenFor = (key) => (visWins.some((x) => x.key === key) ? key : (visWins.find((x) => (allDisplays().find((d) => d.key === x.key) || {}).primary) || visWins[0] || { key: 'd0' }).key);
+let streamKey = '', streamShown = true;       // as a guest: the monitor a friend's browser is shown on, and whether it is showing here
+const web = createWeb({
+  changed: () => pushState(),
+  screen: screenFor,
+  escape: () => { const x = visWins.find((y) => y.key === web.info().key); if (x && !x.win.isDestroyed()) { x.win.webContents.focus(); x.win.webContents.send('cmd', { type: 'web-esc' }); } },
+  unfull: (hostWc) => setTimeout(() => {       // leaving a video's full screen must not take Drift's window out of full screen with it
+    const x = visWins.find((y) => !y.win.isDestroyed() && y.win.webContents === hostWc);
+    if (x && FAKE <= 1 && !process.env.DRIFT_HIDDEN && !x.win.isFullScreen()) x.win.setFullScreen(true);
+  }, 150),
+  blockAds: () => state.share.adblock,
+  listsFile: () => path.join(app.getPath('userData'), 'adblock-lists.bin'),
+  say,
+});
+// Where everyone's mouse is over a shared web page, as fractions of the page, so each PC can draw the others' pointers.
+// This PC, sharing, gathers them (its own included) and passes each friend everyone's but their own.
+const pointers = new Map();
+let ptrTimer = null;
+const ptrClean = (list) => (Array.isArray(list) ? list : []).slice(0, 12).filter((q) => q && typeof q === 'object' && q.x >= 0 && q.x <= 1 && q.y >= 0 && q.y <= 1)
+  .map((q) => ({ id: String(q.id).slice(0, 16), name: String(q.name || '').replace(/[\x00-\x1f<>]/g, '').slice(0, 24), x: +q.x, y: +q.y }));
+function ptrShow(key, list) { const x = visWins.find((y) => y.key === key); if (x && !x.win.isDestroyed()) x.win.webContents.send('cmd', { type: 'ptrs', list }); }
+function ptrSet(id, name, m) {
+  const ok = m && typeof m === 'object' && m.x >= 0 && m.x <= 1 && m.y >= 0 && m.y <= 1 && web.info().open;
+  if (!ok && !pointers.has(id)) return;
+  if (ok) pointers.set(id, { id, name, x: +m.x, y: +m.y }); else pointers.delete(id);
+  if (ptrTimer) return;
+  ptrTimer = setTimeout(() => {       // at most 25 times a second
+    ptrTimer = null;
+    const all = ptrClean([...pointers.values()]);
+    ptrShow(web.info().key, all.filter((q) => q.id !== 'host'));
+    for (const peer of p2p.ids()) p2p.sendTo(peer, { t: 'ptrs', list: all.filter((q) => q.id !== peer) });
+  }, 40);
+}
+setInterval(() => {       // this PC's own mouse: the page swallows it, so ask Windows where it is
+  const w = web.info(), x = p2p.role() === 'host' && p2p.count() && w.open ? visWins.find((y) => y.key === w.key) : null;
+  if (!x || x.win.isDestroyed()) { if (pointers.size && (p2p.role() !== 'host' || !w.open)) { pointers.clear(); ptrSet('host', '', null); } return; }
+  if (SHOT_DIR) return;       // dev runs place it by hand
+  const c = screen.getCursorScreenPoint(), b = x.win.getContentBounds();
+  ptrSet('host', shareName(), { x: (c.x - b.x) / b.width, y: (c.y - b.y) / b.height });
+}, 60);
 const p2p = createP2P({
   snapshot: shareSnapshot,
   fileAt: (i) => (!remote && Number.isInteger(i) && visWins.some((v) => showsVideo(v.key)) ? state.video.files[i] || '' : ''),
@@ -755,6 +842,14 @@ const p2p = createP2P({
     xcoder.serve(req, res, xcSpec('share|' + req.url, c.src, q.t, QUALITY[q.q] ? q.q : 'original'));
   },
   guestCmd,
+  ptr: (id, name, m) => { if (p2p.role() === 'host') ptrSet(id, name, m); },
+  ptrs: (list) => { if (remote && remote.web) ptrShow(screenFor(streamKey), ptrClean(list)); },
+  rtc: (id, d) => {       // setting up the stream of a web page: hand it to the window that has the page (sharing) or shows it (watching)
+    if (!d || typeof d !== 'object' || (id ? p2p.role() !== 'host' : !remote)) return;
+    if (d.ch === 'music') { if (audioWin && !audioWin.isDestroyed()) audioWin.webContents.send('cmd', { type: 'rtc', from: id, d }); return; }       // the music's stream is the audio window's
+    const k = id ? web.info().key : screenFor(streamKey), x = visWins.find((y) => y.key === k);
+    if (x && !x.win.isDestroyed()) x.win.webContents.send('cmd', { type: 'rtc', from: id, d });
+  },
   playing: () => !remote && !state.video.paused && !!cur() && visWins.some((v) => showsVideo(v.key)),
   hold: (names) => {       // pause for everyone while a friend loads; carry on when they have caught up
     if (names) { if (!heldFor) setPaused(true); if ((heldFor || []).join() !== names.join()) { heldFor = names; pushState(); } }
@@ -775,16 +870,23 @@ function initFor(wc) {
     union: unionOf(act),
     displays: allDisplays().map((d) => ({ index: d.index, key: d.key, width: d.bounds.width, height: d.bounds.height, primary: d.primary })),
     state: publicState(),
+    tab: v ? tabOf[v.key] || '' : '', reopen: !!v && v.key === refocusKey,
     langs: subsLib.LANGS.map(([code, name]) => [code, name]),
     testMode: !!SHOT_DIR, freeze: !!process.env.DRIFT_FREEZE, fakeHdr: process.env.DRIFT_FAKE_HDR || '',     // dev: pretend this screen is ('1') or isn't ('0') showing HDR
   };
 }
 
+// Turning a monitor on or off rebuilds every window. Each screen comes back on the panel tab it was on (Surf if the browser is
+// there), and the window that had focus gets it back, with its panel open where it was.
+const tabOf = {};       // display key -> panel tab
+let refocusKey = '';
 let lastSig = '';
 const displaySig = () => JSON.stringify(allDisplays().map((d) => d.bounds));
 function buildWindows() {
   lastSig = displaySig();
   const old = visWins;
+  const had = old.find((o) => !o.win.isDestroyed() && o.win.isFocused());
+  refocusKey = had ? had.key : '';
   visWins = [];
   const act = activeDisplays();
   for (const d of act) {
@@ -792,9 +894,11 @@ function buildWindows() {
       x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height,
       frame: false, show: false, backgroundColor: '#000000', skipTaskbar: false,
       title: 'Drift', icon: path.join(__dirname, 'icon.png'),
-      webPreferences: { preload: path.join(__dirname, 'preload.js'), backgroundThrottling: false },
+      webPreferences: { preload: path.join(__dirname, 'preload.js'), backgroundThrottling: false, webviewTag: true },       // the tag is for a web page watched together: see web.js
     });
     win.setMenuBarVisibility(false);
+    web.host(win.webContents);
+    win.on('app-command', (_e, c) => { if (c === 'browser-backward') web.nav(-1); else if (c === 'browser-forward') web.nav(1); });       // the mouse's side buttons
     if (process.env.DRIFT_MUTE) win.webContents.setAudioMuted(true);      // dev: silent runs
     const entry = { win, key: d.key, index: d.index, bounds: d.bounds, hdr: undefined };
     visWins.push(entry);
@@ -804,6 +908,7 @@ function buildWindows() {
       if (FAKE <= 1 && !process.env.DRIFT_HIDDEN) win.setFullScreen(true);
       if (state.onTop) win.setAlwaysOnTop(true, 'screen-saver');
       if (!process.env.DRIFT_HIDDEN) win.show();        // dev: run without putting anything on screen
+      if (d.key === refocusKey) win.focus();
     });
     win.on('close', (e) => {       // Alt+F4 and the like: ask first, the same as Esc and the ✕ button
       if (quitting || !visWins.includes(entry) || win.webContents.isCrashed() || Date.now() - (entry.askedAt || 0) < 5000) return;      // asked twice in a row (or the window is stuck): just close
@@ -813,7 +918,7 @@ function buildWindows() {
     win.on('closed', () => {
       if (visWins.includes(entry) && !quitting) { quitting = true; app.quit(); } // closing any live window exits
     });
-    win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+    win.loadFile(path.join(__dirname, 'renderer', 'index.html')).catch(() => {});       // (a window replaced while it loads)
   }
   for (const o of old) if (!o.win.isDestroyed()) o.win.destroy();
 }
@@ -835,6 +940,7 @@ function applySideEffects(prev) {
   // keep-awake
   if (state.keepAwake && blockerId === null) blockerId = powerSaveBlocker.start('prevent-display-sleep');
   if (!state.keepAwake && blockerId !== null) { powerSaveBlocker.stop(blockerId); blockerId = null; }
+  if (prev && prev.autoUpdate !== state.autoUpdate && updater) updater.settingChanged();
   // always on top
   if (!prev || prev.onTop !== state.onTop) for (const v of visWins) if (!v.win.isDestroyed()) v.win.setAlwaysOnTop(!!state.onTop, 'screen-saver');
   // auto-cycle
@@ -852,7 +958,6 @@ function applySideEffects(prev) {
       }, Math.max(0, state.sleepAt - Date.now() - 9000));
     }
   }
-  if (!prev || prev.music.source !== state.music.source) { spotifyWatch(state.music.source === 'spotify'); spotifyVolWatch(state.music.source === 'spotify'); }
   // monitors on/off
   if (prev && JSON.stringify(prev.displaysOff) !== JSON.stringify(state.displaysOff)) rebuildSoon();
 }
@@ -911,10 +1016,11 @@ function patch(p) {
       if (!/^[a-z0-9_]{1,24}$/.test(v.enc)) v.enc = 'auto';
       if (!['auto', '2160', '1440', '1080', '720', '480'].includes(String(v.xq))) v.xq = 'auto';
     }
-    else if (k === 'share') { state.share = cleanShare({ ...state.share, ...(p.share || {}) }); p2p.setOptions({ wait: state.share.wait, name: shareName() }); }
+    else if (k === 'share') { state.share = cleanShare({ ...state.share, ...(p.share || {}) }); p2p.setOptions({ wait: state.share.wait, name: shareName() }); web.blockChanged(); }
     else if (k === 'music') {
       state.music = { ...state.music, ...p.music };
       if (p.music.nature) state.music.nature = { ...prev.music.nature, ...p.music.nature };
+      if (!['generative', 'files', 'off'].includes(state.music.source)) state.music.source = prev.music.source;
     } else if (k === 'perDisplay') state.perDisplay = { ...state.perDisplay, ...p.perDisplay };
     else if (k === 'subs') {       // look only; which track is showing goes through the sub-* commands
       const q = p.subs || {}, t = state.subs;
@@ -959,11 +1065,11 @@ function setVideos(files, key, index = 0) {
 // ---- video library ----
 const isVideo = (name) => VIDEO_EXT.includes(path.extname(name).toLowerCase());
 const isAudio = (name) => AUDIO_EXT.includes(path.extname(name).toLowerCase());
-const libFolders = (kind) => (kind === 'audio' ? state.music.folders : state.video.folders);
-const libMatch = (kind) => (kind === 'audio' ? isAudio : isVideo);
+const libFolders = () => state.video.folders;       // one list of folders for videos and music
+const libMatch = (kind) => (kind === 'audio' ? isAudio : kind === 'media' ? (n) => isVideo(n) || isAudio(n) : isVideo);
 const inLib = (kind, p) => { const r = path.resolve(p); return libFolders(kind).some((f) => r === path.resolve(f) || r.startsWith(path.resolve(f) + path.sep)); };
 const inLibrary = (p) => inLib('video', p);
-const fileInfo = (full) => { let size = 0; try { size = fs.statSync(full).size; } catch { /* ignore */ } return { name: path.basename(full), path: full, url: pathToFileURL(full).href, size }; };
+const fileInfo = (full) => { let size = 0; try { size = fs.statSync(full).size; } catch { /* ignore */ } return { name: path.basename(full), path: full, url: pathToFileURL(full).href, size, kind: isVideo(full) ? 'video' : 'audio' }; };
 function searchLib(kind, root, query) {
   const q = String(query || '').toLowerCase().trim(), out = [], match = libMatch(kind);
   if (!q || !root || !inLib(kind, root)) return out;
@@ -1004,7 +1110,7 @@ function listDir(dir, kind = 'video') {
     .map((e) => ({ name: e.name, path: path.join(dir, e.name) })).filter((d) => hasVideo(d.path, 2, budget, isVideo)).sort(cmp);
   const videos = entries.filter((e) => e.isFile() && isVideo(e.name)).map((e) => fileInfo(path.join(dir, e.name))).sort(cmp);
   const isRoot = libFolders(kind).some((f) => path.resolve(f) === path.resolve(dir));
-  return { dir, name: path.basename(dir) || dir, parent: isRoot ? null : path.dirname(dir), dirs, videos };
+  return { dir, name: path.basename(dir) || dir, parent: isRoot ? null : path.dirname(dir), dirs, videos };       // (for 'media', videos holds both: each says its kind)
 }
 function scanFolder(dir, out, depth = 0) {
   if (depth > 6 || out.length > 5000) return;
@@ -1017,8 +1123,19 @@ function scanFolder(dir, out, depth = 0) {
     else if (AUDIO_EXT.includes(path.extname(e.name).toLowerCase())) out.push(full);
   }
 }
+// Music was put on: the scene and its visualizer come up in place of a video that is showing here.
+function showVisualizer() {
+  if (remote) return;       // a friend's video stays
+  const back = state.prevScene && state.prevScene !== 'video' ? state.prevScene : 'aurora', p = {};
+  if (state.scene === 'video') p.scene = back;
+  const pd = Object.keys(state.perDisplay).filter((k) => state.perDisplay[k] === 'video');
+  if (pd.length) p.perDisplay = Object.fromEntries(pd.map((k) => [k, back]));
+  if (state.overlay === 'none') p.overlay = 'bars';
+  if (Object.keys(p).length) patch(p);
+}
 function addTracks(paths) {
   if (!paths.length) return;
+  showVisualizer();
   const had = state.music.playlist.length;
   const list = [...state.music.playlist];
   for (const p of paths) if (!list.includes(p)) list.push(p);
@@ -1027,11 +1144,12 @@ function addTracks(paths) {
 }
 
 ipcMain.handle('init', (e) => initFor(e.sender));
-ipcMain.handle('list-dir', (_e, dir, kind) => listDir(dir, kind === 'audio' ? 'audio' : 'video'));
-ipcMain.handle('search-lib', (_e, kind, root, q) => searchLib(kind === 'audio' ? 'audio' : 'video', root, q));
+const libKind = (k) => (k === 'audio' || k === 'media' ? k : 'video');
+ipcMain.handle('list-dir', (_e, dir, kind) => listDir(dir, libKind(kind)));
+ipcMain.handle('search-lib', (_e, kind, root, q) => searchLib(libKind(kind), root, q));
 ipcMain.on('patch', (_e, p) => patch(p || {}));
 ipcMain.on('levels', (_e, l) => broadcast('levels', l, false));
-ipcMain.on('now', (_e, n) => { nowPlaying = n; broadcast('now', n, false); });
+ipcMain.on('now', (_e, n) => { nowPlaying = n; broadcast('now', n, false); p2p.sync(); });       // friends listening see the title too
 ipcMain.handle('read-file', async (_e, p) => {
   if (!state.music.playlist.includes(p)) throw new Error('not in playlist');
   const buf = await fs.promises.readFile(p);
@@ -1065,6 +1183,9 @@ ipcMain.on('cmd', async (e, c) => {
   const parent = BrowserWindow.fromWebContents(e.sender);
   switch (c.type) {
     case 'quit': quitting = true; app.quit(); break;
+    case 'update-check': if (updater) updater.check(); break;
+    case 'update-page': if (updater) shell.openExternal(updater.info().page).catch(() => {}); break;
+    case 'update-install': if (updater && updater.install(true)) { quitting = true; app.quit(); } break;
     case 'monitor-off': {      // from the "Close Drift?" prompt: leave this one monitor alone and keep Drift on the others
       const i = c.index | 0;
       if (state.displaysOff.includes(i) || activeDisplays().length < 2) break;
@@ -1085,9 +1206,16 @@ ipcMain.on('cmd', async (e, c) => {
       break;
     }
     case 'pick-video': {
-      const r = await dialog.showOpenDialog(parent, { title: 'Choose a video (pick several to play them in order)', properties: ['openFile', 'multiSelections'],
-        defaultPath: app.getPath('videos'), filters: [{ name: 'Video', extensions: VIDEO_EXT.map((x) => x.slice(1)) }] });
-      if (!r.canceled && r.filePaths.length) { if (remote) await p2p.stop(); setVideos(r.filePaths, c.key); }      // playing your own video leaves a friend's session
+      const r = await dialog.showOpenDialog(parent, { title: 'Choose videos or music (pick several to play them in order)', properties: ['openFile', 'multiSelections'],
+        defaultPath: app.getPath('videos'), filters: [{ name: 'Video and music', extensions: [...new Set([...VIDEO_EXT, ...AUDIO_EXT])].map((x) => x.slice(1)) }, { name: 'Video', extensions: VIDEO_EXT.map((x) => x.slice(1)) }, { name: 'Music', extensions: AUDIO_EXT.map((x) => x.slice(1)) }] });
+      if (r.canceled || !r.filePaths.length) break;
+      const vids = r.filePaths.filter(isVideo), songs = r.filePaths.filter((f) => !isVideo(f) && isAudio(f));
+      if (vids.length) { if (remote) await p2p.stop(); setVideos(vids, c.key); }      // playing your own video leaves a friend's session
+      else if (songs.length) {
+        showVisualizer();
+        patch({ music: { playlist: songs, source: 'files', playing: true } });
+        if (audioWin && !audioWin.isDestroyed()) audioWin.webContents.send('cmd', { type: 'play-index', index: 0 });
+      }
       break;
     }
     // ---- watch together ----
@@ -1096,6 +1224,34 @@ ipcMain.on('cmd', async (e, c) => {
       p2p.share({ port: state.share.port, internet: state.share.internet, wait: state.share.wait, name: shareName(), local: !!process.env.DRIFT_SHARE_LOCAL });     // dev: stay on this PC
       break;
     case 'share-stop': p2p.stop(); break;
+    case 'surf-forget':       // Settings: forget Surf's sign-ins, cookies and history (Drift's own settings stay)
+      try { await web.forget(); say('Surf has forgotten its sign-ins, cookies and history'); } catch { say('Surf\'s data couldn\'t be cleared. Try again after restarting Drift.'); }
+      break;
+    case 'surf': {       // the browser: the Surf tab and the bar along the top of a page
+      const k = (visWins.find((x) => x.win.webContents === e.sender) || {}).key, d = c.do, was = web.info().open;
+      if (d === 'attached') web.attached(e.sender, +c.tab, +c.wc);
+      else if (d === 'hide') { if (!remote) web.hide(); else if (streamShown) { streamShown = false; pushState(); } }
+      else if (d === 'show' || d === 'move') {       // show: bring it back where it was; move: onto the screen that asked
+        if (!remote) web.show(d === 'move' || !was ? k : '');
+        else { if (d === 'move') streamKey = k || ''; streamShown = true; pushState(); }
+      }
+      else if (d === 'quit') { if (!remote) web.close(); }
+      else if (!SURF.includes(d)) break;
+      else if (remote) {       // a friend's browser: ask their PC
+        if (!remote.web) say('Leave your friend\'s session to open your own page');
+        else if (!remote.ctrl) say(`Only ${p2p.info().host || 'the host'} can control the page`);
+        else p2p.send({ t: 'cmd', a: 'surf', m: { do: d, text: String(c.text || '').slice(0, 2000), id: +c.id || 0 } });
+      } else { const r = web.act(c, k); if (r.error) say(r.error); }
+      if (!remote && !was && web.info().open && !state.video.paused && visWins.some((v) => showsVideo(v.key))) patch({ video: { paused: true } });       // not two soundtracks at once
+      break;
+    }
+    case 'rtc': if (c.d && typeof c.d === 'object') { if (c.to) p2p.sendTo(String(c.to), { t: 'rtc', d: c.d }); else if (remote) p2p.send({ t: 'rtc', d: c.d }); } break;       // setting up a web page's stream
+    case 'share-music':       // play / pause / next / previous for a friend's music
+      if (!remote || !remote.music || !['toggle', 'next', 'prev'].includes(c.do)) break;
+      if (remote.ctrl) p2p.send({ t: 'cmd', a: 'music', do: c.do }); else say(`Only ${p2p.info().host || 'the host'} can control the music`);
+      break;
+    case 'web-ptr': if (remote && remote.web) p2p.send({ t: 'ptr', x: +c.x, y: +c.y }); break;       // where this PC's mouse is over a friend's web page
+    case 'web-input': if (remote && remote.ctrl && remote.web && c.e && typeof c.e === 'object') p2p.send({ t: 'cmd', a: 'input', e: c.e }); break;       // mouse and keyboard over a friend's web page
     case 'share-join': { const r = await p2p.join(c.code, shareName()); if (!r.ok) say(r.error); break; }
     case 'share-copy': if (p2p.info().code && !p2p.info().settling) { clipboard.writeText(p2p.info().code); say('Invite code copied — send it to your friend'); } break;
     case 'share-paste': e.sender.send('cmd', { type: 'share-code', code: clipboard.readText().trim().slice(0, 300) }); break;
@@ -1134,21 +1290,15 @@ ipcMain.on('cmd', async (e, c) => {
       xcRestart();
       break;
     }
-    case 'add-music-folder': {
-      const r = await dialog.showOpenDialog(parent, { title: 'Add a music folder', properties: ['openDirectory'], defaultPath: app.getPath('music') });
-      if (!r.canceled && !state.music.folders.includes(r.filePaths[0])) patch({ music: { folders: [...state.music.folders, r.filePaths[0]] } });
-      break;
-    }
-    case 'remove-music-folder':
-      patch({ music: { folders: state.music.folders.filter((f) => f !== c.path) } });
-      break;
     case 'play-tracks': {
       const files = (c.files || []).filter((f) => typeof f === 'string' && isAudio(f) && inLib('audio', f));
       if (!files.length) break;
+      showVisualizer();
       patch({ music: { playlist: files, source: 'files', playing: true } });
       if (audioWin && !audioWin.isDestroyed()) audioWin.webContents.send('cmd', { type: 'play-index', index: Math.max(0, Math.min(files.length - 1, c.index | 0)) });
       break;
     }
+    case 'show-viz': showVisualizer(); break;       // an Ambient preset or another music source was chosen
     case 'spotify': spotifyDo(c.action); break;
     case 'spotify-volume': spotifyVolSet(c.value); break;
     case 'sub-select': selectSub(c.id); break;
@@ -1177,7 +1327,7 @@ ipcMain.on('cmd', async (e, c) => {
       break;
     }
     case 'add-video-folder': {
-      const r = await dialog.showOpenDialog(parent, { title: 'Add a video folder', properties: ['openDirectory'], defaultPath: app.getPath('videos') });
+      const r = await dialog.showOpenDialog(parent, { title: 'Add a folder of videos or music', properties: ['openDirectory'], defaultPath: app.getPath('videos') });
       if (!r.canceled && !state.video.folders.includes(r.filePaths[0])) patch({ video: { folders: [...state.video.folders, r.filePaths[0]] } });
       break;
     }
@@ -1217,18 +1367,23 @@ ipcMain.on('cmd', async (e, c) => {
       else if (c.final) say(`Only ${p2p.info().host || 'the host'} can move through the video`);
       break;
     case 'clear-playlist':
-      patch({ music: { playlist: [], source: state.music.source === 'files' ? 'generative' : state.music.source } });
+      patch({ music: { playlist: [], source: state.music.source === 'files' ? (state.music.ambientOff ? 'off' : 'generative') : state.music.source } });
       break;
     case 'reset': {
-      const keep = state.music.playlist, folders = state.video.folders, mf = state.music.folders, name = state.share.name;
+      const keep = state.music.playlist, folders = state.video.folders, name = state.share.name;
       await p2p.stop();
-      state = JSON.parse(JSON.stringify(DEFAULTS)); state.music.playlist = keep; state.share.name = name; state.video.folders = folders; state.video.foldersInit = true; state.music.folders = mf; state.music.foldersInit = true;
+      state = JSON.parse(JSON.stringify(DEFAULTS)); state.music.playlist = keep; state.share.name = name; state.video.folders = folders; state.video.foldersInit = true; state.music.foldersInit = true;
       startSubs(cur(), subEmbedded);
       applySideEffects(null); pushState(); saveSoon(); rebuildSoon();
       break;
     }
+    case 'tab-focus': {       // the panel tab a window is on: kept for a rebuild, and friends see how many are on each
+      const v = visWins.find((x) => x.win.webContents === e.sender);
+      if (v) tabOf[v.key] = String(c.tab || '').slice(0, 20);
+      p2p.setTab(String(c.tab || ''));
+      break;
+    }       // the panel tab this PC is looking at: friends see how many are on each
     case 'next': case 'prev': case 'play-index':
-      if (state.music.source === 'spotify' && c.type !== 'play-index') { spotifyDo(c.type); break; }
       if (audioWin && !audioWin.isDestroyed()) audioWin.webContents.send('cmd', c);
       break;
     default: break;
@@ -1241,17 +1396,20 @@ else {
   app.whenReady().then(() => {
     settingsFile = path.join(app.getPath('userData'), 'settings.json');
     loadSettings();
-    if (!state.music.foldersInit) {
-      for (const n of ['music', 'downloads']) { try { const p = app.getPath(n); if (fs.existsSync(p) && !state.music.folders.includes(p)) state.music.folders.push(p); } catch { /* ignore */ } }
-      state.music.foldersInit = true;
-    }
     if (!state.video.foldersInit) {
-      for (const n of ['videos', 'downloads']) { try { const p = app.getPath(n); if (fs.existsSync(p) && !state.video.folders.includes(p)) state.video.folders.push(p); } catch { /* ignore */ } }
+      for (const n of ['videos', 'music', 'downloads']) { try { const p = app.getPath(n); if (fs.existsSync(p) && !state.video.folders.includes(p)) state.video.folders.push(p); } catch { /* ignore */ } }
       state.video.foldersInit = true;
     }
     startLocalServer();
     // lets the audio engine listen to what the PC is playing (e.g. Spotify) so visuals can react to it; nothing is recorded
-    session.defaultSession.setDisplayMediaRequestHandler((_req, cb) => {
+    // and lets the window holding a shared web page capture that page's picture and sound, to send to friends
+    session.defaultSession.setDisplayMediaRequestHandler((req, cb) => {
+      const from = req.frame ? webContents.fromFrame(req.frame) : null;
+      if (from && visWins.some((v) => !v.win.isDestroyed() && v.win.webContents === from)) {
+        const f = p2p.role() === 'host' ? web.frame(from) : null;
+        cb(f ? { video: f, audio: f } : {});
+        return;
+      }
       desktopCapturer.getSources({ types: ['screen'] }).then((src) => cb({ video: src[0], audio: 'loopback' })).catch(() => cb({}));
     });
     if (state.video.files.length) probe();
@@ -1260,11 +1418,23 @@ else {
     createAudioWindow();
     buildWindows();
     applySideEffects(null);
+    spotifyWatch(true);       // Drift follows Spotify by itself: see spotifyLead()
     const onDisplays = () => { if (displaySig() !== lastSig) rebuildSoon(); };   // ignore work-area-only changes
     screen.on('display-added', onDisplays);
     screen.on('display-removed', onDisplays);
     screen.on('display-metrics-changed', onDisplays);
     if (SHOT_DIR) runShots();
+    updater = createUpdater({
+      app, net, version: process.env.DRIFT_FAKE_VERSION || app.getVersion(),       // dev: pretend to be an older copy
+      enabled: () => state.autoUpdate && (!SHOT_DIR || !!process.env.DRIFT_FAKE_VERSION),
+      onChange: (u) => {
+        if (u.status === 'ready' && updTold !== u.version) { updTold = u.version; say(`Drift ${u.version} is ready. It installs when you close Drift, or restart now from Settings`); }
+        pushState();
+      },
+      onReadyDev: () => { if (updater.install(true)) { quitting = true; app.quit(); } },
+      log: (m) => console.log(m),
+    });
+    updater.start();
   });
   app.on('window-all-closed', () => app.quit());
   app.on('before-quit', (e) => {
@@ -1274,6 +1444,7 @@ else {
       p2p.stop().catch(() => {}).finally(() => app.quit());
       return;
     }
+    if (updater) updater.install(false);       // a downloaded update goes in once Drift has closed
     spotifyWatch(false); spotifyVolWatch(false); xcoder.stopAll(); for (const k of audioKids) { try { k.kill(); } catch { /* gone */ } } try { fs.writeFileSync(settingsFile, JSON.stringify(state, null, 1)); } catch { /* ignore */ } });
 }
 
@@ -1350,13 +1521,23 @@ async function runShots() {
   }
   if (process.env.DRIFT_TESTMUSIC) {
     const dir = process.env.DRIFT_TESTMUSIC;
-    patch({ scene: 'ridges', music: { folders: [dir], source: 'files' } });
-    visWins[0].win.webContents.send('cmd', { type: 'show-panel', tab: 'music' }); await wait(2500);
-    log.push('listDir: ' + JSON.stringify(listDir(dir, 'audio')).slice(0, 300));
+    state.video.folders = [dir]; patch({ scene: 'ridges', music: { source: 'files' } });
+    visWins[0].win.webContents.send('cmd', { type: 'show-panel', tab: 'media' }); await wait(2500);
+    log.push('listDir: ' + JSON.stringify(listDir(dir, 'media')).slice(0, 300));
     log.push('search: ' + searchLib('audio', dir, 'deep').map((x) => x.name).join(','));
     ipcMain.emit('cmd', { sender: visWins[0].win.webContents }, { type: 'play-tracks', files: listDir(dir, 'audio').videos.map((v) => v.path), index: 1 });
     await wait(2500); await snap('music-lib'); log.push('now=' + JSON.stringify(nowPlaying) + ' levels=' + JSON.stringify(lastLevels));
-    patch({ music: { source: 'spotify' } }); await wait(2500); await snap('music-spotify'); log.push('spotify=' + JSON.stringify(spotify));
+    log.push('spotify=' + JSON.stringify(spotify) + ' lead=' + spotifyLead());
+    {       // choosing another folder moves the highlight with it, straight away
+      const wc = visWins[0].win.webContents, other = app.getPath('temp');
+      patch({ video: { folders: [dir, other] } }); await wait(1200);
+      const look = () => wc.executeJavaScript("JSON.stringify({ lit: [...document.querySelectorAll('#vfolders .vf.active span')].map((x) => x.textContent), open: (document.querySelector('#vcrumb b') || {}).textContent })");
+      log.push('folders before: ' + await look());
+      await wc.executeJavaScript("document.querySelectorAll('#vfolders .vf span')[1].click()"); await wait(1200);
+      log.push('folders after clicking the second: ' + await look());
+      await wc.executeJavaScript("document.querySelectorAll('#vfolders .vf span')[0].click()"); await wait(1200);
+      log.push('folders after clicking the first: ' + await look());
+    }
     patch({ music: { source: 'generative' } });
   }
   if (process.env.DRIFT_CTX) {     // exercise the tab-aware transport
@@ -1442,6 +1623,87 @@ async function runShots() {
       log.push('guest end: ' + info() + ' scene=' + state.scene);
     }
   }
+  if (process.env.DRIFT_TESTWEB) {     // exercise watching a web page together, the same way: =host or =guest, DRIFT_TESTCODE as above, DRIFT_TESTURL = the page. The host's page is streamed to the guest, whose mouse and keys go back
+    const role = process.env.DRIFT_TESTWEB, codeFile = process.env.DRIFT_TESTCODE, wc = visWins[0].win.webContents, cmd = (c) => ipcMain.emit('cmd', { sender: wc }, c);
+    const page = () => { const f = web.frame(wc); return f ? webContents.fromFrame(f) : null; };       // the tab in front
+    const inPage = (code) => { const g = page(); return g ? Promise.race([g.executeJavaScript(code, true), wait(3000)]).catch((e) => 'error ' + e.message) : Promise.resolve('no page'); };
+    const note = () => wc.executeJavaScript("document.querySelector('#nowName').textContent.slice(0, 140)").catch((e) => 'failed: ' + e.message);
+    wc.on('render-process-gone', (_e, d) => log.push('web: the renderer of this window went: ' + JSON.stringify(d)));
+    patch({ music: { source: 'off' }, share: { internet: false, wait: true, control: process.env.DRIFT_TESTCTRL !== 'off', quality: 'original', name: process.env.DRIFT_TESTNAME || (role === 'host' ? 'Hosty' : 'Guesty'), adblock: process.env.DRIFT_TESTADS !== 'off' } });
+    if (role === 'host') {
+      cmd({ type: 'share-start' }); await wait(1500);
+      fs.writeFileSync(codeFile, p2p.info().code);
+      cmd({ type: 'surf', do: 'go', text: process.env.DRIFT_TESTURL }); await wait(1000);
+      for (let i = 0; i < 40 && !p2p.count(); i++) await wait(500);
+      const tabsNow = () => { const w = web.info(); return `tabs=${w.tabs.map((t) => (t.id === w.active ? '*' : '') + t.title).join(' | ')} open=${w.open} sid=${w.sid} back=${w.back}`; };
+      for (let i = 0; i < 27; i++) {       // what the guest's mouse and keyboard did to the page, then tabs and putting the browser away
+        await wait(2000);
+        log.push(`web host +${i * 2}s: ${JSON.stringify(await inPage('({ y: Math.round(scrollY), hash: location.hash, typed: (document.querySelector("input") || {}).value || "", keys: window.keys || "", q: location.host + location.search })'))} ${tabsNow()} note=${await note()}`);
+        if (i === 4) ptrSet('host', shareName(), { x: 0.62, y: 0.44 });
+        if (i === 5) { await snap('pointers'); log.push('pointers on the host: ' + await wc.executeJavaScript("JSON.stringify([...document.querySelectorAll('#ptrs .ptr')].map((q) => q.textContent + ' ' + q.style.left + ' ' + q.style.top))")); }
+        if (i === 6) { wc.send('cmd', { type: 'show-panel', tab: 'music' }); await wait(1500); await snap('media-music'); wc.send('cmd', { type: 'show-panel', tab: 'video' }); await wait(1500); await snap('media-video'); log.push('media tab: ' + await wc.executeJavaScript("JSON.stringify({ tabs: [...document.querySelectorAll('.tabs button')].map((b) => b.textContent), section: document.querySelector('#content section.active').dataset.tab, tag: document.querySelector('#ctxTag').textContent })")); await wc.executeJavaScript("document.querySelector('#panel').classList.remove('open')"); }
+        if (i === 9) { log.push('host goes to another site in the same tab'); cmd({ type: 'surf', do: 'go', text: process.env.DRIFT_TESTURL.replace('127.0.0.1', 'localhost') + '?other' }); }
+        if (i === 11) { log.push('host opens a second tab'); cmd({ type: 'surf', do: 'new' }); cmd({ type: 'surf', do: 'go', text: process.env.DRIFT_TESTURL + '?two' }); }
+        if (i === 12) { await wc.executeJavaScript("document.querySelector('#surfBar').classList.add('show')"); await wait(500); await snap('surf-bar'); wc.send('cmd', { type: 'show-panel', tab: 'surf' }); await wait(1200); await snap('surf-tab'); log.push('bar: ' + await wc.executeJavaScript("JSON.stringify({ tabs: [...document.querySelectorAll('#sbTabs .sbTab')].map((b) => b.textContent), url: document.querySelector('#sbUrl').value, views: document.querySelectorAll('webview').length, front: document.querySelectorAll('webview.on').length, vbar: getComputedStyle(document.querySelector('#vbar')).display })")); }
+        if (i === 13) { log.push('host goes back to the first tab'); cmd({ type: 'surf', do: 'tab', id: web.info().tabs[0].id }); }
+        if (i === 15) { log.push('host picks the Scenes tab'); await wc.executeJavaScript("document.querySelector('.tabs button[data-tab=scenes]').click()"); }
+        if (i === 17) { log.push('host picks the Surf tab again'); await wc.executeJavaScript("document.querySelector('.tabs button[data-tab=surf]').click()"); }
+        if (i === 18) { log.push('host goes to the second tab'); cmd({ type: 'surf', do: 'tab', id: web.info().tabs[1].id }); }
+      }
+      cmd({ type: 'surf', do: 'quit' }); await wait(1500); log.push('web host closed: page=' + !!page() + ' info=' + JSON.stringify(web.info()));
+    } else {
+      for (let i = 0; i < 80 && !fs.existsSync(codeFile); i++) await wait(500);
+      await wait(600); cmd({ type: 'share-join', code: fs.readFileSync(codeFile, 'utf8') });
+      await wait(1500); cmd({ type: 'surf', do: 'move' });       // on the monitor this test looks at
+      // the picture that arrived: its size, whether it is moving, whether sound came with it, and the colour at the top left quarter
+      const see = () => wc.executeJavaScript(`(() => { const v = document.querySelector('#webStream'); if (!v) return null; const c = document.createElement('canvas'); c.width = 64; c.height = 36; let px = null;
+        try { const g = c.getContext('2d'); g.drawImage(v, 0, 0, 64, 36); px = [...g.getImageData(16, 5, 1, 1).data].slice(0, 3); } catch (e) { px = e.message; }
+        return { size: v.videoWidth + 'x' + v.videoHeight, t: +v.currentTime.toFixed(1), sound: v.srcObject ? v.srcObject.getAudioTracks().length : 0, px, focus: document.activeElement === v }; })()`).catch((e) => 'failed: ' + e.message);
+      const [W, H] = visWins[0].win.getContentSize(), at = (fx, fy) => ({ x: Math.round(W * fx), y: Math.round(H * fy) });
+      const click = (fx, fy) => { const q = at(fx, fy); wc.sendInputEvent({ type: 'mouseMove', ...q }); wc.sendInputEvent({ type: 'mouseDown', ...q, button: 'left', clickCount: 1 }); wc.sendInputEvent({ type: 'mouseUp', ...q, button: 'left', clickCount: 1 }); };
+      for (let i = 0; i < 26; i++) {
+        await wait(2000); log.push(`web guest +${i * 2}s: ${JSON.stringify(await see())} tabs=${(publicState().web.tabs || []).map((t) => t.title).join(' | ')} note=${await note()}`);
+        if (i === 2) { log.push('guest moves the mouse'); for (const [fx, fy] of [[0.3, 0.5], [0.34, 0.56], [0.38, 0.62]]) { wc.sendInputEvent({ type: 'mouseMove', ...at(fx, fy) }); await wait(120); } }
+        if (i === 4) { await snap('pointers'); log.push('pointers on the guest: ' + await wc.executeJavaScript("JSON.stringify([...document.querySelectorAll('#ptrs .ptr')].map((q) => q.textContent + ' ' + q.style.left + ' ' + q.style.top))")); }
+        if (i === 3) { log.push('guest turns the wheel'); wc.sendInputEvent({ type: 'mouseWheel', ...at(0.5, 0.6), deltaX: 0, deltaY: -400, canScroll: true }); }
+        if (i === 5) { log.push('guest clicks the link'); click(0.25, 0.15); }
+        if (i === 22) { log.push('guest uses the address bar'); cmd({ type: 'surf', do: 'go', text: process.env.DRIFT_TESTURL + '?guest' }); }
+        if (i === 7) { log.push('guest clicks the box and types'); click(0.75, 0.1); await wait(500); for (const k of ['h', 'i', 'Enter']) { wc.sendInputEvent({ type: 'keyDown', keyCode: k }); if (k.length === 1) wc.sendInputEvent({ type: 'char', keyCode: k }); wc.sendInputEvent({ type: 'keyUp', keyCode: k }); await wait(150); } }
+      }
+      await snap('web-guest');
+      await wait(5000); log.push('web guest after host closed: ' + JSON.stringify(await see()) + ' note=' + await note());
+    }
+  }
+  if (process.env.DRIFT_TESTSURF) {     // the README's Surf picture: a new tab on Drift's start page
+    const wc = visWins[0].win.webContents;
+    ipcMain.emit('cmd', { sender: wc }, { type: 'surf', do: 'new' }); await wait(5000);
+    await wc.executeJavaScript("document.querySelector('#panel').classList.remove('open')"); await wait(800); await snap('surf-home');
+  }
+  if (process.env.DRIFT_TESTTUNE) {     // exercise listening to music together, the same way: =host or =guest, DRIFT_TESTCODE as above. The guest's own music is off, so any sound it reports came from the host
+    const role = process.env.DRIFT_TESTTUNE, codeFile = process.env.DRIFT_TESTCODE, wc = visWins[0].win.webContents, cmd = (c) => ipcMain.emit('cmd', { sender: wc }, c);
+    const heard = () => { const l = lastLevels || {}; lastLevels = null; return 'loudest band=' + Math.max(0, ...(l.s || [0])); };
+    const ui = () => wc.executeJavaScript("JSON.stringify({ now: document.querySelector('#nowName').textContent, play: document.querySelector('#play').textContent, note: document.querySelector('#mShare').textContent.slice(0, 90) })").catch((e) => 'failed: ' + e.message);
+    patch({ share: { internet: false, wait: true, control: true, quality: 'original', name: role === 'host' ? 'Hosty' : 'Guesty' } });
+    wc.send('cmd', { type: 'show-panel', tab: 'music' });
+    if (role === 'host') {
+      patch({ music: { source: 'generative', preset: 'bells', playing: true, volume: 0.8 } });
+      cmd({ type: 'share-start' }); await wait(1500);
+      fs.writeFileSync(codeFile, p2p.info().code);
+      for (let i = 0; i < 40 && !p2p.count(); i++) await wait(500);
+      for (let i = 0; i < 13; i++) {
+        await wait(2000); log.push(`tune host +${i * 2}s: playing=${state.music.playing} ${heard()} ui=${await ui()}`);
+        if (i === 5) { log.push('host pauses the music'); patch({ music: { playing: false } }); }
+      }
+    } else {
+      patch({ music: { source: 'off', playing: true, volume: 0.8 } });
+      for (let i = 0; i < 80 && !fs.existsSync(codeFile); i++) await wait(500);
+      await wait(600); cmd({ type: 'share-join', code: fs.readFileSync(codeFile, 'utf8') });
+      for (let i = 0; i < 12; i++) {
+        await wait(2000); log.push(`tune guest +${i * 2}s: theirs=${JSON.stringify(publicState().p2p.music)} ${heard()} ui=${await ui()}`);
+        if (i === 8) { log.push('guest presses play'); await wc.executeJavaScript("document.querySelector('#play').click()"); }
+      }
+    }
+  }
   if (process.env.DRIFT_TESTSHAREUI) {     // press the real buttons in the Together tab and read back what it says
     const wc = visWins[0].win.webContents, js = (c) => wc.executeJavaScript(c);
     const dump = async (tag) => log.push('shareui ' + tag + ': ' + await js("JSON.stringify({ off: getComputedStyle(document.querySelector('#shOff')).display, host: getComputedStyle(document.querySelector('#shHost')).display, title: document.querySelector('#shTitle').textContent, sub: document.querySelector('#shSub').textContent, note: document.querySelector('#shNote').textContent, code: document.querySelector('#shCodeOut').textContent.length, toast: document.querySelector('#toast').className + '|' + document.querySelector('#toast').textContent, tab: (document.querySelector('#content section.active') || {}).dataset && document.querySelector('#content section.active').dataset.tab })"));
@@ -1480,8 +1742,62 @@ async function runShots() {
     log.push(`monitor off: windows=${visWins.length} off=${JSON.stringify(state.displaysOff)}`);
     patch({ displaysOff: [] }); await wait(3000);
   }
+  if (process.env.DRIFT_TESTGUARD) {       // Surf's password guard: a page tries every usual way of showing a password as text
+    const PAGE = `<!DOCTYPE html><body><form><input id="u" value="me"><input id="p" type="password" value="hunter2"><button type="button" id="eye" onclick="p.type = p.type === 'password' ? 'text' : 'password'">show</button></form>
+      <input id="late"><div id="host"></div><iframe id="f" src="/frame"></iframe>
+      <script>host.attachShadow({ mode: 'open' }).innerHTML = '<input id="sp" type="password" value="s3cret">';</script></body>`;
+    const FRAME = '<!DOCTYPE html><input id="fp" type="password" value="framepw">';
+    const srv = http.createServer((q, r) => { r.writeHead(200, { 'Content-Type': 'text/html' }); r.end(q.url === '/frame' ? FRAME : PAGE); });
+    await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+    const url = `http://127.0.0.1:${srv.address().port}/`;
+    web.act({ do: 'go', text: url }, visWins[0].key); await wait(5000);
+    const page = webContents.getAllWebContents().find((w) => w.getURL() === url);
+    if (!page) log.push('guard: the test page never loaded');
+    else {
+      const js = (code) => page.executeJavaScript(code);
+      await js("document.querySelector('#eye').click()");                                     // a site's eye button
+      await js("document.querySelector('#late').type = 'password'");                         // a box that becomes a password box later...
+      await wait(100);
+      await js("document.querySelector('#late').setAttribute('type', 'text')");              // ...and is turned back
+      const sp = "document.querySelector('#host').shadowRoot.querySelector('#sp')";
+      await js(`${sp}.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true, composed: true })); ${sp}.type = 'text'`);       // inside a shadow root, once someone types in it
+      await js("document.querySelector('#f').contentDocument.querySelector('#fp').type = 'text'");       // inside a frame
+      await js("const n = document.createElement('input'); n.type = 'password'; n.id = 'dyn'; document.body.append(n); setTimeout(() => { n.type = 'text'; }, 50)");      // added by script
+      await wait(400);
+      log.push('guard: ' + await js(`JSON.stringify({ eye: p.type, late: late.type, shadow: ${sp}.type, frame: f.contentDocument.querySelector('#fp').type, added: dyn.type, plainStaysText: u.type, value: p.value })`));
+    }
+    srv.close(); web.close(); await wait(800);
+  }
+  if (process.env.DRIFT_TESTREFOCUS && visWins.length > 1) {       // turning a monitor off and on: each screen keeps its tab, Surf included
+    const tabs = () => Promise.all(visWins.map(async (v) => `${v.key}=${await v.win.webContents.executeJavaScript("document.querySelector('.tabs button.active').dataset.tab + (document.querySelectorAll('webview.web').length ? '+browser' : '')")}`));
+    if (!process.env.DRIFT_REFOCUS_NOSURF) await visWins[0].win.webContents.executeJavaScript("document.querySelector('.tabs button[data-tab=surf]').click()");
+    await visWins[1].win.webContents.executeJavaScript("document.querySelector('.tabs button[data-tab=settings]').click()");
+    await wait(3000); log.push('refocus before: ' + (await tabs()).join(' '));
+    patch({ displaysOff: [1] }); await wait(5000); log.push('refocus monitor 2 off: ' + (await tabs()).join(' '));
+    patch({ displaysOff: [] }); await wait(5000); log.push('refocus monitor 2 on: ' + (await tabs()).join(' '));
+    await snap('refocus');
+    patch({ displaysOff: [0] }); await wait(5000); log.push('refocus monitor 1 off (browser moves): ' + (await tabs()).join(' ') + ' web=' + web.info().key);
+    patch({ displaysOff: [] }); await wait(5000);
+  }
   if (process.env.DRIFT_PANEL) {
-    for (const tab of ['scenes', 'video', 'music', 'settings']) { visWins[0].win.webContents.send('cmd', { type: 'show-panel', tab }); await wait(tab === 'scenes' || tab === 'video' ? 6000 : 1500); await snap('panel-' + tab); }
+    log.push('spotify: ' + JSON.stringify(publicState().spotify) + ' toolbar: ' + await visWins[0].win.webContents.executeJavaScript("document.querySelector('#ctxTag').textContent + ' | ' + document.querySelector('#nowName').textContent"));
+    for (const tab of ['scenes', 'media', 'settings']) { visWins[0].win.webContents.send('cmd', { type: 'show-panel', tab }); await wait(tab === 'scenes' || tab === 'media' ? 6000 : 1500); await snap('panel-' + tab);
+      if (tab === 'settings') log.push('updates: ' + await visWins[0].win.webContents.executeJavaScript("JSON.stringify({ shown: getComputedStyle(document.querySelector('#updRow')).display, button: document.querySelector('#updBtn').textContent, note: document.querySelector('#updNote').textContent, auto: document.querySelector('#autoUpdate').checked })"));
+      if (tab === 'scenes') { await visWins[0].win.webContents.executeJavaScript("document.querySelector('#presets').scrollIntoView({ block: 'center' })"); await wait(1500); log.push('ambient: ' + await visWins[0].win.webContents.executeJavaScript("JSON.stringify({ top: document.querySelector('#content').scrollTop, presets: [...document.querySelectorAll('.preset')].map((b) => b.textContent + (b.classList.contains('active') ? '*' : '')) })")); await snap('panel-scenes-ambient'); } }
+    await visWins[0].win.webContents.executeJavaScript("document.querySelector('.tabs button[data-tab=surf]').click()"); await wait(5000); await snap('panel-surf');       // Surf: the browser opens on Drift's start page
+    log.push('surf: ' + JSON.stringify(web.info()));
+    {       // Settings' "Forget Surf's sign-ins and history": a cookie set in Surf is gone after two clicks, and so is the browser
+      const ws = session.fromPartition('persist:web'), wc = visWins[0].win.webContents;
+      await ws.cookies.set({ url: 'https://example.com', name: 'drifttest', value: '1', expirationDate: Date.now() / 1000 + 3600 });
+      const before = (await ws.cookies.get({})).length;
+      await wc.executeJavaScript("document.querySelector('.tabs button[data-tab=settings]').click(); document.querySelector('#content').scrollTop = 1e5"); await wait(800);
+      await wc.executeJavaScript("document.querySelector('#forgetSurf').click()"); await wait(300);
+      const asked = await wc.executeJavaScript("document.querySelector('#forgetSurf').textContent");
+      log.push('settings dom: ' + await wc.executeJavaScript("JSON.stringify({ active: document.querySelector('.tabs button.active').dataset.tab, open: document.querySelector('#panel').className, section: (document.querySelector('#content section.active') || {}).dataset, btnVisible: !!document.querySelector('#forgetSurf').offsetParent })"));
+      await snap('forget-ask');
+      await wc.executeJavaScript("document.querySelector('#forgetSurf').click()"); await wait(1500);
+      log.push(`forget: cookies ${before} -> ${(await ws.cookies.get({})).length}, asked="${asked}", browser open=${web.info().open} tabs=${web.info().tabs.length}`);
+    }
   }
   fs.writeFileSync(path.join(SHOT_DIR, 'log.txt'), log.join('\n'));
   quitting = true; app.quit();

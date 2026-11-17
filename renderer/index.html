@@ -12,6 +12,19 @@
 <audio id="va"></audio>
 <div id="clockFace"></div>
 <div id="breath"><div class="ring"></div><span></span></div>
+<div id="ptrs"></div>
+<div id="webEdge"></div>
+<div id="surfEdge"></div>
+<div id="surfBar">
+  <div id="sbTabs"></div>
+  <div class="sbNav">
+    <button class="icon" id="sbBack" title="Back (Alt+←)">←</button>
+    <button class="icon" id="sbFwd" title="Forward (Alt+→)">→</button>
+    <button class="icon" id="sbReload" title="Load this page again">⟳</button>
+    <button class="icon" id="sbHome" title="Home">⌂</button>
+    <input type="search" id="sbUrl" placeholder="Type an address, or something to search YouTube for" spellcheck="false" autocomplete="off">
+  </div>
+</div>
 <div id="toast"></div>
 <div id="algo"></div>
 <div id="confirm"><div class="box"><b>Close Drift?</b><p id="confirmNote"></p><div class="row"><button class="btn" id="confirmNo">Stay</button><button class="btn ghost" id="confirmMon" title="Turn Drift off on this monitor only. Turn it back on in Settings.">Close this monitor</button><button class="btn danger" id="confirmYes">Close Drift</button></div></div></div>
@@ -55,9 +68,22 @@
         </label>
       </div>
       <p class="rotnote" id="rotNote"></p>
+      <div class="row head amb">
+        <h3>Ambient sound</h3>
+        <span class="note" id="ambNote"></span>
+      </div>
+      <div id="presets"></div>
+      <div class="grid5">
+        <label>Music volume <output id="o-volume"></output><input type="range" id="volume" min="0" max="1" step="0.01"></label>
+        <label>Rain<input type="range" data-nature="rain" min="0" max="1" step="0.01"></label>
+        <label>Ocean waves<input type="range" data-nature="waves" min="0" max="1" step="0.01"></label>
+        <label>Wind<input type="range" data-nature="wind" min="0" max="1" step="0.01"></label>
+        <label>Fireplace<input type="range" data-nature="fire" min="0" max="1" step="0.01"></label>
+      </div>
     </section>
 
-    <section data-tab="video">
+    <section data-tab="media">
+      <p class="note" id="mShare"></p>
       <div class="vlib">
         <aside>
           <h3>Folders</h3>
@@ -77,8 +103,10 @@
               </select>
               <label class="chk"><input type="checkbox" id="videoSound"><i></i>Sound</label>
               <label class="chk" title="Play the next video in the folder when one finishes. Off: stop at the end."><input type="checkbox" id="videoAuto"><i></i>Autoplay</label>
-              <button class="btn ghost" id="pickVideo">Open file…</button>
+              <label class="chk" title="Play music in a random order"><input type="checkbox" id="shuffle"><i></i>Shuffle music</label>
+              <button class="btn ghost" id="pickVideo" title="Play a video or music file from anywhere on this PC">Open file…</button>
               <button class="btn ghost" id="stopVideo">Stop video</button>
+              <button class="btn ghost" id="stopMusic" title="Stop the music and go back to the ambient sound chosen in Scenes">Stop music</button>
             </div>
           </div>
           <div id="subBox">
@@ -125,60 +153,12 @@
       </div>
     </section>
 
-    <section data-tab="music">
-      <div class="cols">
-        <div>
-          <div class="row head">
-            <h3>Music</h3>
-            <div class="seg" id="source">
-              <button data-v="generative">Ambient</button>
-              <button data-v="files">My music</button>
-              <button data-v="spotify">Spotify</button>
-              <button data-v="off">Off</button>
-            </div>
-          </div>
-          <div id="presets"></div>
-          <div id="files">
-            <div class="chips" id="mfolders"></div>
-            <div class="row" style="margin-bottom:8px">
-              <div id="mcrumb"></div>
-              <input type="search" id="msearch" placeholder="Search this folder…" spellcheck="false">
-              <label class="chk"><input type="checkbox" id="shuffle"><i></i>Shuffle</label>
-              <button class="btn ghost" id="addFiles">Open files…</button>
-            </div>
-            <div id="playlist"></div>
-          </div>
-          <div id="spotify">
-            <div class="spnow"><span class="spdot"></span><div><b id="spTitle"></b><span id="spSub"></span></div></div>
-            <div class="row">
-              <button class="btn" id="spPrev" title="Previous song">⏮</button>
-              <button class="btn" id="spPlay">Play / pause</button>
-              <button class="btn" id="spNext" title="Next song">⏭</button>
-              <button class="btn ghost" id="spOpen">Open Spotify</button>
-            </div>
-            <p class="note">Drift drives the Spotify app on this PC, so choose songs and playlists in Spotify itself. The visuals react to whatever it plays. <span id="spVolNote"></span></p>
-          </div>
-          <p class="note" id="offnote">Music is off. Nature sounds on the right still play.</p>
-        </div>
-        <div>
-          <label>Music volume <output id="o-volume"></output><input type="range" id="volume" min="0" max="1" step="0.01"></label>
-          <h3 class="sub">Nature sounds</h3>
-          <div class="grid2">
-            <label>Rain<input type="range" data-nature="rain" min="0" max="1" step="0.01"></label>
-            <label>Ocean waves<input type="range" data-nature="waves" min="0" max="1" step="0.01"></label>
-            <label>Wind<input type="range" data-nature="wind" min="0" max="1" step="0.01"></label>
-            <label>Fireplace<input type="range" data-nature="fire" min="0" max="1" step="0.01"></label>
-          </div>
-        </div>
-      </div>
-    </section>
-
     <section data-tab="share">
       <div class="cols">
         <div>
           <h3>Watch together</h3>
           <div id="shOff">
-            <p class="note">Play a video, then share it. Friends who paste your invite code into their Drift see the same video, in step with you: play, pause and skipping stay together. The video travels straight from your PC to theirs, encrypted, with no server in between.</p>
+            <p class="note">Play a video, then share it. Friends who paste your invite code into their Drift see the same video, in step with you: play, pause and skipping stay together. They also see a page you open in Surf, and hear your Ambient music or My music. It all travels straight from your PC to theirs, encrypted, with no server in between.</p>
             <div class="row"><button class="btn" id="shStart">Share what I'm watching</button></div>
             <h3 class="sub">Join a friend</h3>
             <div class="row">
@@ -205,7 +185,7 @@
         <div>
           <label>Your name, as friends see it<input type="search" id="shName" maxlength="24" spellcheck="false" autocomplete="off"></label>
           <div class="checks one">
-            <label class="chk"><input type="checkbox" id="shControl"><i></i>Friends can play, pause and skip</label>
+            <label class="chk"><input type="checkbox" id="shControl"><i></i>Friends can play, pause and skip, and use a web page</label>
             <label class="chk"><input type="checkbox" id="shWait"><i></i>Pause for everyone while someone is loading</label>
             <label class="chk"><input type="checkbox" id="shInternet"><i></i>Let friends join from outside my home network</label>
           </div>
@@ -271,12 +251,24 @@
             <label class="chk"><input type="checkbox" id="keepAwake"><i></i>Keep screens awake</label>
             <label class="chk"><input type="checkbox" id="onTop"><i></i>Stay above other windows</label>
             <label class="chk"><input type="checkbox" id="algoInfo"><i></i>Algorithm captions</label>
+            <label class="chk" title="Block adverts and trackers in Surf's web pages"><input type="checkbox" id="shAdblock"><i></i>Block adverts in Surf</label>
           </div>
           <label>Sleep timer — fade out and close <output id="o-sleep"></output>
             <select id="sleep"><option value="0">Off</option><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="45">45 minutes</option><option value="60">1 hour</option><option value="90">1.5 hours</option><option value="120">2 hours</option></select>
           </label>
-          <p class="keys"><b>Esc</b> exit (asks first) · <b>Tab</b> controls · <b>Space</b> play/pause · <b>← →</b> previous/next · <b>↑ ↓</b> volume · <b>P</b> colour · <b>C</b> clock · <b>B</b> breathing<br>During a video: <b>S</b> subtitles on/off · <b>V</b> next subtitle track · <b>Z X</b> subtitle timing<br>Play, previous and next act on the selected tab: Scenes, Video or Music.</p>
-          <div class="row"><button class="btn ghost" id="reset">Reset everything</button></div>
+          <p class="keys"><b>Esc</b> exit (asks first) · <b>Tab</b> controls · <b>Space</b> play/pause · <b>← →</b> previous/next · <b>↑ ↓</b> volume · <b>P</b> colour · <b>C</b> clock · <b>B</b> breathing<br>During a video: <b>S</b> subtitles on/off · <b>V</b> next subtitle track · <b>Z X</b> subtitle timing<br>Play, previous and next act on the selected tab: Scenes, or in Media whichever of your video and music is playing. In Surf, previous and next go back and forward. While Spotify plays and Drift has no video or music on, they control Spotify.</p>
+          <h3 class="sub">Updates</h3>
+          <div class="checks">
+            <label class="chk" title="Look for a new version of Drift now and then, download it in the background and install it when Drift closes"><input type="checkbox" id="autoUpdate"><i></i>Update Drift automatically</label>
+          </div>
+          <div class="row" id="updRow">
+            <button class="btn" id="updBtn">Check for updates</button>
+            <span class="note" id="updNote" style="margin:0"></span>
+          </div>
+          <div class="row">
+            <button class="btn ghost" id="forgetSurf" title="Sign out of every site in Surf and clear its cookies, site data, cache and history. Your normal browser isn't touched.">Forget Surf's sign-ins and history</button>
+            <button class="btn ghost" id="reset">Reset everything</button>
+          </div>
         </div>
       </div>
     </section>
@@ -290,8 +282,8 @@
   <div id="bar">
     <div class="tabs">
       <button data-tab="scenes">Scenes</button>
-      <button data-tab="video">Video</button>
-      <button data-tab="music">Music</button>
+      <button data-tab="media" title="Your videos and music">Media</button>
+      <button data-tab="surf" title="Browse the web on this screen, in tabs">Surf</button>
       <button data-tab="share" title="Watch a video with friends, in step">Together</button>
       <button data-tab="settings">Settings</button>
     </div>

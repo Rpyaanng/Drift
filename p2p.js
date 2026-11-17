@@ -146,7 +146,10 @@ function wire(sock, head, onMsg, onClose) {
 //   fileAt(i)             path of the i-th video being shared, or ''
 //   cues(i, id)           promise of one subtitle track's lines
 //   convert(req, res, q)  answer with a converted (smaller / SDR) stream
-//   guestCmd(m)           a friend pressed play / pause / seek / next
+//   ptr(id, name, m)      where friend `id`'s mouse is over a shared web page (m null: they left)
+//   ptrs(list)            as a guest: where everyone else's mouse is over the page
+//   guestCmd(m)           a friend pressed play / pause / seek / next, or used their mouse or keyboard on a shared web page
+//   rtc(id, d)            a message setting up the stream of a shared web page: from friend `id`, or (id null) from the sharing PC
 //   playing()             is the shared video running?
 //   hold(names | null)    pause for everyone while these friends load, or carry on
 //   remote(state | null, why)   as a guest: what the sharing PC is doing (null = the session is over)
@@ -158,11 +161,19 @@ module.exports = function createP2P(hooks) {
   let server = null, key = null, mapping = null, opts = {}, tick = null, lastSnap = '', lastFile = '', holding = false, pubIp = '', settling = false;
   const peers = new Map();
   let g = null;        // as a guest: the connection to the sharing PC
-  let myName = '';
+  let myName = '', myTab = '';       // myTab: the panel tab this PC is looking at
 
   const changed = () => hooks.changed();
   const cleanName = (n) => String(n || '').replace(/[\x00-\x1f<>]/g, '').trim().slice(0, 24);
   const who = () => [...peers.values()].map((p) => ({ name: p.name, ready: p.ready }));
+  // How many people (this PC included) are looking at each of Drift's panel tabs. The sharing PC counts and tells everyone.
+  const TABS = ['scenes', 'media', 'surf', 'share', 'settings'];
+  const cleanTab = (t) => (TABS.includes(t) ? t : '');
+  function tabCounts() {
+    const out = {};
+    for (const t of [myTab, ...[...peers.values()].map((p) => p.tab)]) if (t) out[t] = (out[t] || 0) + 1;
+    return out;
+  }
 
   // ================= sharing =================
   function listen(srv, want) {
@@ -270,16 +281,20 @@ module.exports = function createP2P(hooks) {
     const u = new URL(req.url, 'http://x');
     if (role !== 'host' || u.pathname !== '/ctl' || peers.size >= MAX_PEERS) { sock.end(`HTTP/1.1 ${peers.size >= MAX_PEERS ? 503 : 404} No\r\nConnection: close\r\n\r\n`); return; }
     sock.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: drift\r\nConnection: Upgrade\r\n\r\n');
-    const p = { id: crypto.randomBytes(4).toString('hex'), name: cleanName(u.searchParams.get('n')) || 'Friend', ready: false, since: Date.now(), seen: Date.now(), wire: null };
+    const p = { id: crypto.randomBytes(4).toString('hex'), name: cleanName(u.searchParams.get('n')) || 'Friend', ready: false, since: Date.now(), seen: Date.now(), wire: null, tab: '' };
     p.wire = wire(sock, head, (m) => {
       p.seen = Date.now();
       if (m.t === 'ping') p.wire.send({ t: 'pong', c: m.c, h: Date.now() });
       else if (m.t === 'ready') { const ok = !!m.ok && m.f === lastFile; if (ok !== p.ready) { p.ready = ok; if (!ok) p.since = Date.now(); weigh(); sync(true); changed(); } }
+      else if (m.t === 'tab') { const t = cleanTab(m.v); if (t !== p.tab) { p.tab = t; sync(); changed(); } }
       else if (m.t === 'cmd') hooks.guestCmd(m, p.name);
+      else if (m.t === 'rtc') hooks.rtc(p.id, m.d);
+      else if (m.t === 'ptr') hooks.ptr(p.id, p.name, m);
       else if (m.t === 'bye') p.wire.close();
     }, () => {
       if (peers.get(p.id) !== p) return;
       peers.delete(p.id);
+      hooks.rtc(p.id, { type: 'bye' }); hooks.ptr(p.id, p.name, null);
       if (role === 'host') { hooks.say(`${p.name} left`); weigh(); sync(true); changed(); }
     });
     peers.set(p.id, p);
@@ -295,7 +310,7 @@ module.exports = function createP2P(hooks) {
       for (const p of peers.values()) { p.ready = false; p.since = now; }
       weigh(); s = hooks.snapshot();
     }
-    const msg = JSON.stringify({ t: 'state', s, host: myName, who: who() });
+    const msg = JSON.stringify({ t: 'state', s, host: myName, who: who(), tabs: tabCounts() });
     if (msg === lastSnap && !force) return;
     lastSnap = msg;
     for (const p of peers.values()) p.wire.send(msg);
@@ -347,7 +362,13 @@ module.exports = function createP2P(hooks) {
           c.best = Math.min(c.best, rtt); c.offset = off;
           if (moved) emit(c);
         }
-      } else if (m.t === 'state') { const first = !c.state; c.state = m.s; c.host = cleanName(m.host) || 'Host'; c.who = Array.isArray(m.who) ? m.who : []; if (first) hooks.say(`Watching with ${c.host}`); emit(c); changed(); }
+      } else if (m.t === 'state') {
+        const first = !c.state; c.state = m.s; c.host = cleanName(m.host) || 'Host'; c.who = Array.isArray(m.who) ? m.who : [];
+        c.tabs = {}; for (const t of TABS) { const n = ((m.tabs || {})[t]) | 0; if (n > 0) c.tabs[t] = Math.min(n, 99); }
+        if (first) hooks.say(`Watching with ${c.host}`); emit(c); changed();
+      }
+      else if (m.t === 'rtc') hooks.rtc(null, m.d);
+      else if (m.t === 'ptrs') hooks.ptrs(m.list);
       else if (m.t === 'bye') over(`${c.host || 'Your friend'} stopped sharing.`);
     }, () => {
       if (my !== gen || role !== 'guest') return;
@@ -359,6 +380,7 @@ module.exports = function createP2P(hooks) {
     c.seen = Date.now(); c.pinger = setInterval(ping, 2000);
     for (let i = 0; i < 4; i++) setTimeout(() => { if (my === gen) ping(); }, i * 250);
     if (c.ready) c.wire.send(c.ready);
+    if (myTab) c.wire.send({ t: 'tab', v: myTab });
     changed();
   }
   const emit = (c) => { if (c.state) hooks.remote({ ...c.state, startedAt: c.state.startedAt - c.offset }, ''); };
@@ -375,7 +397,7 @@ module.exports = function createP2P(hooks) {
     const my = ++gen;
     myName = cleanName(name) || 'Friend';
     role = 'guest'; status = 'connecting'; note = ''; code = '';
-    g = { ...c, addr: '', offset: 0, best: Infinity, state: null, host: '', who: [], until: Date.now() + 20000, was: false, agent: new https.Agent({ keepAlive: true, maxSockets: 16 }) };
+    g = { ...c, addr: '', offset: 0, best: Infinity, state: null, host: '', who: [], tabs: {}, until: Date.now() + 20000, was: false, agent: new https.Agent({ keepAlive: true, maxSockets: 16 }) };
     changed(); connect(g, my);
     return { ok: true };
   }
@@ -411,6 +433,14 @@ module.exports = function createP2P(hooks) {
     });
   }
   const send = (m) => { if (g && g.wire) g.wire.send(m); };
+  const sendTo = (id, m) => { const p = peers.get(id); if (p) p.wire.send(m); };       // sharing: to one friend
+  // This PC moved to another panel tab: friends' badges follow.
+  function setTab(t) {
+    t = cleanTab(t);
+    if (t === myTab) return;
+    myTab = t;
+    if (role === 'host') { sync(); changed(); } else if (g) send({ t: 'tab', v: t });
+  }
   function ready(ok, file) { if (!g) return; const m = { t: 'ready', ok: !!ok, f: file }; if (g.ready && g.ready.ok === m.ok && g.ready.f === m.f) return; g.ready = m; send(m); }
 
   // ================= both =================
@@ -428,9 +458,10 @@ module.exports = function createP2P(hooks) {
     if (m) await Promise.race([m.remove(), new Promise((r) => setTimeout(r, 1500))]);
   }
   const info = () => ({ role, status, note, code, reach, port, settling: role === 'host' && settling,
-    peers: role === 'host' ? who() : g ? g.who : [], host: role === 'host' ? myName : g ? g.host : '', waiting: holding });
+    peers: role === 'host' ? who() : g ? g.who : [], host: role === 'host' ? myName : g ? g.host : '', waiting: holding,
+    tabs: role === 'host' ? tabCounts() : g && status === 'connected' ? g.tabs : {} });
 
-  return { share, join, stop, info, sync, weigh, carryOn, setOptions, relay, json, send, ready, role: () => role, connected: () => role === 'guest' && status === 'connected', count: () => peers.size };
+  return { share, join, stop, info, sync, weigh, carryOn, setOptions, setTab, relay, json, send, sendTo, ids: () => [...peers.keys()], ready, role: () => role, connected: () => role === 'guest' && status === 'connected', count: () => peers.size };
 };
 module.exports.encodeCode = encodeCode;
 module.exports.decodeCode = decodeCode;

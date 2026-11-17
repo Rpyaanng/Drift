@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; form-action drift:">
+<title>New tab</title>
+<!-- Drift's own start page for the Surf tab, served as drift://home/ by web.js -->
+<style>
+  :root { --bg: #040816; --deep: #0b3a52; --accent: #22c08a; --hi: #b58cff; --ink: rgba(255,255,255,.92); --dim: rgba(255,255,255,.55); --line: rgba(255,255,255,.1); --glass: rgba(11,13,19,.5); }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); overflow: hidden;
+    font: 14px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  /* the sky: slow aurora light drifting behind everything */
+  .sky { position: fixed; inset: -20vmax; filter: blur(70px) saturate(130%); opacity: .9; pointer-events: none; }
+  .sky i { position: absolute; border-radius: 50%; mix-blend-mode: screen; animation: drift 38s ease-in-out infinite alternate; }
+  .sky i:nth-child(1) { width: 70vmax; height: 46vmax; left: 8vmax; top: 30vmax; background: radial-gradient(closest-side, var(--accent), transparent); opacity: .42; }
+  .sky i:nth-child(2) { width: 60vmax; height: 50vmax; left: 52vmax; top: 18vmax; background: radial-gradient(closest-side, var(--hi), transparent); opacity: .32; animation-duration: 46s; animation-delay: -12s; }
+  .sky i:nth-child(3) { width: 90vmax; height: 60vmax; left: 20vmax; top: 64vmax; background: radial-gradient(closest-side, var(--deep), transparent); opacity: .9; animation-duration: 54s; animation-delay: -30s; }
+  .sky i:nth-child(4) { width: 36vmax; height: 30vmax; left: 70vmax; top: 60vmax; background: radial-gradient(closest-side, #2fd3c3, transparent); opacity: .22; animation-duration: 33s; animation-delay: -8s; }
+  @keyframes drift { 0% { transform: translate(0, 0) scale(1) rotate(0deg); } 50% { transform: translate(6vmax, -4vmax) scale(1.12) rotate(8deg); } 100% { transform: translate(-5vmax, 3vmax) scale(.94) rotate(-6deg); } }
+  /* faint stars */
+  .stars { position: fixed; inset: 0; pointer-events: none; opacity: .5;
+    background-image: radial-gradient(1px 1px at 12% 18%, #fff, transparent), radial-gradient(1px 1px at 78% 12%, #fff, transparent), radial-gradient(1.5px 1.5px at 34% 72%, #fff, transparent),
+      radial-gradient(1px 1px at 62% 44%, #fff, transparent), radial-gradient(1px 1px at 88% 66%, #fff, transparent), radial-gradient(1.5px 1.5px at 22% 48%, #fff, transparent),
+      radial-gradient(1px 1px at 52% 88%, #fff, transparent), radial-gradient(1px 1px at 6% 82%, #fff, transparent), radial-gradient(1px 1px at 94% 34%, #fff, transparent); }
+  .vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,.55)); }
+
+  main { position: relative; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px; padding: 0 24px 6vh; }
+  .brand { display: flex; align-items: center; gap: 10px; font: 600 11px/1 "Segoe UI Variable Text", "Segoe UI", system-ui; letter-spacing: .32em; text-transform: uppercase; color: var(--dim); }
+  .brand svg { width: 22px; height: 22px; }
+  .clock { font: 200 clamp(64px, 13vh, 150px)/1 "Segoe UI Variable Display", "Segoe UI Light", system-ui; letter-spacing: .03em; font-variant-numeric: tabular-nums;
+    text-shadow: 0 4px 50px rgba(0,0,0,.35); margin-top: -6px; }
+  .hello { margin-top: -14px; font: 300 clamp(16px, 2.4vh, 22px)/1.3 "Segoe UI Variable Display", system-ui; color: rgba(255,255,255,.72); letter-spacing: .02em; }
+
+  form { width: min(640px, 100%); position: relative; }
+  form input { width: 100%; padding: 16px 22px 16px 52px; border-radius: 999px; border: 1px solid var(--line); outline: none; color: var(--ink); font: inherit; font-size: 15px;
+    background: var(--glass); backdrop-filter: blur(30px) saturate(150%); box-shadow: 0 18px 60px rgba(0,0,0,.4); transition: border-color .25s, box-shadow .25s; }
+  form input::placeholder { color: var(--dim); }
+  form input:focus { border-color: color-mix(in srgb, var(--accent) 70%, transparent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent), 0 18px 60px rgba(0,0,0,.4); }
+  form svg { position: absolute; z-index: 1; left: 20px; top: 50%; width: 18px; height: 18px; transform: translateY(-50%); opacity: .6; pointer-events: none; }
+
+  .tiles { display: grid; grid-template-columns: repeat(4, 132px); gap: 14px; }
+  .tile { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 18px 10px 14px; border-radius: 18px; text-decoration: none; color: var(--ink);
+    background: rgba(255,255,255,.04); border: 1px solid var(--line); backdrop-filter: blur(20px); transition: transform .25s, background .25s, border-color .25s; }
+  .tile:hover, .tile:focus-visible { transform: translateY(-3px); background: rgba(255,255,255,.09); border-color: rgba(255,255,255,.22); outline: none; }
+  .tile b { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; font: 600 17px/1 "Segoe UI Variable Display", system-ui;
+    background: linear-gradient(135deg, var(--c1), var(--c2)); box-shadow: 0 6px 22px color-mix(in srgb, var(--c1) 40%, transparent); color: #fff; }
+  .tile span { font-size: 12.5px; color: rgba(255,255,255,.8); white-space: nowrap; }
+  h2 { margin: 6px 0 -12px; font: 600 10.5px/1 "Segoe UI Variable Text", "Segoe UI", system-ui; letter-spacing: .18em; text-transform: uppercase; color: var(--dim); }
+  .hint { margin-top: 8px; text-align: center; color: rgba(255,255,255,.36); font-size: 12px; letter-spacing: .02em; }
+  @media (max-width: 640px) { .tiles { grid-template-columns: repeat(2, 132px); } .hint { display: none; } }
+  @media (prefers-reduced-motion: reduce) { .sky i { animation: none; } }
+</style>
+</head>
+<body>
+<div class="sky"><i></i><i></i><i></i><i></i></div>
+<div class="stars"></div>
+<div class="vignette"></div>
+<main>
+  <div class="brand">
+    <svg viewBox="0 0 24 24" fill="none" stroke-linecap="round"><path d="M3 9c3-3 6 3 9 0s6-3 9 0" stroke="#22c08a" stroke-width="1.8"/><path d="M3 15c3-3 6 3 9 0s6-3 9 0" stroke="#b58cff" stroke-width="1.8" opacity=".85"/></svg>
+    Drift
+  </div>
+  <div class="clock" id="clock"></div>
+  <div class="hello" id="hello"></div>
+  <form action="drift://home/go" method="get" autocomplete="off">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+    <input name="q" id="q" placeholder="Search YouTube, or type an address" spellcheck="false" autofocus>
+  </form>
+  <h2>Something to drift to</h2>
+  <nav class="tiles">
+    <a class="tile" href="https://www.youtube.com/results?search_query=lofi+hip+hop+radio+live" style="--c1:#22c08a;--c2:#0b3a52"><b>L</b><span>Lo-fi radio</span></a>
+    <a class="tile" href="https://www.youtube.com/results?search_query=rain+sounds+for+sleeping" style="--c1:#4f8cff;--c2:#1b2a6b"><b>R</b><span>Rain sounds</span></a>
+    <a class="tile" href="https://www.youtube.com/results?search_query=ambient+music+4k+nature" style="--c1:#b58cff;--c2:#3b1f6e"><b>A</b><span>Ambient 4K</span></a>
+    <a class="tile" href="https://www.youtube.com/results?search_query=jazz+cafe+music" style="--c1:#ffb26b;--c2:#7a2f2f"><b>J</b><span>Jazz café</span></a>
+    <a class="tile" href="https://www.youtube.com/" style="--c1:#ff4d5e;--c2:#7a1022"><b>Y</b><span>YouTube</span></a>
+    <a class="tile" href="https://www.twitch.tv/" style="--c1:#9b6bff;--c2:#3a1d7a"><b>T</b><span>Twitch</span></a>
+    <a class="tile" href="https://soundcloud.com/" style="--c1:#ff8a3d;--c2:#7a3310"><b>S</b><span>SoundCloud</span></a>
+    <a class="tile" href="https://en.wikipedia.org/wiki/Special:Random" style="--c1:#8fa3b8;--c2:#2b3644"><b>W</b><span>Random article</span></a>
+  </nav>
+  <div class="hint">Mouse to the top edge for tabs and the address &nbsp;·&nbsp; to the bottom edge for Drift’s controls</div>
+</main>
+<script>
+  const clock = document.getElementById('clock'), hello = document.getElementById('hello');
+  function tick() {
+    const d = new Date(), h = d.getHours();
+    clock.textContent = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    hello.textContent = h < 5 ? 'Still up? Take it slow.' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : h < 22 ? 'Good evening' : 'Winding down';
+  }
+  tick(); setInterval(tick, 1000);
+  // the page opens with the keys in the search box
+  addEventListener('focus', () => document.getElementById('q').focus());
+</script>
+</body>
+</html>

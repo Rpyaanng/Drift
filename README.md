@@ -33,7 +33,7 @@ drift.
 - **36 scenes and counting.** Northern lights, moonlit lakes, deserts, misty forests, 3D geometry,
   fractals and algorithms you can watch think.
 - **It listens.** Scenes breathe with whatever is playing, whether that's the built-in soundscapes,
-  your music folder or Spotify.
+  your own music or Spotify.
 - **Your videos, on every screen.** Play a folder of films or clips across all your monitors, with
   subtitles that find themselves and sound that just works, even Dolby and DTS.
 - **Watch together.** Share what you're watching with friends and it plays in step on their PCs too,
@@ -116,13 +116,15 @@ key away: scenes, colour, speed, brightness, music, video and volume.
 
 ## Sound and music
 
-- **Built-in soundscapes**: Warm Pads, Deep Space, Crystal Bells and Morning Light, generated live rather
-  than played from a loop.
+- **Ambient sound**, in the **Scenes** tab: Warm Pads, Deep Space, Crystal Bells and Morning Light,
+  generated live rather than played from a loop, or **Off**.
 - **Nature sounds**: rain, ocean waves, wind and a crackling fireplace, mixed to taste on top of
-  anything.
-- **Your music**: browse and search your own folders, shuffle, and watch the scenes dance to it.
-- **Spotify**: control the Spotify app on your PC from Drift (play, pause, skip, volume, now playing)
-  with no login. The visuals react to whatever it plays.
+  anything (also in Scenes).
+- **Your music**: the **Media** tab shows your music next to your videos, in the same folders. Pick a song
+  and the scenes dance to it; the ambient sound waits and comes back when you press **Stop music**.
+- **Spotify**: there is nothing to set up. While a song plays in the Spotify app on your PC and Drift
+  has no video or music of its own on, the toolbar's play, pause, skip and volume control Spotify, with
+  the song's name beside them, and the visuals react to it. No login.
 
 ## Video, done properly
 
@@ -144,6 +146,21 @@ Drift and see the same video, in step: play, pause and skipping stay together fo
 streams straight from your PC to theirs, encrypted, with no server, upload or account involved. A
 friend who already has the file plays their own copy, and everyone picks their own subtitles.
 
+## Surf, alone or together
+
+<p align="center">
+  <img src="docs/images/surf-home.jpg" width="820" alt="Surf's start page: a large clock, a search box and tiles for lo-fi radio, rain sounds, ambient 4K, jazz, YouTube, Twitch, SoundCloud and a random article">
+</p>
+
+The **Surf** tab puts a web browser on any screen, opening on Drift's own start page: a clock, a search
+box and a few places to drift to. Share it from **Together** and your friends see and hear the page with
+you. If you let them, they can click, scroll and type in it from their own PC too. Everyone's mouse shows
+over the page as a coloured arrow with their name, so you can point things out to each other.
+
+<p align="center">
+  <img src="docs/images/surf-together.jpg" width="820" alt="A Wikipedia article shared in Surf, seen on a friend's screen, with two named pointers in their own colours, Tess and Mia, over the page">
+</p>
+
 ## Get Drift
 
 1. Download **Drift-Windows-x64.zip** from the [latest release](https://github.com/Rpyaanng/Drift/releases/latest)
@@ -153,6 +170,10 @@ friend who already has the file plays their own copy, and everyone picks their o
    **Run anyway**.
 
 Your settings are saved and carry over to new versions.
+
+From 1.5.0 on, Drift **updates itself**. Now and then it checks for a new release, downloads it in the
+background and installs it when you close Drift. You can also install it straight away from **Settings →
+Updates**, or untick *Update Drift automatically* there. Copies of 1.4.1 and older need this one update by hand.
 
 ---
 
@@ -202,6 +223,65 @@ when the router doesn't report its own address, Drift looks up this PC's public 
 Behind a provider that shares one address between homes (CGNAT), use a VPN such as Tailscale on both PCs.
 Windows asks once whether to let Drift through its firewall: allow it.
 
+### Listening to music together
+
+While you are sharing, friends hear your music too: the **ambient sound** and music from your library are
+sent to them as one live stream, straight from your PC, so everyone hears the same moment of it (a fraction
+of a second after you do). There is nothing to set up: put music on and it reaches whoever has joined.
+
+- A friend's own music waits while they are in your session, and each friend sets their own volume. Their
+  visuals move to your music.
+- With *Friends can play, pause and skip, and use a web page* ticked, their play, pause, next and previous
+  work on your music.
+- **Spotify** is not sent: it is Spotify's sound, not Drift's. Nature sounds stay on your own PC too.
+- When a video with its sound on takes over from the music on your PC, it does for friends as well.
+
+### Who is where
+
+During a session each tab in the panel carries a small number: how many people (you included) are on it
+right now, so you can see who has wandered off to Settings or is looking at the same page as you.
+
+### Surf: a browser in Drift, alone or together
+
+The **Surf** tab is a small web browser. Choose it and the browser opens on that screen, in place of the
+scene, on Drift's own start page: a clock, a search box (an address, or something to search YouTube for)
+and a few places to drift to. While you are sharing (in **Together**), friends see and hear the tab in
+front too: its picture and sound are streamed to them from your PC.
+
+- **The bar at the top.** Move the mouse to the very top edge of the screen and a floating bar drops down
+  with your tabs, **+** for a new tab, back, forward, reload, home and the address. It slips away again
+  when the mouse leaves it. A link that asks for a new tab opens one; pop-ups are blocked. Up to 12 tabs.
+- **Drift's own panel.** The page takes the mouse and keyboard while it is showing. Move the mouse to the
+  very bottom edge of the screen for the panel, or press `Esc` in the page (when a video is full screen,
+  the first `Esc` leaves that). With Surf selected, the panel's previous / next buttons go back and
+  forward, and the video progress bar is hidden.
+- **Leaving Surf.** Choosing Scenes or Media on the browser's screen puts the browser away so you can
+  see them. Your tabs are kept and their pages load again when you come back to Surf. Together and
+  Settings leave the browser where it is. Closing the last tab closes the browser.
+- The browser is on one monitor; the others carry on with their scenes. Choosing Surf on another monitor
+  moves it there (the pages load again).
+- With *Friends can play, pause and skip, and use a web page* ticked (in Together), friends can click,
+  scroll and type in the page from their own PC, and use the same bar for tabs and the address, as you:
+  they act in whatever accounts you are signed in to there. Untick it and they only watch. Pasting is
+  never passed on, so your clipboard stays yours.
+- Everyone sees everyone else's mouse over the page, as a small coloured arrow with their name, so you
+  can point at things. A pointer that stops moving fades after a few seconds. A friend's own mouse is
+  drawn the same way on their screen, so they see what the others see.
+- Only the sharing PC loads the pages, so an account is only needed there. Sign-ins made in Drift are kept
+  apart from your normal browser.
+- The stream goes straight from PC to PC (WebRTC, encrypted), at 30 frames a second and up to about
+  8 Mbit/s of upload for each friend. With *Let friends join from outside my home network* ticked,
+  both PCs ask a public STUN server (Google's) what their internet address is so they can find each other;
+  nothing of the page passes through it. Some networks can't be connected this way: a VPN such as
+  Tailscale on both PCs gets round that.
+- Services that copy-protect their video (Netflix, Disney+, Prime Video and the like) don't play: Drift's
+  browser has no Widevine.
+- *Block adverts in Surf* (in Settings, on by default) blocks adverts and trackers in pages, using Ghostery's adblocker library
+  with the same filter lists uBlock Origin uses. The lists are downloaded from Ghostery's servers the
+  first time and refreshed once a day. Sites fight blockers, so now and then an advert gets through, or a
+  page misbehaves: untick it and the pages reload without blocking.
+- `Alt+←` / `Alt+→` (or the mouse's side buttons) go back and forward.
+
 ### Video conversion
 
 **Settings → Video conversion** needs ffmpeg (included in the release download).
@@ -219,7 +299,7 @@ ffmpeg built with zscale (libzimg) or libplacebo; the common full builds have bo
 
 ### Online subtitle lookup
 
-In the Video tab, **Find online…** fills in the film or show name guessed from the file name. Pressing
+In the Media tab, **Find online…** fills in the film or show name guessed from the file name. Pressing
 Search sends that name to [Cinemeta](https://v3-cinemeta.strem.io) to identify the title, then asks the
 public OpenSubtitles mirror used by Stremio for its subtitles. Neither needs an account. Nothing is sent
 until Search is pressed, and only the text in the search box goes out. Results whose release name matches
@@ -228,9 +308,12 @@ not beside your videos.
 
 ### Privacy
 
-Drift has no account, no telemetry and no ads. It only goes online when you ask it to: looking up
+Drift has no account, no telemetry and no ads. Apart from checking for updates (see below), it only goes online when you ask it to: looking up
 subtitles, or sharing a video with friends (and then finding your public address if your router doesn't
-say). Spotify control talks to the Spotify app on this PC, not the internet.
+say). Spotify control talks to the Spotify app on this PC, not the internet. Nothing about you goes with
+the update check: it is a plain request for the release list. With *Update Drift
+automatically* on (in Settings), Drift asks GitHub about its latest release a little after it starts and
+every 12 hours after that, and downloads the release from GitHub when there is a new one.
 
 ## Development
 
@@ -264,7 +347,7 @@ Converting Dolby / DTS audio, HDR and other video formats, and reading subtitle 
 video all need `ffmpeg.exe`.
 It isn't in this repo (too large for GitHub). Put a copy at `vendor/ffmpeg.exe` (ignored by git), or set
 `FFMPEG_EXE` to its path, and `dev-build` copies it into the build's `resources` folder. A build made
-without it warns, and the app says so in the Video tab instead of playing in silence.
+without it warns, and the app says so in the Media tab instead of playing in silence.
 
 At runtime Drift looks for ffmpeg in this order:
 
@@ -280,7 +363,11 @@ settings (two copies on one PC can share with each other), `DRIFT_SHARE_LOCAL=1`
 `DRIFT_FAKE_HDR=0|1` pretends the screens are SDR or HDR, `DRIFT_HIDDEN=1` and `DRIFT_MUTE=1` run without
 windows or sound. `DRIFT_SHOTS=<folder>` runs the screenshot tour (add `DRIFT_ONLY=<scene,...>`,
 `DRIFT_PALETTE=<name>`, `DRIFT_PANEL=1` and `DRIFT_SHOTWAIT=<ms>` to wait longer per scene); the README images
-were made with it.
+were made with it. Add `DRIFT_TESTSURF=1` for the picture of Surf's start page. The picture of a page shared in
+Surf comes from two copies run at once with `DRIFT_TESTWEB=host` and `=guest` (with the same `DRIFT_TESTCODE`
+file, `DRIFT_TESTURL` and `DRIFT_SHARE_LOCAL=1`); `DRIFT_TESTNAME` sets each one's name.
+To try updating, run a packaged copy with `DRIFT_FAKE_VERSION=1.0.0` (it then thinks the latest release is
+newer) and `DRIFT_UPDATE_AUTOINSTALL=1` (it installs and restarts as soon as the download is ready).
 
 ## License
 
