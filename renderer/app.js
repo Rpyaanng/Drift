@@ -220,7 +220,10 @@
     try { vbg.getContext('2d').drawImage(video, (w - vw * k) / 2, (h - vh * k) / 2, vw * k, vh * k); } catch { /* frame not ready */ }
   }, 120);
   let seekHold = 0, curUrl = '', lastSeq, seeking = false, lastJump = 0;
-  const clockStr = (s) => { s = Math.max(0, Math.floor(s || 0)); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = String(s % 60).padStart(2, '0'); return h ? `${h}:${String(m).padStart(2, '0')}:${x}` : `${m}:${x}`; };
+  // the song from the library: the audio window says where it is (music-pos); the bar shows it when no video is up
+  let musicPos = { t: 0, d: 0, at: 0 };
+  const musicBar = () => !videoOn() && filesOn() && !theirMusic() && musicPos.d > 0 && ctx() !== 'surf';
+  const clockStr =(s) => { s = Math.max(0, Math.floor(s || 0)); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = String(s % 60).padStart(2, '0'); return h ? `${h}:${String(m).padStart(2, '0')}:${x}` : `${m}:${x}`; };
   const videoOn = () => sceneFor(S) === 'video' && !!S.videoUrl;
   // The toolbar's play / previous / next / volume act on whichever tab is selected: Scenes, Media or Surf.
   let lastCtx = 'scene';
@@ -412,7 +415,7 @@
   const isCenter = cx >= b.x && cx < b.x + b.width && cy >= b.y && cy < b.y + b.height;
   const clockEl = $('#clockFace'), breathEl = $('#breath'), ring = $('#breath .ring'), breathTxt = $('#breath span');
   const ease = (x) => x * x * (3 - 2 * x);
-  let lastClock = '', accentAt = 0;
+  let lastClock = '', accentAt = 0, pgAt = 0;
   function tickOverlays() {
     const showHere = S.mode !== 'span' || isCenter;
     clockEl.classList.toggle('on', S.clock && showHere);
@@ -430,12 +433,17 @@
       ring.style.transform = `scale(${0.45 + 0.55 * k})`;
       if (breathTxt.textContent !== label) breathTxt.textContent = label;
     }
-    if (panel.classList.contains('show') && videoOn() && vDur() > 0) {
-      const sk = $('#seek'), at = Math.min(vDur(), vTime());
-      sk.max = vDur();
+    const barMusic = musicBar();
+    panel.classList.toggle('hasmusic', barMusic);
+    if (panel.classList.contains('show') && (barMusic || (videoOn() && vDur() > 0))) {
+      const dur = barMusic ? musicPos.d : vDur();
+      const now = barMusic ? musicPos.t + (S.music.playing ? (performance.now() - musicPos.at) / 1000 : 0) : vTime();
+      const sk = $('#seek'), at = Math.min(dur, now);
+      sk.max = dur; sk.title = barMusic ? 'Drag to move through the song' : 'Drag to move through the video';
       if (!seeking) { sk.value = at; $('#vcur').textContent = clockStr(at); }
-      fill(sk); $('#vdur').textContent = clockStr(vDur());
+      fill(sk); $('#vdur').textContent = clockStr(dur);
     }
+    if (tab === 'media' && panel.classList.contains('show') && videoOn() && performance.now() - pgAt > 1000) { pgAt = performance.now(); paintProgress(); }
     if (S.palette === 'cycle' && performance.now() - accentAt > 500) { accentAt = performance.now(); document.documentElement.style.setProperty('--accent', accentHex()); }
     const sl = $('#o-sleep');
     if (S.sleepAt > Date.now()) { const m = Math.ceil((S.sleepAt - Date.now()) / 60000); sl.textContent = m + ' min left'; } else if (sl.textContent) sl.textContent = '';
@@ -639,7 +647,7 @@
       for (const t of w.tabs || []) {
         if (webEls.has(t.id)) continue;
         const el = document.createElement('webview');
-        el.className = 'web'; el.setAttribute('partition', 'persist:web'); el.setAttribute('src', 'about:blank');
+        el.className = 'web'; el.setAttribute('partition', 'persist:web'); el.setAttribute('allowpopups', ''); el.setAttribute('src', 'about:blank');       // which windows a page may open is decided in main (web.js)
         const tell = () => { try { api.cmd({ type: 'surf', do: 'attached', tab: t.id, wc: el.getWebContentsId() }); return true; } catch { return false; } };       // main matches the page to its tab
         el.addEventListener('did-attach', () => { if (!tell()) el.addEventListener('dom-ready', tell, { once: true }); });
         document.body.insertBefore(el, $('#webEdge'));
@@ -708,11 +716,15 @@
   surfEdge.addEventListener('mouseenter', () => { surfBar.classList.add('show'); surfHideSoon(1500); });
   surfBar.addEventListener('mouseenter', () => { sbOver = true; surfBar.classList.add('show'); });
   surfBar.addEventListener('mouseleave', () => { sbOver = false; surfHideSoon(); });
-  const tabsHtml = (w, cls) => (w.tabs || []).map((t) => `<button class="${cls}${t.id === w.active ? ' active' : ''}" data-id="${t.id}" title="${esc(t.title)}"><span>${esc(t.title)}</span><i data-x="1" title="Close this tab">✕</i></button>`).join('');
+  const tabsHtml = (w, cls) => (w.tabs || []).map((t) => `<button class="${cls}${t.id === w.active ? ' active' : ''}" data-id="${t.id}" title="${esc(t.title)}"><span>${esc(t.title)}</span><i data-x="1" title="Close this tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" pointer-events="none"><path d="M7 7l10 10M17 7L7 17"/></svg></i></button>`).join('');
   function syncSurfBar() {
     const w = S.web || {}, k = JSON.stringify([w.tabs, w.active]);
-    if (k !== sbKey) { sbKey = k; $('#sbTabs').innerHTML = tabsHtml(w, 'sbTab') + '<button class="sbAdd" data-new="1" title="New tab">+</button>'; }
+    if (k !== sbKey) { sbKey = k; $('#sbTabs').innerHTML = tabsHtml(w, 'sbTab glass') + '<button class="sbAdd glass round" data-new="1" title="New tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>'; }
     $('#sbBack').classList.toggle('off', !w.back); $('#sbFwd').classList.toggle('off', !w.fwd);
+    const ob = $('#sbOut');       // open the page in the PC's own browser: for the host, when there is one
+    ob.hidden = !!w.stream || !w.ext;
+    ob.title = w.out ? `Open in ${w.out}: close its window to come back to Surf` : `Open this page in ${w.ext || 'your browser'} (for sign-ins Surf can't do, like Google). Friends watch it but can't click in it`;
+    ob.classList.toggle('off', !!w.out);
     const u = $('#sbUrl'), url = /^drift:\/\/home\//i.test(w.url || '') ? '' : w.url || '';       // Drift's start page: an empty box to type in
     if (document.activeElement !== u && u.value !== url) u.value = url;
   }
@@ -727,6 +739,7 @@
   $('#sbFwd').addEventListener('click', () => surf('fwd'));
   $('#sbReload').addEventListener('click', () => surf('reload'));
   $('#sbHome').addEventListener('click', () => surf('home'));
+  $('#sbOut').addEventListener('click', () => { surf('outside'); surfHideSoon(300); });
   $('#sbUrl').addEventListener('focus', (e) => e.target.select());
   $('#sbUrl').addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return;
@@ -1053,7 +1066,7 @@
     if (!libRoot && lib) { lib = null; $('#vgrid').innerHTML = '<p>Add a folder to see your videos here.</p>'; $('#vcrumb').innerHTML = ''; }
   }
   // A folder's (or a search's) files, split into videos and music. Each kind plays as its own list.
-  const fileTiles = (l, full) => l.videos.map((v, i) => `<button class="vt" data-i="${i}" title="${esc(full ? v.path : v.name)}"><div class="th">▶<i></i></div><div class="nm">${esc(v.name.replace(/\.[^.]+$/, ''))}</div><div class="sz">${sizeStr(v.size)}</div></button>`).join('')
+  const fileTiles = (l, full) => l.videos.map((v, i) => `<button class="vt" data-i="${i}" title="${esc(full ? v.path : v.name)}"><div class="th">▶<i></i><b class="pg"></b></div><div class="nm">${esc(v.name.replace(/\.[^.]+$/, ''))}</div><div class="sz">${sizeStr(v.size)}</div></button>`).join('')
     + l.tracks.map((v, i) => `<button class="vt song" data-t="${i}" title="${esc(full ? v.path : v.name)}"><div class="th">♪<i></i></div><div class="nm">${esc(v.name.replace(/\.[^.]+$/, ''))}</div><div class="sz">${sizeStr(v.size)}</div></button>`).join('');
   const splitKinds = (files) => ({ videos: files.filter((f) => f.kind !== 'audio'), tracks: files.filter((f) => f.kind === 'audio') });
   const counted = (n, one, many) => `${n} ${n === 1 ? one : many}`;
@@ -1080,14 +1093,29 @@
 
   function markPlaying() {
     if (!lib) return;
-    $$('#vgrid .vt[data-i]').forEach((t) => t.classList.toggle('active', videoOn() && lib.videos[+t.dataset.i].path === S.videoPath));
     const song = filesOn() ? S.music.playlist[S.nowPlaying.index] : '';
+    $$('#vgrid .vt[data-i]').forEach((t) => t.classList.toggle('active', !song && videoOn() && lib.videos[+t.dataset.i].path === S.videoPath));      // a video or a song, never both
     $$('#vgrid .vt[data-t]').forEach((t) => t.classList.toggle('active', !!song && lib.tracks[+t.dataset.t].path === song));
+    paintProgress();
+  }
+  // how far each video got (saved between sessions by main; the one playing now is live)
+  function paintProgress() {
+    if (!lib) return;
+    const saved = S.video.progress || {};
+    $$('#vgrid .vt[data-i]').forEach((t) => {
+      const v = lib.videos[+t.dataset.i], r = saved[v.path], bar = t.querySelector('.pg'); if (!v || !bar) return;
+      let k = 0;
+      if (videoOn() && v.path === S.videoPath && vDur() > 0) k = Math.min(1, vTime() / vDur());
+      else if (r) { const d = r.dur || (thumbs.get(v.path) || {}).dur || 0; k = r.done ? 1 : d ? Math.min(1, r.pos / d) : 0; }
+      bar.style.setProperty('--p', (k * 100).toFixed(1) + '%');
+      bar.classList.toggle('on', k > 0.005);
+    });
   }
   function paintThumb(sel, t) {
     const el = $(`#vgrid .vt[${sel}] .th`); if (!el) return;
     if (t.img) { el.style.backgroundImage = `url(${t.img})`; el.firstChild.textContent = ''; }
     if (t.dur) el.querySelector('i').textContent = clockStr(t.dur);
+    if (sel.startsWith('data-i')) paintProgress();
   }
   // one hidden player grabs a frame from each file in turn; results are cached while the app runs
   const tv = document.createElement('video'); tv.muted = true; tv.preload = 'metadata';
@@ -1228,9 +1256,13 @@
   seekEl.addEventListener('pointerdown', () => { seeking = true; });
   seekEl.addEventListener('input', () => {
     fill(seekEl); $('#vcur').textContent = clockStr(+seekEl.value);
-    if (performance.now() - lastJump > 140) { lastJump = performance.now(); api.cmd({ type: 'video-jump', pos: +seekEl.value }); }
+    if (performance.now() - lastJump > 140) { lastJump = performance.now(); api.cmd(musicBar() ? { type: 'music-seek', pos: +seekEl.value } : { type: 'video-jump', pos: +seekEl.value }); }
   });
-  seekEl.addEventListener('change', () => { api.cmd({ type: 'video-jump', pos: +seekEl.value, final: true }); setTimeout(() => { seeking = false; }, 400); });
+  seekEl.addEventListener('change', () => {
+    if (musicBar()) { api.cmd({ type: 'music-seek', pos: +seekEl.value }); musicPos = { ...musicPos, t: +seekEl.value, at: performance.now() }; }
+    else api.cmd({ type: 'video-jump', pos: +seekEl.value, final: true });
+    setTimeout(() => { seeking = false; }, 400);
+  });
   // play / pause: whatever the toolbar is on (see ctx): the scene, the video, the music, or Spotify
   const ctxToggle = () => {
     const c = ctx();
@@ -1350,6 +1382,7 @@
     else if (c.type === 'toast') { if (isCenter || panel.classList.contains('show')) toast(c.text, Math.max(3200, Math.min(9000, c.text.length * 70))); }     // one screen is enough
     else if (c.type === 'ask-quit') { if (confirmEl.classList.contains('on')) api.cmd({ type: 'quit' }); else askQuit(); }
     else if (c.type === 'rtc') onRtc(c);
+    else if (c.type === 'music-pos') musicPos = { t: +c.t || 0, d: +c.d || 0, at: performance.now() };
     else if (c.type === 'ptrs') showPtrs(Array.isArray(c.list) ? c.list : []);
     else if (c.type === 'web-esc') { if (webEl) webEl.blur(); window.focus(); tab = 'surf'; showPanel(true); syncUI(); }       // Esc in the web page: our controls, and the keys come back to us
     else if (c.type === 'share-code') { $('#shCode').value = c.code; $('#shCode').focus(); }

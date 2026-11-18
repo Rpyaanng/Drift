@@ -164,6 +164,16 @@
   }
   player.addEventListener('ended', () => step(1));
   player.addEventListener('error', () => { if (player.src) skipBroken(); });
+  // the panel's progress bar: where the song is, twice a second (and right away when it changes)
+  let lastPos = '';
+  const sendPos = () => {
+    const d = S.music.source === 'files' && isFinite(player.duration) ? player.duration : 0;
+    const p = { type: 'music-pos', t: d ? player.currentTime : 0, d, path: d ? curPath : '' };
+    const k = `${p.t.toFixed(1)}|${p.d}|${p.path}`;
+    if (k !== lastPos) { lastPos = k; api.cmd(p); }
+  };
+  setInterval(sendPos, 500);
+  ['loadedmetadata', 'seeked', 'emptied'].forEach((ev) => player.addEventListener(ev, sendPos));
 
   // ---------- Spotify: while it has the toolbar (main's spotify.lead), listen to what the PC is playing so the visuals can react
   // (analysis only, never recorded or replayed) ----------
@@ -275,6 +285,7 @@
     if (c.type === 'next') step(1);
     else if (c.type === 'prev') { if (player.currentTime > 4) player.currentTime = 0; else step(-1); }
     else if (c.type === 'play-index') playIndex(c.index);
+    else if (c.type === 'music-seek') { if (isFinite(player.duration)) player.currentTime = Math.max(0, Math.min(player.duration - 0.1, +c.pos || 0)); }
     else if (c.type === 'rtc') { if (c.d && typeof c.d === 'object') (c.from ? rtcHost(c.from, c.d) : rtcGuest(c.d)).catch((e) => console.log('music stream set-up: ' + e.message)); }
     else if (c.type === 'fadeout') { fading = true; master.gain.cancelScheduledValues(T()); master.gain.setTargetAtTime(0, T(), 2.2); }
   });

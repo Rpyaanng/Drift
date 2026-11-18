@@ -55,7 +55,7 @@ const DEFAULTS = {
   // hdr: auto = convert HDR videos to SDR on screens that aren't showing HDR | always | never; tone = how bright highlights are squeezed in;
   // enc = which ffmpeg encoder converts (auto = the fastest that works on this PC); xq = picture height of converted video (auto = the screen's)
   video: { files: [], index: 0, fit: 'auto', paused: false, sound: true, autoplay: true, volume: 0.8, folders: [], foldersInit: false,
-    hdr: 'auto', tone: 'hable', enc: 'auto', xq: 'auto' },
+    hdr: 'auto', tone: 'hable', enc: 'auto', xq: 'auto', progress: {} },
   // watch together: internet = ask the router to let friends outside the home in; control = friends may play / pause / seek;
   // wait = pause for everyone while someone is loading; quality = picture size sent to (and asked from) friends
   share: { name: '', internet: true, control: true, wait: true, quality: 'original', port: 47800, adblock: true },
@@ -102,6 +102,8 @@ function loadSettings() {
     if (!state.subs.perFile || typeof state.subs.perFile !== 'object' || Array.isArray(state.subs.perFile)) state.subs.perFile = {};
     state.video.files = (state.video.files || []).filter((p) => { try { return fs.existsSync(p); } catch { return false; } });
     state.video.index = Math.min(state.video.index || 0, Math.max(0, state.video.files.length - 1));
+    const pr = state.video.progress;
+    state.video.progress = pr && typeof pr === 'object' && !Array.isArray(pr) ? Object.fromEntries(Object.entries(pr).filter(([, r]) => r && isFinite(r.pos)).slice(-PROGRESS_KEEP)) : {};
     if (!state.video.files.length) dropVideoScene();
     if ((s.settingsVersion || 1) < 2) state.video.sound = true;     // video sound used to default to off, which read as "broken audio"
     if ((s.settingsVersion || 1) < 3) {       // fit used to hold the layout too
@@ -267,6 +269,27 @@ function vpos() {
   if (vcount() === 1 && videoInfo.dur > 1 && p > 0) p %= videoInfo.dur;      // a single video loops
   return p;
 }
+// ---- where each video was left (saved with the settings), so it carries on from there next time ----
+const PROGRESS_KEEP = 300;
+const endOf = (dur) => dur - Math.min(30, dur * 0.1);       // past this it counts as watched
+function resumeAt(p) {
+  const r = p && state.video.progress[p];
+  return r && !r.done && r.pos >= 10 && (!r.dur || r.pos < endOf(r.dur)) ? r.pos : 0;
+}
+// done: the video played to its end
+function noteProgress(done) {
+  const c = cur();
+  if (remote || !c || !c.path || !visWins.some((v) => showsVideo(v.key))) return;
+  const all = state.video.progress, old = all[c.path], dur = videoInfo.dur || (old && old.dur) || 0;
+  const pos = done ? dur || vpos() : Math.max(0, vpos());
+  if (!old && pos < 10) return;
+  delete all[c.path];       // re-added last: the newest is at the end, and the oldest go first
+  all[c.path] = { pos: Math.round(pos * 10) / 10, dur: Math.round(dur * 10) / 10, done: !!done || (dur > 0 && pos >= endOf(dur)), at: Date.now() };
+  const keys = Object.keys(all); for (let i = 0; i < keys.length - PROGRESS_KEEP; i++) delete all[keys[i]];
+  saveSoon();
+}
+// a new video starts where it was left
+function startClock(p) { const pos = resumeAt(p); vclock = { startedAt: Date.now() - pos * 1000, pos, seq: (vclock.seq || 0) + 1 }; xc = { epoch: xc.epoch + 1, start: pos }; }
 // The picture size friends get: the smaller of what this PC asks for and what the sharing PC allows.
 function shareQuality() {
   const a = state.share.quality, b = remote && QUALITY[remote.cap] ? String(remote.cap) : 'original';
@@ -693,12 +716,12 @@ function videoJump(pos, play) {
 }
 function videoStep(dir) {
   const n = state.video.files.length; if (!n) return;
+  noteProgress();
   vEnded = false;
   videoFails = 0; xcFails = 0;
   state.video.index = (state.video.index + (dir < 0 ? -1 : 1) + n) % n;
   state.video.paused = false;
-  vclock = { startedAt: Date.now(), pos: 0, seq: (vclock.seq || 0) + 1 };
-  xc = { epoch: xc.epoch + 1, start: 0 };
+  startClock(state.video.files[state.video.index]);
   probe(); pushState(); saveSoon();
 }
 // This PC's own copy of a shared video (same name and size, somewhere in its video folders) saves streaming it.
@@ -784,7 +807,7 @@ function guestCmd(m) {
     if (m.do === 'toggle') patch({ music: { playing: !state.music.playing } });
     else if ((m.do === 'next' || m.do === 'prev') && state.music.source === 'files' && audioWin && !audioWin.isDestroyed()) audioWin.webContents.send('cmd', { type: m.do });
   }
-  else if (m.a === 'surf') { if (web.info().open && m.m && typeof m.m === 'object' && SURF.includes(m.m.do)) web.act({ do: m.m.do, text: m.m.text, id: m.m.id }); }       // the browser's own controls: tabs, back, the address…
+  else if (m.a === 'surf') { if (web.info().open && !web.info().out && m.m && typeof m.m === 'object' && SURF.includes(m.m.do)) web.act({ do: m.m.do, text: m.m.text, id: m.m.id }); }       // the browser's own controls: tabs, back, the address…
   else if (m.a === 'input') web.input(m.e);       // their mouse or keyboard, over the picture of our web page
 }
 // The Surf tab's browser, which friends see too while this PC shares: see web.js.
@@ -802,7 +825,15 @@ const web = createWeb({
   blockAds: () => state.share.adblock,
   listsFile: () => path.join(app.getPath('userData'), 'adblock-lists.bin'),
   say,
+  bounds: (key) => { const x = visWins.find((y) => y.key === screenFor(key)); return x && !x.win.isDestroyed() ? x.win.getBounds() : screen.getPrimaryDisplay().bounds; },
+  away: (on) => {       // the PC's own browser is over the Surf monitor: Drift's window there must not stay above it
+    webAway = on;
+    const x = visWins.find((y) => y.key === web.info().key);
+    if (x && !x.win.isDestroyed()) x.win.setAlwaysOnTop(!on && !!state.onTop, 'screen-saver');
+  },
+  profile: () => path.join(app.getPath('userData'), 'browser-profile'),
 });
+let webAway = false;
 // Where everyone's mouse is over a shared web page, as fractions of the page, so each PC can draw the others' pointers.
 // This PC, sharing, gathers them (its own included) and passes each friend everyone's but their own.
 const pointers = new Map();
@@ -942,7 +973,7 @@ function applySideEffects(prev) {
   if (!state.keepAwake && blockerId !== null) { powerSaveBlocker.stop(blockerId); blockerId = null; }
   if (prev && prev.autoUpdate !== state.autoUpdate && updater) updater.settingChanged();
   // always on top
-  if (!prev || prev.onTop !== state.onTop) for (const v of visWins) if (!v.win.isDestroyed()) v.win.setAlwaysOnTop(!!state.onTop, 'screen-saver');
+  if (!prev || prev.onTop !== state.onTop) for (const v of visWins) if (!v.win.isDestroyed()) v.win.setAlwaysOnTop(!!state.onTop && !(webAway && v.key === web.info().key), 'screen-saver');       // (not over the PC's own browser)
   // auto-cycle
   if (!prev || prev.autoCycle !== state.autoCycle) {
     clearInterval(cycleTimer); cycleTimer = null;
@@ -1050,15 +1081,17 @@ function setVideos(files, key, index = 0) {
   if (!remote && c && c.path && files[index] === c.path && visWins.some((v) => showsVideo(v.key))) {      // already playing on a monitor: join it where it is
     const p = { video: { files, index } };
     if (shows) p.perDisplay = shows; else p.scene = 'video';
+    if (state.music.source === 'files') p.music = { source: state.music.ambientOff ? 'off' : 'generative', playing: true };
     patch(p);
     return;
   }
+  noteProgress();
   vEnded = false;
   videoFails = 0; xcFails = 0;
-  vclock = { startedAt: Date.now(), pos: 0, seq: (vclock.seq || 0) + 1 };
-  xc = { epoch: xc.epoch + 1, start: 0 };
   const p = { video: { files, index, paused: false } };
   if (state.mode === 'mix' && key) p.perDisplay = { [key]: 'video' }; else p.scene = 'video';
+  if (!remote && state.music.source === 'files') p.music = { source: state.music.ambientOff ? 'off' : 'generative', playing: true };      // a video or a song, not both
+  startClock(files[index]);
   patch(p);
   probe();
 }
@@ -1126,6 +1159,7 @@ function scanFolder(dir, out, depth = 0) {
 // Music was put on: the scene and its visualizer come up in place of a video that is showing here.
 function showVisualizer() {
   if (remote) return;       // a friend's video stays
+  noteProgress();
   const back = state.prevScene && state.prevScene !== 'video' ? state.prevScene : 'aurora', p = {};
   if (state.scene === 'video') p.scene = back;
   const pd = Object.keys(state.perDisplay).filter((k) => state.perDisplay[k] === 'video');
@@ -1236,6 +1270,7 @@ ipcMain.on('cmd', async (e, c) => {
         else { if (d === 'move') streamKey = k || ''; streamShown = true; pushState(); }
       }
       else if (d === 'quit') { if (!remote) web.close(); }
+      else if (d === 'outside') { if (!remote) web.outside(); }       // open the page in the PC's own browser
       else if (!SURF.includes(d)) break;
       else if (remote) {       // a friend's browser: ask their PC
         if (!remote.web) say('Leave your friend\'s session to open your own page');
@@ -1343,17 +1378,18 @@ ipcMain.on('cmd', async (e, c) => {
     }
     case 'stop-video':
       if (remote) { p2p.stop(); break; }       // stopping a friend's video means leaving their session
+      noteProgress();
       if (state.mode === 'mix') { const pd = { ...state.perDisplay }; pd[c.key] = state.prevScene || 'aurora'; state.perDisplay = pd; if (state.scene === 'video') state.scene = state.prevScene || 'aurora'; pushState(); saveSoon(); }
       else patch({ scene: state.prevScene && state.prevScene !== 'video' ? state.prevScene : 'aurora' });
       break;
     case 'video-next':   // sent by the leading monitor when a clip ends
       if (remote || c.index !== state.video.index) break;        // with a friend, their PC decides what comes next
+      noteProgress(true);
       if (!state.video.autoplay) { if (!state.video.paused) { setPaused(true); vEnded = true; pushState(); } break; }     // autoplay off: stay on the last frame
       if (state.video.files.length < 2) { if (c.stream) videoJump(0); break; }      // a converted stream can't loop by itself
       videoFails = 0; xcFails = 0;
       state.video.index = (state.video.index + 1) % state.video.files.length;
-      vclock = { startedAt: Date.now(), pos: 0, seq: (vclock.seq || 0) + 1 };
-      xc = { epoch: xc.epoch + 1, start: 0 };
+      startClock(state.video.files[state.video.index]);
       probe(); pushState(); saveSoon();
       break;
     case 'video-step':       // previous / next video in the list that is playing
@@ -1383,8 +1419,11 @@ ipcMain.on('cmd', async (e, c) => {
       p2p.setTab(String(c.tab || ''));
       break;
     }       // the panel tab this PC is looking at: friends see how many are on each
-    case 'next': case 'prev': case 'play-index':
+    case 'next': case 'prev': case 'play-index': case 'music-seek':
       if (audioWin && !audioWin.isDestroyed()) audioWin.webContents.send('cmd', c);
+      break;
+    case 'music-pos':       // from the audio window: where the song is, for the panel's progress bar
+      broadcast('cmd', { type: 'music-pos', t: +c.t || 0, d: +c.d || 0, path: String(c.path || '') }, false);
       break;
     default: break;
   }
@@ -1396,6 +1435,8 @@ else {
   app.whenReady().then(() => {
     settingsFile = path.join(app.getPath('userData'), 'settings.json');
     loadSettings();
+    { const c = cur(); if (c) startClock(c.path); }       // the video that was up carries on where it was
+    setInterval(() => noteProgress(), 5000);
     if (!state.video.foldersInit) {
       for (const n of ['videos', 'music', 'downloads']) { try { const p = app.getPath(n); if (fs.existsSync(p) && !state.video.folders.includes(p)) state.video.folders.push(p); } catch { /* ignore */ } }
       state.video.foldersInit = true;
@@ -1407,7 +1448,12 @@ else {
       const from = req.frame ? webContents.fromFrame(req.frame) : null;
       if (from && visWins.some((v) => !v.win.isDestroyed() && v.win.webContents === from)) {
         const f = p2p.role() === 'host' ? web.frame(from) : null;
-        cb(f ? { video: f, audio: f } : {});
+        const out = !f && p2p.role() === 'host' ? web.source(from) : null;
+        if (out) {       // the page is open in the PC's own browser: its window, and the PC's sound (a window's own sound can't be picked out)
+          desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 0, height: 0 } }).then((src) => { const w = src.find((x) => x.id === out); cb(w ? { video: w, audio: 'loopback' } : {}); }).catch(() => cb({}));
+          return;
+        }
+        cb(f ? { video: f, audio: f, enableLocalEcho: true } : {});       // without local echo, capturing the page's sound silences it on this PC
         return;
       }
       desktopCapturer.getSources({ types: ['screen'] }).then((src) => cb({ video: src[0], audio: 'loopback' })).catch(() => cb({}));
@@ -1445,7 +1491,7 @@ else {
       return;
     }
     if (updater) updater.install(false);       // a downloaded update goes in once Drift has closed
-    spotifyWatch(false); spotifyVolWatch(false); xcoder.stopAll(); for (const k of audioKids) { try { k.kill(); } catch { /* gone */ } } try { fs.writeFileSync(settingsFile, JSON.stringify(state, null, 1)); } catch { /* ignore */ } });
+    spotifyWatch(false); spotifyVolWatch(false); xcoder.stopAll(); for (const k of audioKids) { try { k.kill(); } catch { /* gone */ } } noteProgress(); try { fs.writeFileSync(settingsFile, JSON.stringify(state, null, 1)); } catch { /* ignore */ } });
 }
 
 // ---- dev-only screenshot harness -------------------------------------------------
