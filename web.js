@@ -32,6 +32,45 @@ const HOLD = `(() => {
 })()`;
 const site = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } };
 
+// ---- what the browser says it is, in the Sec-CH-UA headers (see sess()) ----
+// navigator.userAgentData, read from a Drift window (its values are the same in every page): when the window loads, and again
+// whenever a Surf page attaches to it (the window is surely loaded then, and the page hasn't loaded anything yet). Until it is known, the basic
+// headers say what Chromium itself would ("Not:A-Brand" is Chromium's made-up brand, and can change between versions: hence
+// reading it), and the detailed ones aren't sent.
+const ID_FIELDS = ['brands', 'mobile', 'platform', 'fullVersionList', 'uaFullVersion', 'platformVersion', 'architecture', 'bitness', 'wow64', 'model', 'formFactors'];
+let ident = { brands: [{ brand: 'Not:A-Brand', version: '8' }, { brand: 'Chromium', version: (process.versions.chrome || '').split('.')[0] }],
+  mobile: false, platform: { win32: 'Windows', darwin: 'macOS' }[process.platform] || 'Linux', known: false };
+const sfStr = (s) => `"${String(s == null ? '' : s).replace(/[\\"]/g, '\\$&')}"`;       // a structured-header string, as Chrome writes it
+const sfList = (bs) => (Array.isArray(bs) ? bs : []).map((b) => `${sfStr(b.brand)};v=${sfStr(b.version)}`).join(', ');
+const sfBool = (b) => (b ? '?1' : '?0');
+// the detailed hints a site can ask for with Accept-CH: header → [navigator.userAgentData field, how it is written]
+const HIGH = {
+  'sec-ch-ua-full-version-list': ['fullVersionList', sfList],
+  'sec-ch-ua-full-version': ['uaFullVersion', sfStr],
+  'sec-ch-ua-platform-version': ['platformVersion', sfStr],
+  'sec-ch-ua-arch': ['architecture', sfStr],
+  'sec-ch-ua-bitness': ['bitness', sfStr],
+  'sec-ch-ua-wow64': ['wow64', sfBool],
+  'sec-ch-ua-model': ['model', sfStr],
+  'sec-ch-ua-form-factors': ['formFactors', (f) => [].concat(f).map(sfStr).join(', ')],
+};
+// The headers for one request: the three every Chrome sends, and those of `want` (header names a site asked for) once known
+function hints(want) {
+  const h = { 'sec-ch-ua': sfList(ident.brands), 'sec-ch-ua-mobile': sfBool(ident.mobile), 'sec-ch-ua-platform': sfStr(ident.platform) };
+  if (ident.known && want) for (const k of want) { const [field, write] = HIGH[k] || []; if (field && ident[field] !== undefined) h[k] = write(ident[field]); }
+  return h;
+}
+function learnIdent(wc) {
+  if (ident.known || !wc || wc.isDestroyed()) return;
+  const read = () => {
+    if (ident.known || wc.isDestroyed()) return;
+    wc.executeJavaScript(`navigator.userAgentData ? navigator.userAgentData.getHighEntropyValues(${JSON.stringify(ID_FIELDS)}) : null`)
+      .then((v) => { if (v && Array.isArray(v.brands) && v.brands.length && !ident.known) ident = { ...v, known: true }; })
+      .catch(() => {});
+  };
+  if (wc.isLoading()) wc.once('did-finish-load', read); else read();
+}
+
 // hooks (all supplied by the main process):
 //   changed()      the browser changed: tell the windows and any friends
 //   screen(key)    the monitor the browser is shown on: `key` if Drift has a window there, otherwise the main one
@@ -53,6 +92,7 @@ module.exports = function createWeb(hooks) {
   let out = null;            // { name, id, title, stop }: the page is open in the PC's own browser, whose window (`id`, a capture source) friends see instead
   const outside = createOutside();
   let ses = null, made = 0;
+  const asked = new Map();   // origin → the detailed Sec-CH-UA headers it asked for with Accept-CH (see sess())
   const fresh = new Map();   // pages the window has made that it hasn't yet said which tab they are for
   const run = crypto.randomBytes(4).toString('hex');
   const cur = () => tabs.find((t) => t.id === active) || null;
@@ -63,20 +103,33 @@ module.exports = function createWeb(hooks) {
   function sess() {
     if (ses) return ses;
     ses = session.fromPartition('persist:web');       // its own cookies and sign-ins, kept between runs, apart from Drift's own windows
-    ses.setUserAgent(ses.getUserAgent().replace(/\s(?:Electron|Drift)\/\S+/gi, ''));     // sites turn away browsers they don't recognise
+    // Sites turn away browsers they don't recognise, so it says what it is, a Chromium, the way Chrome says it: no app names, and
+    // only the major version (Chrome has sent "Chrome/156.0.0.0" for years; the full number is a sign of an embedded browser)
+    ses.setUserAgent(ses.getUserAgent().replace(/\s(?:Electron|Drift)\/\S+/gi, '').replace(/\bChrome\/(\d+)\.[\d.]+/, 'Chrome/$1.0.0.0'));
     ses.setPermissionRequestHandler((_wc, perm, cb) => cb(perm === 'fullscreen'));       // no camera, microphone, location, notifications…
     ses.setPermissionCheckHandler((_wc, perm) => perm === 'fullscreen');                 // ...and pages are told so up front (otherwise they read "granted")
-    // With its user agent changed, Chromium stops sending the Sec-CH-UA headers that every Chrome sends, while the page's own
+    // Electron never sends the Sec-CH-UA headers every Chrome sends (it has no client hints at all), while the page's own
     // navigator.userAgentData still answers. Sites' bot checks see the mismatch and ask for captcha after captcha, so the
-    // headers are put back, saying what navigator.userAgentData says.
-    const hints = (() => {
-      const v = (process.versions.chrome || '').split('.')[0];
-      return { 'sec-ch-ua': `"Not:A-Brand";v="8", "Chromium";v="${v}"`, 'sec-ch-ua-mobile': '?0', 'sec-ch-ua-platform': `"${{ win32: 'Windows', darwin: 'macOS' }[process.platform] || 'Linux'}"` };
-    })();
+    // headers are added here, saying exactly what navigator.userAgentData says (see hints()). The detailed ones (full version,
+    // platform version, architecture…) go only to a site that asked for them with Accept-CH, as Chrome does.
     ses.webRequest.onBeforeSendHeaders((d, cb) => {
       const h = d.requestHeaders;
-      if (/^https:|^http:\/\/(localhost|127\.0\.0\.1)[:/]/i.test(d.url) && !Object.keys(h).some((k) => /^sec-ch-ua$/i.test(k))) Object.assign(h, hints);
+      if (/^https:|^http:\/\/(localhost|127\.0\.0\.1)[:/]/i.test(d.url)) {
+        let o = ''; try { o = new URL(d.url).origin; } catch { /* keeps the basic ones */ }
+        const has = new Set(Object.keys(h).map((k) => k.toLowerCase()));       // (a page's own fetch() already carries the basic ones)
+        for (const [k, v] of Object.entries(hints(asked.get(o)))) if (!has.has(k)) h[k] = v;
+      }
       cb({ requestHeaders: h });
+    });
+    // (onHeadersReceived belongs to the advert blocker: Electron allows one listener per event, but this one is free)
+    ses.webRequest.onResponseStarted({ urls: ['https://*/*', 'http://localhost/*', 'http://127.0.0.1/*'] }, (d) => {
+      if (d.resourceType !== 'mainFrame') return;       // as in Chrome: a page itself asks, for its own origin
+      const v = Object.entries(d.responseHeaders || {}).find(([k]) => k.toLowerCase() === 'accept-ch');
+      if (!v) return;
+      let o; try { o = new URL(d.url).origin; } catch { return; }
+      const want = new Set([].concat(v[1]).join(',').split(',').map((s) => s.trim().toLowerCase()).filter((s) => HIGH[s]));
+      asked.delete(o);
+      if (want.size) { asked.set(o, want); if (asked.size > 500) asked.delete(asked.keys().next().value); }
     });
     // In every page and frame: password boxes can't be turned into plain text, so nobody watching can read a password (see surf-guard.js)
     ses.registerPreloadScript({ type: 'frame', id: 'drift-password-guard', filePath: path.join(__dirname, 'surf-guard.js') });
@@ -110,6 +163,7 @@ module.exports = function createWeb(hooks) {
   }
   // Every Drift window may hold the browser. What a page is allowed is decided here, not by the window.
   function host(hostWc) {
+    learnIdent(hostWc);
     hostWc.on('will-attach-webview', (e, prefs, params) => {
       if (!on || params.partition !== 'persist:web') { e.preventDefault(); return; }
       delete prefs.preloadURL; delete prefs.preload;
@@ -118,6 +172,7 @@ module.exports = function createWeb(hooks) {
       params.src = 'about:blank';
     });
     hostWc.on('did-attach-webview', (_e, page) => {
+      learnIdent(hostWc);
       const id = page.id;
       fresh.set(id, { page, hostWc }); page.once('destroyed', () => fresh.delete(id));
       page.setWindowOpenHandler(() => ({ action: 'deny' }));
