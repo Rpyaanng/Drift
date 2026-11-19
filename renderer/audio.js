@@ -175,8 +175,10 @@
   setInterval(sendPos, 500);
   ['loadedmetadata', 'seeked', 'emptied'].forEach((ev) => player.addEventListener(ev, sendPos));
 
-  // ---------- Spotify: while it has the toolbar (main's spotify.lead), listen to what the PC is playing so the visuals can react
-  // (analysis only, never recorded or replayed) ----------
+  // ---------- Spotify, or a video with its sound on: listen to what the PC is playing so the visuals can react
+  // (analysis only, never recorded or replayed). A video's soundtrack plays in the window showing it, not through this window's
+  // own sound graph, so the PC's sound is the only place the visuals can hear it. ----------
+  const hearPC = () => !!(S.spotify || {}).lead || (S.video.sound && !!S.videoLeader && !S.video.paused);
   let pcStream = null, pcAnalyser = null, pcBusy = false, pcFailed = false;
   async function listenToPC(on) {
     if (!on) { pcFailed = false; if (pcStream) { pcStream.getTracks().forEach((t) => t.stop()); pcStream = null; pcAnalyser = null; } return; }
@@ -186,7 +188,7 @@
       const st = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
       st.getVideoTracks().forEach((t) => t.stop());
       if (!st.getAudioTracks().length) throw new Error('no system audio');
-      if (!(S.spotify || {}).lead) { st.getTracks().forEach((t) => t.stop()); }
+      if (!hearPC()) { st.getTracks().forEach((t) => t.stop()); }
       else { pcStream = st; pcAnalyser = ctx.createAnalyser(); pcAnalyser.fftSize = 2048; pcAnalyser.smoothingTimeConstant = 0.75; ctx.createMediaStreamSource(st).connect(pcAnalyser); }
     } catch (e) { pcFailed = true; console.log('system audio not available: ' + e.message); }
     pcBusy = false;
@@ -277,7 +279,7 @@
     else if (curPath) { const i = m.playlist.indexOf(curPath); if (i !== cur) { cur = i; api.now({ title: title(curPath), index: i }); } }
     if (wantFiles) { if (!curPath) playIndex(0); else if (player.paused && player.src) player.play().catch(() => {}); }
     else if (!player.paused) player.pause();
-    listenToPC(!!(S.spotify || {}).lead);
+    listenToPC(hearPC());
     tickMusic();
   }
   api.on('state', (ns) => { S = ns; apply(); });

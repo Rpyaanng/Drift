@@ -6,7 +6,7 @@ body.idle { cursor: none; }
 #stage { position: fixed; inset: 0; overflow: hidden; background: #000; transition: opacity .7s ease; }
 canvas#c { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 video#v { position: absolute; display: none; }
-canvas#vbg { position: absolute; display: none; filter: blur(48px) brightness(.45) saturate(1.2); transform: scale(1.12); }
+canvas#vbg { position: absolute; display: none; transform: scale(1.12); }       /* blurred and dimmed as it is drawn: see app.js */
 .tile.video { background: linear-gradient(135deg, #1b2030, #0c0f16); }
 .tile.video::before { content: "▶"; position: absolute; inset: 0 0 14px; display: grid; place-items: center; font-size: 20px; color: rgba(255,255,255,.75); }
 #videoName { color: var(--dim); font-size: 12px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

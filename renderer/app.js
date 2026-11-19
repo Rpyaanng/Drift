@@ -182,11 +182,15 @@
   addEventListener('resize', resize);
 
   const sceneTime = () => init.freeze ? 47 : S.frozen ? S.time.base : S.time.base + ((Date.now() - S.time.ref) / 1000) * S.speed;
-  let lastDraw = 0;
+  // Frames are drawn on a fixed beat of 1000/fps ms. (Waiting "at least that long since the last one" overshoots on a fast monitor:
+  // 60 fps on a 144 Hz screen came out at 72, a fifth more GPU work for nothing.) sceneFps: lowered for a while if a video on another
+  // screen is being kept waiting (see video-strain).
+  let nextDraw = 0;
   function frame(now) {
     requestAnimationFrame(frame);
-    if (now - lastDraw < 1000 / S.fps - 3) return;
-    lastDraw = now;
+    const iv = 1000 / Math.min(S.fps, S.sceneFps || S.fps);
+    if (now < nextDraw - 2) return;
+    nextDraw = now - nextDraw > iv ? now + iv : nextDraw + iv;
     for (let i = 0; i < 3; i++) audio[i] += (audioTarget[i] * S.reactivity * 1.6 - audio[i]) * 0.12;
     for (let i = 0; i < 128; i++) specNow[i] += (specTarget[i] - specNow[i]) * (i < 64 ? 0.35 : 0.5);
     aTime += (aTimeTarget - aTime) * 0.15;
@@ -211,13 +215,20 @@
   // Every monitor plays the same file and chases one shared timeline, so Span shows one picture across all screens.
   const stage = $('#stage'), video = $('#v');
   const vbg = $('#vbg'); let bgOn = false, bgAspect = 16 / 9;
-  // soft blurred copy of the picture behind it, so bars beside a vertical video aren't plain black
+  // soft blurred copy of the picture behind it, so bars beside a vertical video aren't plain black.
+  // It is blurred and dimmed here, at its small size, rather than with a CSS filter on a screen-sized layer (a 48px blur over the whole
+  // monitor, done again by the GPU every time the picture changed). And it is kept big enough (192 wide) for Chromium to draw it on
+  // the GPU: a canvas under 128×129 is drawn by the processor, so each copy pulled the video's whole frame back from the graphics card.
   setInterval(() => {
     if (!bgOn || video.readyState < 2) return;
-    const w = 96, h = Math.max(8, Math.round(96 / bgAspect));
+    const w = 192, h = Math.max(16, Math.round(192 / bgAspect));
     if (vbg.width !== w || vbg.height !== h) { vbg.width = w; vbg.height = h; }
     const vw = video.videoWidth, vh = video.videoHeight, k = Math.max(w / vw, h / vh);
-    try { vbg.getContext('2d').drawImage(video, (w - vw * k) / 2, (h - vh * k) / 2, vw * k, vh * k); } catch { /* frame not ready */ }
+    try {
+      const g = vbg.getContext('2d', { alpha: false });
+      g.filter = 'blur(2.5px) brightness(.45) saturate(1.2)';
+      g.drawImage(video, (w - vw * k) / 2, (h - vh * k) / 2, vw * k, vh * k);
+    } catch { /* frame not ready */ }
   }, 120);
   let seekHold = 0, curUrl = '', lastSeq, seeking = false, lastJump = 0;
   // the song from the library: the audio window says where it is (music-pos); the bar shows it when no video is up
@@ -267,7 +278,6 @@
     video.loop = !xOn && S.video.files.length === 1 && S.video.autoplay !== false;
     const converted = !xOn && S.videoAudio && S.videoAudio.mode === 'transcode' && !!S.audioBase;      // a converted stream carries its own sound
     video.muted = !(lead && S.video.sound) || converted;
-    syncSound(lead && S.video.sound && converted);
     video.volume = S.video.volume;
     // Fit: Auto keeps the whole picture when its shape doesn't match the screen (vertical phone video), and fills when it nearly does.
     const spanIt = S.mode === 'span';
@@ -309,6 +319,7 @@
     lastTarget = target; lastTSeq = S.vclock.seq; lastTUrl = curUrl;
     if (!playing || hold) { if (!video.paused) video.pause(); } else if (video.paused && !video.ended) video.play().catch(() => {});
     video.playbackRate = rate;
+    syncSound(lead && S.video.sound && converted);       // after any jump above, so the sound starts from where the picture is going
     clearTimeout(holdTimer);
     if (hold && !early && drift < 0.3) holdTimer = setTimeout(syncVideo, Math.max(10, drift * 1000));      // start again exactly when the clock arrives
   }
@@ -331,9 +342,13 @@
   // Sound track the built-in player can't decode: play the converted stream from the main process alongside the picture.
   const vaud = $('#va');
   let vaOffset = 0, vaUrl = '', vaHold = 0, vaSeq;
+  video.addEventListener('seeked', () => { vaHold = 0; syncVideo(); });       // the picture jumped: the sound may follow straight away
   function syncSound(want) {
     if (!want) { if (vaUrl) { vaUrl = ''; vaud.pause(); vaud.removeAttribute('src'); vaud.load(); } return; }
     vaud.volume = S.video.volume;
+    // Not until the picture is where it is going. On start the video is still at 0 until its length is known and it jumps to where
+    // it was left: a stream asked for then began at the start of the video, and stayed wrong for the 4 s before it could be asked again.
+    if (video.readyState < 1 || video.seeking) { if (!vaud.paused) vaud.pause(); return; }
     const now = performance.now(), vt = video.currentTime;
     const err = vt - (vaOffset + vaud.currentTime);
     const fresh = vaUrl.split('&t=')[0] !== S.audioBase || vaSeq !== S.vclock.seq;
@@ -394,6 +409,30 @@
     cueKey = key; subText.innerHTML = html.replace(/\n/g, '<br>');
     subsEl.classList.toggle('on', !!html); subsEl.classList.toggle('top', top);
   }
+  // Is the video being kept waiting for its frames? Chromium's one GPU process draws for every window in turn, so heavy scenes on the
+  // other monitors can hold the video's frames back: it shows as frames skipped (the picture jumps further than one frame) or late.
+  // The window playing the video counts that, and main slows the other screens' scenes a step at a time until it stops (sceneFps).
+  let vfPrev = null, vfDur = 1, vfLate = 0, vfCleanAt = performance.now();
+  const vfReset = () => { vfPrev = null; };
+  for (const ev of ['pause', 'play', 'seeking', 'seeked', 'emptied', 'ratechange']) video.addEventListener(ev, vfReset);
+  function onVideoFrame(now, md) {
+    if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(onVideoFrame);
+    if (!vfPrev) { vfPrev = { t: now, m: md.mediaTime }; return; }
+    const media = md.mediaTime - vfPrev.m, wall = (now - vfPrev.t) / 1000;
+    vfPrev = { t: now, m: md.mediaTime };
+    if (!(media > 0) || media > 0.5 || wall > 1) return;         // a jump, a loop or a stall that isn't the GPU's doing
+    vfDur = Math.min(vfDur * 1.01, media);                       // about one frame of this video (follows a change of video slowly)
+    if (media > vfDur * 1.6 || wall * (video.playbackRate || 1) > media * 1.8 + 0.02) vfLate++;
+  }
+  if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(onVideoFrame);
+  setInterval(() => {
+    const late = vfLate, now = performance.now(); vfLate = 0;
+    const mine = shown === 'video' && S.videoLeader === me.key && !video.paused && !document.hidden;
+    if (!mine) { vfCleanAt = now; return; }
+    if (late >= 3) { vfCleanAt = now; api.cmd({ type: 'video-strain', more: true }); }
+    else if (late) vfCleanAt = now;
+    else if (S.sceneFps < S.fps && now - vfCleanAt > 10000) { vfCleanAt = now; api.cmd({ type: 'video-strain', more: false }); }       // smooth for a while: try more
+  }, 2000);
   setInterval(drawSubs, 50);
   setInterval(checkSilent, 1000);
   setInterval(syncVideo, 250);

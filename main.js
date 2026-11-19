@@ -119,7 +119,9 @@ function loadSettings() {
       state.music.ambientOff = state.music.source === 'off' || state.music.source === 'spotify';
     }
     if (!['generative', 'files', 'off'].includes(state.music.source)) state.music.source = 'off';
-    state.settingsVersion = 6; state.video.paused = false;
+    state.settingsVersion = 6;
+    // Drift opens where it was left, but quietly: a video or a song from the library comes back paused, ready to carry on with play.
+    state.video.paused = state.video.files.length > 0;
     const known = (id) => id === 'video' || SCENES.includes(id);
     if (!known(state.scene)) state.scene = 'aurora';
     for (const k of Object.keys(state.perDisplay || {})) if (!known(state.perDisplay[k])) delete state.perDisplay[k];
@@ -128,6 +130,8 @@ function loadSettings() {
     state.video.folders = (state.video.folders || []).filter((p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } });
     state.music.playlist = (state.music.playlist || []).filter((p) => { try { return fs.existsSync(p); } catch { return false; } });
     if (state.music.source === 'files' && !state.music.playlist.length) state.music.source = state.music.ambientOff ? 'off' : 'generative';
+    if (state.music.source === 'files') state.music.playing = false;
+    if (!state.surf || typeof state.surf !== 'object' || !Array.isArray(state.surf.urls)) state.surf = null;
   } catch { /* first run */ }
 }
 const QUALITY = { original: { h: 0, kbps: 0 }, 1080: { h: 1080, kbps: 6000 }, 720: { h: 720, kbps: 3000 }, 480: { h: 480, kbps: 1200 } };
@@ -139,11 +143,14 @@ function dropVideoScene() {
   if (state.scene === 'video') state.scene = 'aurora';
   for (const k of Object.keys(state.perDisplay)) if (state.perDisplay[k] === 'video') delete state.perDisplay[k];
 }
+// The browser's tabs are kept with the settings too (only while it is open), so it comes back next time.
+function saveNow() {
+  if (!remote) state.surf = web.saved();
+  try { fs.writeFileSync(settingsFile, JSON.stringify(state, null, 1)); } catch { /* ignore */ }
+}
 function saveSoon() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    try { fs.writeFileSync(settingsFile, JSON.stringify(state, null, 1)); } catch { /* ignore */ }
-  }, 400);
+  saveTimer = setTimeout(saveNow, 400);
 }
 
 function allDisplays() {
@@ -659,13 +666,22 @@ function spotifyLead() {
   if (state.music.source === 'files' && state.music.playing && state.music.playlist.length) return false;
   return !(cur() && !state.video.paused && visWins.some((v) => showsVideo(v.key)));
 }
+// Every Drift window draws through Chromium's one GPU process, which works through their drawing in turn, so two monitors of
+// heavy scenes can keep a video on a third waiting for its frames. The window playing the video says when frames come late
+// (video-strain in app.js), and the other screens' scenes then draw fewer frames a second (never fewer pixels) until it is smooth again.
+const STRAIN = [1, 0.8, 0.66, 0.5];
+let strain = 0, strainAt = 0;
+function sceneFps() {
+  const busy = strain && cur() && !vpaused() && visWins.some((v) => showsVideo(v.key)) && visWins.some((v) => !showsVideo(v.key));
+  return busy ? Math.max(24, Math.round(state.fps * STRAIN[strain])) : state.fps;
+}
 function publicState() {
   const c = cur(), lead = visWins.find((v) => showsVideo(v.key));
   // while watching with a friend, the list, position and pause state are theirs
   const video = remote ? { ...state.video, files: remote.files.map((f) => f.name), index: remote.index, paused: !!remote.paused } : state.video;
   return { ...state, video, subs: { ...state.subs, perFile: undefined }, subsInfo: subInfo, time: clock, nowPlaying, vclock,
     videoUrl: c ? (c.path ? pathToFileURL(c.path).href : c.src) : '', videoName: c ? c.name : '', videoPath: c ? c.path : '', videoLeader: lead && c ? lead.key : '',
-    spotify: { ...spotify, lead: spotifyLead() }, videoAudio, videoInfo, audioBase: audioPort && c ? local(`/a?i=${c.index}`) : '',
+    sceneFps: sceneFps(), spotify: { ...spotify, lead: spotifyLead() }, videoAudio, videoInfo, audioBase: audioPort && c ? local(`/a?i=${c.index}`) : '',
     xc: { ...xc, ...xcWant(), base: xcBase() }, encoders: xcoder.list(), canTonemap: !xcoder.ready() || xcoder.canTonemap(),
     p2p: { ...p2p.info(), ctrl: !remote || !!remote.ctrl, own: !!(c && c.remote && c.path), viaHost: viaHost(), quality: shareQuality(), waitingFor: heldFor || [], defaultName: shareName(true), file: remote ? remote.file || '' : '', music: remote ? remote.music : null },       // music: a friend's, playing here in place of ours
     // a friend's page arrives as a stream; our own is a page in one of our windows
@@ -901,10 +917,18 @@ function initFor(wc) {
     union: unionOf(act),
     displays: allDisplays().map((d) => ({ index: d.index, key: d.key, width: d.bounds.width, height: d.bounds.height, primary: d.primary })),
     state: publicState(),
-    tab: v ? tabOf[v.key] || '' : '', reopen: !!v && v.key === refocusKey,
+    tab: v ? tabOf[v.key] || startTab(v.key) : '', reopen: !!v && v.key === refocusKey,
     langs: subsLib.LANGS.map(([code, name]) => [code, name]),
     testMode: !!SHOT_DIR, freeze: !!process.env.DRIFT_FREEZE, fakeHdr: process.env.DRIFT_FAKE_HDR || '',     // dev: pretend this screen is ('1') or isn't ('0') showing HDR
   };
+}
+
+// The tab a screen opens on when Drift starts: whatever was left up there. Surf if the browser came back on it (app.js sees to
+// that), Media for a video on this screen or a song from the library, otherwise Scenes.
+function startTab(key) {
+  if (cur() && showsVideo(key)) return 'media';
+  if (state.music.source === 'files' && state.music.playlist.length) return 'media';
+  return 'scenes';
 }
 
 // Turning a monitor on or off rebuilds every window. Each screen comes back on the panel tab it was on (Surf if the browser is
@@ -1277,7 +1301,6 @@ ipcMain.on('cmd', async (e, c) => {
         else if (!remote.ctrl) say(`Only ${p2p.info().host || 'the host'} can control the page`);
         else p2p.send({ t: 'cmd', a: 'surf', m: { do: d, text: String(c.text || '').slice(0, 2000), id: +c.id || 0 } });
       } else { const r = web.act(c, k); if (r.error) say(r.error); }
-      if (!remote && !was && web.info().open && !state.video.paused && visWins.some((v) => showsVideo(v.key))) patch({ video: { paused: true } });       // not two soundtracks at once
       break;
     }
     case 'rtc': if (c.d && typeof c.d === 'object') { if (c.to) p2p.sendTo(String(c.to), { t: 'rtc', d: c.d }); else if (remote) p2p.send({ t: 'rtc', d: c.d }); } break;       // setting up a web page's stream
@@ -1413,6 +1436,13 @@ ipcMain.on('cmd', async (e, c) => {
       applySideEffects(null); pushState(); saveSoon(); rebuildSoon();
       break;
     }
+    case 'video-strain': {       // the video's window: frames are coming late (more), or have been on time for a while
+      if (Date.now() - strainAt < 1800) break;
+      const was = strain;
+      strain = Math.max(0, Math.min(STRAIN.length - 1, strain + (c.more ? 1 : -1)));
+      if (strain !== was) { strainAt = Date.now(); pushState(); }
+      break;
+    }
     case 'tab-focus': {       // the panel tab a window is on: kept for a rebuild, and friends see how many are on each
       const v = visWins.find((x) => x.win.webContents === e.sender);
       if (v) tabOf[v.key] = String(c.tab || '').slice(0, 20);
@@ -1463,6 +1493,7 @@ else {
     clock = { base: 0, ref: Date.now() };
     createAudioWindow();
     buildWindows();
+    if (state.surf && !SHOT_DIR) web.restore(state.surf);       // the browser that was open last time, its pages held paused
     applySideEffects(null);
     spotifyWatch(true);       // Drift follows Spotify by itself: see spotifyLead()
     const onDisplays = () => { if (displaySig() !== lastSig) rebuildSoon(); };   // ignore work-area-only changes
@@ -1491,7 +1522,7 @@ else {
       return;
     }
     if (updater) updater.install(false);       // a downloaded update goes in once Drift has closed
-    spotifyWatch(false); spotifyVolWatch(false); xcoder.stopAll(); for (const k of audioKids) { try { k.kill(); } catch { /* gone */ } } noteProgress(); try { fs.writeFileSync(settingsFile, JSON.stringify(state, null, 1)); } catch { /* ignore */ } });
+    spotifyWatch(false); spotifyVolWatch(false); xcoder.stopAll(); for (const k of audioKids) { try { k.kill(); } catch { /* gone */ } } noteProgress(); saveNow(); });
 }
 
 // ---- dev-only screenshot harness -------------------------------------------------

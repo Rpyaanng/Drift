@@ -21,6 +21,15 @@ const KEYS = { ' ': 'Space', ArrowLeft: 'Left', ArrowRight: 'Right', ArrowUp: 'U
 // A new tab opens on Drift's own start page (renderer/surf-home.html), served inside the browser's session as drift://home/.
 const HOME = 'drift://home/', MAX_TABS = 12;
 const HOME_FILE = path.join(__dirname, 'renderer', 'surf-home.html');
+// Run in a page brought back from last time: pauses anything already playing, and anything that starts by itself before someone
+// clicks or presses a key in the page (YouTube starts its video a moment after the page is in).
+const HOLD = `(() => {
+  let user = false; const until = Date.now() + 20000;
+  const mark = (e) => { if (e.isTrusted) user = true; };
+  addEventListener('pointerdown', mark, true); addEventListener('keydown', mark, true);
+  document.addEventListener('play', (e) => { if (!user && Date.now() < until && e.target && e.target.pause) e.target.pause(); }, true);
+  for (const m of document.querySelectorAll('video, audio')) m.pause();
+})()`;
 const site = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } };
 
 // hooks (all supplied by the main process):
@@ -153,6 +162,8 @@ module.exports = function createWeb(hooks) {
       if (t.id === active) restream();
       hooks.changed();
     });
+    // a tab brought back from last time: its page mustn't start playing by itself (it was paused when Drift closed, as far as anyone knows)
+    page.on('dom-ready', () => { if (mine() && t.hold && isWeb(page.getURL())) { t.hold = false; page.executeJavaScript(HOLD).catch(() => {}); } });
     if (t.id === active) restream();
     go(t); hooks.changed();
   }
@@ -261,6 +272,15 @@ module.exports = function createWeb(hooks) {
     tabs.splice(tabs.indexOf(cur()) + 1 || tabs.length, 0, t);       // next to the one it came from
     if (!behind || !cur()) { active = t.id; sid = ''; }
     hooks.changed();
+  }
+  // ---- kept between runs: the open tabs, the one in front and the monitor ----
+  const saved = () => (on && tabs.length ? { urls: tabs.map((t) => t.url || t.pending || HOME).filter(isPage), active: Math.max(0, tabs.indexOf(cur())), key } : null);
+  function restore(s) {
+    const urls = (Array.isArray(s.urls) ? s.urls : []).map(String).filter(isPage).slice(0, MAX_TABS);
+    if (!urls.length || tabs.length) return;
+    for (const u of urls) tabs.push({ id: nextId++, wc: null, url: '', title: '', pending: u, full: false, ready: false, seq: 0, hold: isWeb(u) });
+    active = (tabs[Math.min(Math.max(0, s.active | 0), tabs.length - 1)]).id;
+    show(String(s.key || ''));
   }
   function select(id) { if (id === active || !tabs.some((t) => t.id === id)) return; active = id; restream(); hooks.changed(); }
   function closeTab(id) {
@@ -379,5 +399,5 @@ module.exports = function createWeb(hooks) {
 
   const info = () => ({ open: on, has: tabs.length > 0, key: on ? hooks.screen(key) : '', gen, ext: outside.name(), ...view() });
   outside.detect().then((b) => { if (b) hooks.changed(); });       // the Surf bar's button names it
-  return { host, attached, act, show, hide, close, nav, shared, frame, source, input, info, blockChanged, forget, outside: goOutside };
+  return { host, attached, act, show, hide, close, nav, shared, frame, source, input, info, blockChanged, forget, outside: goOutside, saved, restore };
 };

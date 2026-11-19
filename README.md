@@ -138,6 +138,10 @@ key away: scenes, colour, speed, brightness, music, video and volume.
   when it can. An HDR monitor next to an SDR one each get the right picture.
 - **Monitors join in step**: switch another screen to the video that's playing and it picks up right
   where the others are.
+- **Back where you left it**: Drift opens with the video or song you had on, paused at the same spot and
+  ready to carry on when you press play.
+- **Smooth next to busy scenes**: if heavy scenes on your other monitors start holding a video back,
+  those scenes ease off their frame rate (never their sharpness) until the video plays smoothly again.
 
 ## Watch together
 
@@ -155,7 +159,8 @@ friend who already has the file plays their own copy, and everyone picks their o
 The **Surf** tab puts a web browser on any screen, opening on Drift's own start page: a clock, a search
 box and a few places to drift to. Share it from **Together** and your friends see and hear the page with
 you. If you let them, they can click, scroll and type in it from their own PC too. Everyone's mouse shows
-over the page as a coloured arrow with their name, so you can point things out to each other.
+over the page as a coloured arrow with their name, so you can point things out to each other. Close Drift
+with the browser open and your tabs come back next time, without anything starting to play by itself.
 
 <p align="center">
   <img src="docs/images/surf-together.jpg" width="820" alt="A Wikipedia article shared in Surf, seen on a friend's screen, with two named pointers in their own colours, Tess and Mia, over the page">
@@ -258,6 +263,9 @@ front too: its picture and sound are streamed to them from your PC.
 - **Leaving Surf.** Choosing Scenes or Media on the browser's screen puts the browser away so you can
   see them. Your tabs are kept and their pages load again when you come back to Surf. Together and
   Settings leave the browser where it is. Closing the last tab closes the browser.
+- **Next time.** If the browser is open when Drift closes, its tabs, the tab in front and its monitor come
+  back when Drift starts again. Video and music in those pages stay paused until you click or press a key
+  in the page.
 - The browser is on one monitor; the others carry on with their scenes. Choosing Surf on another monitor
   moves it there (the pages load again).
 - With *Friends can play, pause and skip, and use a web page* ticked (in Together), friends can click,
