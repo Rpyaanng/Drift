@@ -5,7 +5,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execSync, spawnSync } = require('child_process');
 const { packager } = require('@electron/packager');
 
 const root = path.resolve(__dirname, '..');
@@ -25,6 +25,18 @@ function gitInfo() {
   }
 }
 
+// Netflix and some other services only send their video to a browser whose files carry a VMP signature, made by castLabs'
+// free EVS service (one-time setup: `pip install --upgrade castlabs-evs`, then `python -m castlabs_evs.account signup`).
+// It must come after any other signing of the files. Without EVS the build still works, and still plays most protected
+// video; those services just refuse it. stdin is closed so an expired sign-in fails rather than waiting for a password.
+function vmpSign(appDir) {
+  const py = process.env.PYTHON || 'python';
+  const r = spawnSync(py, ['-m', 'castlabs_evs.vmp', 'sign-pkg', appDir], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 180000, encoding: 'utf8' });
+  if (r.status === 0) { console.log('VMP-signed with castLabs EVS'); return; }
+  const why = /No module named/.test(r.stderr || '') || r.error ? 'castLabs EVS isn\'t installed' : (r.stderr || r.stdout || '').trim().split('\n').pop();
+  console.warn(`warning: not VMP-signed (${why}); Netflix and the like won't play in this build. See vmpSign() in scripts/dev-build.js.`);
+}
+
 (async () => {
   const started = Date.now();
   const extraResource = fs.existsSync(ffmpegExe) ? [ffmpegExe] : [];
@@ -42,6 +54,8 @@ function gitInfo() {
     prune: true,
     asar: false,
     icon: path.join(root, 'icon.ico'),
+    // castLabs' Electron (with Widevine, for copy-protected video in Surf): its builds come from castLabs, not from Electron's own releases
+    download: { mirrorOptions: { mirror: 'https://github.com/castlabs/electron-releases/releases/download/' } },
     appVersion: pkg.version,
     extraResource,
     ignore: [
@@ -59,6 +73,7 @@ function gitInfo() {
     path.join(appDir, 'BUILD-INFO.txt'),
     `Drift dev build\nbuilt: ${new Date().toISOString()}\ncommit: ${gitInfo()}\n`
   );
+  vmpSign(appDir);
   console.log(`dev build ready in ${((Date.now() - started) / 1000).toFixed(1)}s: ${appDir}`);
 })().catch((err) => {
   console.error('dev build failed:', err.message || err);

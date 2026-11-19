@@ -103,6 +103,7 @@ module.exports = function createWeb(hooks) {
   function sess() {
     if (ses) return ses;
     ses = session.fromPartition('persist:web');       // its own cookies and sign-ins, kept between runs, apart from Drift's own windows
+    widevine();       // fetched in the background if this is the first time
     // Sites turn away browsers they don't recognise, so it says what it is, a Chromium, the way Chrome says it: no app names, and
     // only the major version (Chrome has sent "Chrome/156.0.0.0" for years; the full number is a sign of an embedded browser)
     ses.setUserAgent(ses.getUserAgent().replace(/\s(?:Electron|Drift)\/\S+/gi, '').replace(/\bChrome\/(\d+)\.[\d.]+/, 'Chrome/$1.0.0.0'));
@@ -289,11 +290,23 @@ module.exports = function createWeb(hooks) {
       if (blocking && !engine.isBlockingEnabled(sess())) engine.enableBlockingInSession(sess());
     } catch { blocking = false; hooks.say('Adverts can\'t be blocked right now: the blocking lists couldn\'t be downloaded.'); }
   }
-  // Loads what a tab is waiting to show, once its page is there and blocking is in place.
+  // ---- copy-protected video ----
+  // Drift runs on castLabs' Electron, which can play video protected with Widevine (Netflix, Disney+, Prime Video, Spotify…).
+  // Widevine itself is downloaded by Chromium the first time (a few MB, a second or two) and kept, and updated, after that.
+  // On the stock Electron (`components` missing) protected video just doesn't play, as before.
+  let wv = null;
+  function widevine() {
+    if (!wv) {
+      const { components } = require('electron');
+      wv = components && components.whenReady ? components.whenReady().then(() => true, () => false) : Promise.resolve(false);
+    }
+    return wv;
+  }
+  // Loads what a tab is waiting to show, once its page is there, blocking is in place and Widevine is ready.
   function go(t) {
     if (!live(t) || !t.pending) return;
     const page = t.wc, my = ++t.seq;
-    Promise.race([block(), new Promise((r) => setTimeout(r, 6000))]).then(() => {       // don't wait long for the lists
+    Promise.race([Promise.all([block(), widevine()]), new Promise((r) => setTimeout(r, 6000))]).then(() => {       // don't wait long for either
       if (my !== t.seq || t.wc !== page || page.isDestroyed() || !t.pending) return;
       const u = t.pending; t.pending = '';
       page.loadURL(u).catch(() => {});

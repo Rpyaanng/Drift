@@ -37,6 +37,19 @@ Watch-in-sync is the better long-term design either way: it is how Teleparty-sty
 streaming services' terms (restreaming one account's video to other households generally isn't allowed),
 it uses no upload bandwidth, and every friend gets full quality.
 
+### Spike results (2026-11-18, branch `widevine`, castLabs `v45.2.1+wvcus`)
+- Widevine CDM 4.10.3112.0 downloads in about 2 s on first run. `requestMediaKeySystemAccess('com.widevine.alpha')` succeeds
+  (software decode, L3).
+- Google's Widevine test stream (Shaka "Angel One", cwip-shaka-proxy licence) plays in a Surf tab through `web.js`.
+- **The sharing capture is not black.** `getDisplayMedia` on the tab's frame (the same path as `main.js`) shows the
+  protected picture, as do `capturePage` and runs with hardware acceleration on and off. Friends can be streamed DRM pages as
+  they are today, so watch-in-sync isn't needed for it to work (it may still be wanted for services' terms).
+- The `mediaKeySystem` permission doesn't gate Widevine on Windows: it plays with Surf's fullscreen-only handlers, so
+  those were left alone.
+- castLabs has no 45.3.1 build, so the branch pins 45.2.1. `package.json` gets a `postinstall` because the castLabs package
+  doesn't download its binary by itself. `dev-build` downloads castLabs' zip via a mirror and runs EVS `sign-pkg` when installed.
+- Not yet tested: Netflix itself. It needs a VMP signature from EVS (a castLabs account) plus a Netflix sign-in.
+
 ### Steps
 **Phase 0: spike (1 to 2 days)**
 1. On a branch, swap `"electron": "^45.3.1"` for the matching castLabs tag in `package.json`.

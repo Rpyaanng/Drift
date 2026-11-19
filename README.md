@@ -282,8 +282,10 @@ front too: its picture and sound are streamed to them from your PC.
   both PCs ask a public STUN server (Google's) what their internet address is so they can find each other;
   nothing of the page passes through it. Some networks can't be connected this way: a VPN such as
   Tailscale on both PCs gets round that.
-- Services that copy-protect their video (Netflix, Disney+, Prime Video and the like) don't play: Drift's
-  browser has no Widevine.
+- Copy-protected video (Widevine) plays, and friends see it too. The first time Surf opens, Chromium downloads
+  Widevine from Google (a few MB) and keeps it up to date. Netflix also needs a release that castLabs has
+  signed (see Building). Like other Chromium-based browsers apart from Chrome and Edge, Surf gets these
+  services' lower quality, usually 720p.
 - *Block adverts in Surf* (in Settings, on by default) blocks adverts and trackers in pages, using Ghostery's adblocker library
   with the same filter lists uBlock Origin uses. The lists are downloaded from Ghostery's servers the
   first time and refreshed once a day. Sites fight blockers, so now and then an advert gets through, or a
@@ -325,7 +327,7 @@ every 12 hours after that, and downloads the release from GitHub when there is a
 
 ## Development
 
-Built with Electron and WebGL shaders.
+Built with [castLabs' Electron](https://github.com/castlabs/electron-releases) (Electron with Widevine) and WebGL shaders.
 
 ```sh
 npm install
@@ -348,6 +350,17 @@ git config core.hooksPath .githooks
 
 The app isn't code-signed, so Windows SmartScreen will warn on first launch
 ("More info" → "Run anyway").
+
+**Netflix needs a VMP signature.** Widevine plays without one, but Netflix (and a few others) only send
+video to builds castLabs has signed. Their EVS signing service is free. Set it up once:
+
+```sh
+pip install --upgrade castlabs-evs
+python -m castlabs_evs.account signup
+```
+
+From then on, `dev-build` signs every build, after any other signing as VMP requires. Without EVS it warns
+and builds anyway.
 
 ### ffmpeg (video sound, HDR, other formats and subtitles inside videos)
 

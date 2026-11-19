@@ -9,11 +9,12 @@
   "scripts": {
     "start": "electron .",
     "dev-build": "node scripts/dev-build.js",
-    "prepare": "git config core.hooksPath .githooks || exit 0"
+    "prepare": "git config core.hooksPath .githooks || exit 0",
+    "postinstall": "node node_modules/electron/install.js"
   },
   "devDependencies": {
     "@electron/packager": "^20.3.0",
-    "electron": "^45.3.1"
+    "electron": "github:castlabs/electron-releases#v45.2.1+wvcus"
   },
   "dependencies": {
     "@ghostery/adblocker-electron": "^2.20.3"
