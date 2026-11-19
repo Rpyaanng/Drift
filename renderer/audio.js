@@ -178,7 +178,8 @@
   // ---------- Spotify, or a video with its sound on: listen to what the PC is playing so the visuals can react
   // (analysis only, never recorded or replayed). A video's soundtrack plays in the window showing it, not through this window's
   // own sound graph, so the PC's sound is the only place the visuals can hear it. ----------
-  const hearPC = () => !!(S.spotify || {}).lead || (S.video.sound && !!S.videoLeader && !S.video.paused);
+  // A page in Surf (Spotify's web player, YouTube…) plays in its own tab, so it is the same: only the PC's sound has it.
+  const hearPC = () => !!(S.spotify || {}).lead || (S.video.sound && !!S.videoLeader && !S.video.paused) || !!(S.web || {}).audible;
   let pcStream = null, pcAnalyser = null, pcBusy = false, pcFailed = false;
   async function listenToPC(on) {
     if (!on) { pcFailed = false; if (pcStream) { pcStream.getTracks().forEach((t) => t.stop()); pcStream = null; pcAnalyser = null; } return; }

@@ -21,11 +21,15 @@ canvas#vbg { position: absolute; display: none; transform: scale(1.12); }       
   box-shadow: 0 0 60px rgba(255,255,255,.12); transform: scale(.45); }
 #breath span { position: relative; font: 300 2.2vh/1 "Segoe UI Variable Display", system-ui; letter-spacing: .32em; text-transform: uppercase; color: rgba(255,255,255,.8); padding-left: .32em; }
 /* a web page watched together fills this screen, under the panel; the strip along the bottom edge is still ours, so the mouse can call the panel up */
-webview.web { position: fixed; inset: 0; background: #000; visibility: hidden; }
+webview.web { position: fixed; inset: 0; background: #000; visibility: hidden; box-shadow: 0 0 0 100vmax #000; }       /* (the shadow: black bars round a page shrunk to fit) */
 webview.web.on { visibility: visible; }       /* the tab in front */
 /* a friend's web page, streamed here */
 video#webStream { position: fixed; inset: 0; width: 100%; height: 100%; background: #000; object-fit: contain; outline: none; cursor: none; }       /* this PC's pointer is drawn the way the others see it */
 .ptr.me { transition: none; z-index: 1; }
+/* this PC's own page, mirrored from the monitor it is on. The mouse here is this PC's own, so it shows as usual */
+video#webMirror { position: fixed; inset: 0; width: 100%; height: 100%; background: #000; object-fit: contain; outline: none; }
+/* a page drawn offscreen, drawn here frame by frame (preload.js) */
+canvas#webGpu { position: fixed; inset: 0; width: 100%; height: 100%; background: #000; outline: none; display: block; }
 #webEdge { position: fixed; left: 0; right: 0; bottom: 0; height: 5px; display: none; }
 body.web #webEdge { display: block; }
 /* other people's pointers over the page */
@@ -65,6 +69,7 @@ body.surfing #surfBar { display: flex; }
 #surfBar [hidden] { display: none !important; }
 #surfBar .round.off { opacity: .45; pointer-events: none; }
 #surfBar .round.off svg { opacity: .5; }
+#surfBar .round.lit { color: var(--accent); border-color: var(--accent); }       /* on: mirroring to the other monitors */
 #surfBar .sbSearch { flex: 1 1 auto; min-width: 0; height: 36px; display: flex; align-items: center; gap: 9px; padding: 0 16px 0 14px; margin-left: 2px; cursor: text; }
 #surfBar .sbSearch svg { flex: none; color: var(--dim); }
 #surfBar .sbSearch:focus-within { border-color: var(--accent); }

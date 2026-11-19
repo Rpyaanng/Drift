@@ -50,6 +50,8 @@ const DEFAULTS = {
   breathing: false,
   keepAwake: true,
   onTop: false,
+  surfMirror: false,       // the Surf page shows on every other monitor too (see "mirroring" in renderer/app.js)
+  surfGpu: false,          // Surf's pages are drawn offscreen and handed to the windows as textures on the graphics card (see web.js)
   autoUpdate: true,        // look for a new release now and then, download it and install it when Drift closes
   sleepAt: 0,
   // hdr: auto = convert HDR videos to SDR on screens that aren't showing HDR | always | never; tone = how bright highlights are squeezed in;
@@ -157,8 +159,10 @@ function allDisplays() {
   let list;
   if (FAKE > 1) {
     const b = screen.getPrimaryDisplay().bounds;
-    const w = Math.floor(b.width / FAKE);
-    list = Array.from({ length: FAKE }, (_, i) => ({ id: i, bounds: { x: b.x + i * w, y: b.y, width: w, height: b.height }, primary: i === 0 }));
+    const parts = (process.env.DRIFT_FAKE_WIDTHS || '').split(',').map(Number).filter((n) => n > 0);       // dev: monitors of different widths, e.g. "1,2"
+    const ws = parts.length === FAKE ? parts : Array(FAKE).fill(1), all = ws.reduce((a, n) => a + n, 0);
+    let x = b.x;
+    list = ws.map((n, i) => { const w = Math.floor(b.width * n / all), d = { id: i, bounds: { x, y: b.y, width: w, height: b.height }, primary: i === 0 }; x += w; return d; });
   } else {
     const pid = screen.getPrimaryDisplay().id;
     list = screen.getAllDisplays().map((d) => ({ id: d.id, bounds: d.bounds, primary: d.id === pid, scale: d.scaleFactor || 1 }));
@@ -681,7 +685,7 @@ function publicState() {
   const video = remote ? { ...state.video, files: remote.files.map((f) => f.name), index: remote.index, paused: !!remote.paused } : state.video;
   return { ...state, video, subs: { ...state.subs, perFile: undefined }, subsInfo: subInfo, time: clock, nowPlaying, vclock,
     videoUrl: c ? (c.path ? pathToFileURL(c.path).href : c.src) : '', videoName: c ? c.name : '', videoPath: c ? c.path : '', videoLeader: lead && c ? lead.key : '',
-    sceneFps: sceneFps(), spotify: { ...spotify, lead: spotifyLead() }, videoAudio, videoInfo, audioBase: audioPort && c ? local(`/a?i=${c.index}`) : '',
+    sceneFps: sceneFps(), screens: visWins.length, spotify: { ...spotify, lead: spotifyLead() }, videoAudio, videoInfo, audioBase: audioPort && c ? local(`/a?i=${c.index}`) : '',
     xc: { ...xc, ...xcWant(), base: xcBase() }, encoders: xcoder.list(), canTonemap: !xcoder.ready() || xcoder.canTonemap(),
     p2p: { ...p2p.info(), ctrl: !remote || !!remote.ctrl, own: !!(c && c.remote && c.path), viaHost: viaHost(), quality: shareQuality(), waitingFor: heldFor || [], defaultName: shareName(true), file: remote ? remote.file || '' : '', music: remote ? remote.music : null },       // music: a friend's, playing here in place of ours
     // a friend's page arrives as a stream; our own is a page in one of our windows
@@ -848,6 +852,20 @@ const web = createWeb({
     if (x && !x.win.isDestroyed()) x.win.setAlwaysOnTop(!on && !!state.onTop, 'screen-saver');
   },
   profile: () => path.join(app.getPath('userData'), 'browser-profile'),
+  gpu: () => !!state.surfGpu,
+  win: (key) => { const x = visWins.find((y) => y.key === key); return x && !x.win.isDestroyed() ? x.win : null; },
+  display: (key) => { const x = visWins.find((y) => y.key === key); return x && !x.win.isDestroyed() ? screen.getDisplayMatching(x.win.getBounds()) : null; },
+  // The size in pixels to draw the page at: that of the widest monitor it shows on (its own, and every other one while mirroring).
+  // Monitors of another shape show it whole, with black bars.
+  pageSize: (key) => {
+    let best = null;
+    for (const x of visWins) {
+      if (x.win.isDestroyed() || (x.key !== key && !state.surfMirror)) continue;
+      const k = screen.getDisplayMatching(x.win.getBounds()).scaleFactor || 1, [w, h] = x.win.getContentSize(), px = { w: Math.round(w * k), h: Math.round(h * k) };
+      if (!best || px.w > best.w || (px.w === best.w && px.h > best.h)) best = px;
+    }
+    return best;
+  },
 });
 let webAway = false;
 // Where everyone's mouse is over a shared web page, as fractions of the page, so each PC can draw the others' pointers.
@@ -1086,10 +1104,16 @@ function patch(p) {
     }
     else if (k === 'customColors') { if (Array.isArray(p[k]) && p[k].length === 4 && p[k].every((c) => /^#[0-9a-f]{6}$/i.test(c))) state.customColors = p[k].map((c) => c.toLowerCase()); }
     else if (k === 'mode') { if (['span', 'mirror', 'mix'].includes(p[k])) state.mode = p[k]; }
+    else if (k === 'surfMirror') state.surfMirror = !!p[k];
+    else if (k === 'surfGpu') state.surfGpu = !!p[k];
     else if (k in DEFAULTS) state[k] = p[k];
   }
   if (allDisplays().every((d) => state.displaysOff.includes(d.index))) state.displaysOff = prev.displaysOff;
+  // Settings' Mirror layout takes a page open in our own Surf along with it: Mirror shows it on every monitor, Span and Mix put it back on its own one
+  if (prev.mode !== state.mode && !('surfMirror' in p) && !remote && web.info().open) state.surfMirror = state.mode === 'mirror';
   applySideEffects(prev);
+  if (prev.surfGpu !== state.surfGpu) web.gpuChanged();       // the browser goes up again the other way
+  else if (prev.surfMirror !== state.surfMirror) web.resized();       // the page's size follows the widest monitor it is on
   const pv = prev.video, nv = state.video;
   if (pv.enc !== nv.enc) encFallback = false;
   // anything that changes what the converted stream looks like, or who needs it, starts a new one
@@ -1295,21 +1319,37 @@ ipcMain.on('cmd', async (e, c) => {
       }
       else if (d === 'quit') { if (!remote) web.close(); }
       else if (d === 'outside') { if (!remote) web.outside(); }       // open the page in the PC's own browser
+      else if (d === 'view') { if (k) web.viewer(e.sender, !!c.on && !remote); }       // this window starts or stops drawing the offscreen page
       else if (!SURF.includes(d)) break;
       else if (remote) {       // a friend's browser: ask their PC
         if (!remote.web) say('Leave your friend\'s session to open your own page');
         else if (!remote.ctrl) say(`Only ${p2p.info().host || 'the host'} can control the page`);
         else p2p.send({ t: 'cmd', a: 'surf', m: { do: d, text: String(c.text || '').slice(0, 2000), id: +c.id || 0 } });
-      } else { const r = web.act(c, k); if (r.error) say(r.error); }
+      } else { const r = web.act(c, was ? web.info().key : k); if (r.error) say(r.error); }       // (the bar on a monitor mirroring the page steers it where it is)
       break;
     }
-    case 'rtc': if (c.d && typeof c.d === 'object') { if (c.to) p2p.sendTo(String(c.to), { t: 'rtc', d: c.d }); else if (remote) p2p.send({ t: 'rtc', d: c.d }); } break;       // setting up a web page's stream
+    case 'rtc': {       // setting up a web page's stream: with a friend, or (local) between the window holding the page and another monitor mirroring it
+      if (!c.d || typeof c.d !== 'object') break;
+      const to = String(c.to || '');
+      if (c.local) {       // a mirroring window, to the one holding the page
+        const k = (visWins.find((x) => x.win.webContents === e.sender) || {}).key, x = !remote && k && visWins.find((y) => y.key === web.info().key);
+        if (x && x.key !== k && !x.win.isDestroyed()) x.win.webContents.send('cmd', { type: 'rtc', from: 'local:' + k, d: c.d });
+      } else if (to.startsWith('local:')) {       // ...and back
+        const x = visWins.find((y) => y.key === to.slice(6));
+        if (x && !x.win.isDestroyed() && x.win.webContents !== e.sender) x.win.webContents.send('cmd', { type: 'rtc', local: true, d: c.d });
+      } else if (to) p2p.sendTo(to, { t: 'rtc', d: c.d }); else if (remote) p2p.send({ t: 'rtc', d: c.d });
+      break;
+    }
     case 'share-music':       // play / pause / next / previous for a friend's music
       if (!remote || !remote.music || !['toggle', 'next', 'prev'].includes(c.do)) break;
       if (remote.ctrl) p2p.send({ t: 'cmd', a: 'music', do: c.do }); else say(`Only ${p2p.info().host || 'the host'} can control the music`);
       break;
     case 'web-ptr': if (remote && remote.web) p2p.send({ t: 'ptr', x: +c.x, y: +c.y }); break;       // where this PC's mouse is over a friend's web page
-    case 'web-input': if (remote && remote.ctrl && remote.web && c.e && typeof c.e === 'object') p2p.send({ t: 'cmd', a: 'input', e: c.e }); break;       // mouse and keyboard over a friend's web page
+    case 'web-input':       // mouse and keyboard over a friend's web page, or over our own page mirrored on another monitor
+      if (!c.e || typeof c.e !== 'object') break;
+      if (remote) { if (remote.ctrl && remote.web) p2p.send({ t: 'cmd', a: 'input', e: c.e }); }
+      else if (visWins.some((x) => x.win.webContents === e.sender && (x.key !== web.info().key ? state.surfMirror : web.info().gpu))) web.input(c.e, true);       // (the Surf monitor's own, when the page is drawn offscreen)
+      break;
     case 'share-join': { const r = await p2p.join(c.code, shareName()); if (!r.ok) say(r.error); break; }
     case 'share-copy': if (p2p.info().code && !p2p.info().settling) { clipboard.writeText(p2p.info().code); say('Invite code copied — send it to your friend'); } break;
     case 'share-paste': e.sender.send('cmd', { type: 'share-code', code: clipboard.readText().trim().slice(0, 300) }); break;
@@ -1477,8 +1517,9 @@ else {
     session.defaultSession.setDisplayMediaRequestHandler((req, cb) => {
       const from = req.frame ? webContents.fromFrame(req.frame) : null;
       if (from && visWins.some((v) => !v.win.isDestroyed() && v.win.webContents === from)) {
-        const f = p2p.role() === 'host' ? web.frame(from) : null;
-        const out = !f && p2p.role() === 'host' ? web.source(from) : null;
+        const may = p2p.role() === 'host' || (!!state.surfMirror && !remote);       // for friends, or for this PC's other monitors
+        const f = may ? web.frame(from) : null;
+        const out = !f && may ? web.source(from) : null;
         if (out) {       // the page is open in the PC's own browser: its window, and the PC's sound (a window's own sound can't be picked out)
           desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 0, height: 0 } }).then((src) => { const w = src.find((x) => x.id === out); cb(w ? { video: w, audio: 'loopback' } : {}); }).catch(() => cb({}));
           return;
@@ -1844,6 +1885,83 @@ async function runShots() {
       log.push('guard: ' + await js(`JSON.stringify({ eye: p.type, late: late.type, shadow: ${sp}.type, frame: f.contentDocument.querySelector('#fp').type, added: dyn.type, plainStaysText: u.type, value: p.value })`));
     }
     srv.close(); web.close(); await wait(800);
+  }
+  if (process.env.DRIFT_TESTMIRROR && visWins.length > 1) {       // Surf mirrored on the other monitors (run with DRIFT_FAKE_DISPLAYS=2): the picture arrives, and a click there reaches the page. With DRIFT_TESTGPU=1, drawn offscreen
+    try {
+    const gpuRun = !!process.env.DRIFT_TESTGPU;
+    if (gpuRun) { patch({ surfGpu: true }); await wait(300); }
+    const PAGE = `<!DOCTYPE html><title>clicks 0</title><body style="margin:0;height:100vh;background:#e33" onclick="if (event.target === document.body) { document.title = 'clicks ' + (+document.title.split(' ')[1] + 1); document.body.style.background = '#3e3'; }">
+      <input id="i" style="position:absolute;left:20px;top:20px;width:300px;height:30px"><select id="s" style="position:absolute;left:20px;top:80px;width:200px;height:30px"><option>one</option><option>two</option><option>three</option></select>
+      <a id="a" href="#x" style="position:absolute;left:20px;top:140px;font-size:30px">a link</a>
+      <script>window.hits = []; addEventListener('click', (e) => hits.push(e.target.tagName + '@' + Math.round(e.clientX) + ',' + Math.round(e.clientY)), true);</script></body>`;
+    const srv = http.createServer((q, r) => { r.writeHead(200, { 'Content-Type': 'text/html' }); r.end(PAGE); });
+    await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+    const url = `http://127.0.0.1:${srv.address().port}/`, sw = visWins[0].win.webContents, mw = visWins[1].win.webContents;
+    web.act({ do: 'go', text: url }, visWins[0].key); await wait(4000);
+    const page = () => webContents.getAllWebContents().find((w) => w.getURL().startsWith(url));
+    // what a window shows of the page: its mirror <video> or offscreen canvas, and the colour in the middle of it
+    const see = (wc) => wc.executeJavaScript(`(() => { const v = document.querySelector('#webMirror') || document.querySelector('#webGpu'), bar = document.body.classList.contains('surfing'), views = document.querySelectorAll('webview').length;
+      if (!v) return { shows: 'nothing', bar, views };
+      const vw = v.videoWidth || +v.dataset.fw || 0, vh = v.videoHeight || +v.dataset.fh || 0, c = document.createElement('canvas'); c.width = c.height = 1; const g = c.getContext('2d');
+      let px = null; if (vw) { if (v.tagName === 'VIDEO') g.drawImage(v, vw / 2, vh / 2, 1, 1, 0, 0, 1, 1); else g.drawImage(v, v.width / 2, v.height * 0.75, 1, 1, 0, 0, 1, 1); px = [...g.getImageData(0, 0, 1, 1).data].slice(0, 3); }
+      return { shows: v.id, size: vw + 'x' + vh, px, bar, views, cursor: v.style.cursor || '' }; })()`);
+    // a mouse or key event on the window's picture of the page, at page position (x, y) given as fractions
+    const poke = (wc, js) => wc.executeJavaScript(`(() => { const v = document.querySelector('#webMirror') || document.querySelector('#webGpu'); if (!v) return false;
+      const r = v.getBoundingClientRect(), vw = v.videoWidth || +v.dataset.fw, vh = v.videoHeight || +v.dataset.fh, k = Math.min(r.width / vw, r.height / vh), pw = vw * k, ph = vh * k;
+      const at = (x, y) => ({ clientX: r.left + (r.width - pw) / 2 + x * pw, clientY: r.top + (r.height - ph) / 2 + y * ph, button: 0, detail: 1, bubbles: true });
+      const click = (x, y) => { v.dispatchEvent(new MouseEvent('mousedown', at(x, y))); v.dispatchEvent(new MouseEvent('mouseup', at(x, y))); };
+      const move = (x, y) => v.dispatchEvent(new MouseEvent('mousemove', at(x, y)));
+      const type = (s) => { for (const ch of s) { v.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true })); v.dispatchEvent(new KeyboardEvent('keyup', { key: ch, bubbles: true })); } };
+      ${js}; return true; })()`);
+    const pageSays = async () => { const p = page(); return p ? p.executeJavaScript("JSON.stringify({ title: document.title, typed: document.querySelector('#i').value, picked: document.querySelector('#s').value })") : 'no page'; };
+    log.push(`mode=${gpuRun ? 'gpu' : 'webview'} info.gpu=${web.info().gpu}`);
+    log.push('surf monitor: ' + JSON.stringify(await see(sw)) + ' mirror monitor (off): ' + JSON.stringify(await see(mw)));
+    patch({ surfMirror: true }); await wait(4000);
+    log.push('mirror on: ' + JSON.stringify(await see(mw)) + ' page=' + await pageSays());
+    {       // the page takes the widest monitor's size; the narrower Surf monitor shows it whole with black bars, and a real click there lands where it should
+      const size = () => page().executeJavaScript('innerWidth + "x" + innerHeight + "@" + devicePixelRatio');
+      const img = (await sw.capturePage()).toBitmap(), [W, H] = sw.getOwnerBrowserWindow().getContentSize(), px = (x, y) => { const i = (y * W + x) * 4; return [img[i + 2], img[i + 1], img[i]]; };
+      log.push(`page size with mirroring: ${await size()} (monitors ${visWins.map((v) => v.win.getContentSize().join('x')).join(', ')}); surf monitor corner=${px(4, 4)} middle=${px(W >> 1, H >> 1)}`);
+      const box = await sw.executeJavaScript(`(() => { const v = document.querySelector('webview.on') || document.querySelector('#webGpu'); const r = v.getBoundingClientRect();
+        const pw = v.tagName === 'CANVAS' ? +v.dataset.fw : r.width, ph = v.tagName === 'CANVAS' ? +v.dataset.fh : r.height, k = Math.min(r.width / pw, r.height / ph);
+        return { l: r.left + (r.width - pw * k) / 2, t: r.top + (r.height - ph * k) / 2, w: pw * k, h: ph * k }; })()`);
+      const [pw] = (await size()).split('x').map(parseFloat), k = box.w / pw, x = Math.round(box.l + 100 * k), y = Math.round(box.t + 35 * k);
+      if (gpuRun) {       // (a click sent to a Drift window never reaches a <webview> in it, so this is checked with the page drawn offscreen only)
+        await page().executeJavaScript('hits.length = 0');
+        sw.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 }); sw.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 }); await wait(800);
+        log.push(`real click on the surf monitor at ${x},${y}: page saw ${await page().executeJavaScript('hits.join(" ")')}`);
+      }
+      patch({ surfMirror: false }); await wait(2000);
+      log.push(`page size without mirroring: ${await size()}`);
+      patch({ surfMirror: true }); await wait(3000);
+    }
+    await snap(gpuRun ? 'mirror-gpu' : 'mirror-on');
+    await poke(mw, 'click(0.5, 0.75)'); await wait(1500);
+    log.push('after a click on the mirror: ' + JSON.stringify(await see(mw)) + ' page=' + await pageSays());
+    if (gpuRun) {       // the Surf monitor itself is a picture of the offscreen page too: typing, a dropdown, the pointer over a link
+      const [W, H] = (await page().executeJavaScript('[innerWidth, innerHeight]'));       // (positions below are fractions of the page)
+      await poke(sw, `click(100 / ${W}, 35 / ${H}); type('hi!')`); await wait(800);
+      await poke(sw, `click(100 / ${W}, 95 / ${H})`); await wait(800);
+      const open = await page().executeJavaScript("(() => { const h = document.body.lastElementChild; return !!h && h.tagName === 'DIV' && h.style.zIndex === '2147483647'; })()");
+      await snap('mirror-gpu-select');
+      await poke(sw, `click(100 / ${W}, (110 + 26 + 13) / ${H})`); await wait(800);       // the list's second row, under the box
+      await poke(sw, `move(50 / ${W}, 155 / ${H})`); await wait(800);
+      log.push(`surf monitor: dropdown list shown=${open} page=${await pageSays()} pointer over the link=${(await see(sw)).cursor}`);
+      log.push('clicks the page saw: ' + await page().executeJavaScript('hits.join(" ")'));
+    }
+    ipcMain.emit('cmd', { sender: mw }, { type: 'surf', do: 'new' }); await wait(4000);       // a new tab, from the mirror's bar: it opens where the browser is, and the mirror follows it
+    log.push('new tab from the mirror: browser on ' + web.info().key + ', tabs=' + web.info().tabs.length + ' ' + JSON.stringify(await see(mw)));
+    { const f = web.frame(sw), pg = f && webContents.fromFrame(f); log.push('new tab (made while mirroring) size: ' + (pg ? await pg.executeJavaScript('innerWidth + "x" + innerHeight') : 'no page')); }
+    patch({ surfMirror: false }); await wait(1500);
+    log.push('mirror stopped: ' + JSON.stringify(await see(mw)) + ' surf monitor: ' + JSON.stringify(await see(sw)));
+    const layout = (v) => mw.executeJavaScript(`document.querySelector('#mode [data-v=${v}]').click()`);       // Settings' Span / Mirror / Mix buttons
+    await layout('mirror'); await wait(3000);
+    log.push(`layout Mirror: surfMirror=${state.surfMirror} mirror monitor: ${JSON.stringify(await see(mw))}`);
+    await layout('span'); await wait(1500);
+    log.push(`layout Span: surfMirror=${state.surfMirror} mirror monitor: ${JSON.stringify(await see(mw))}`);
+    if (gpuRun) { patch({ surfGpu: false }); await wait(3000); log.push('setting off again: info.gpu=' + web.info().gpu + ' surf monitor: ' + JSON.stringify(await see(sw))); }
+    srv.close(); web.close(); await wait(800);
+    } catch (e) { log.push('mirror test failed: ' + (e && e.stack || e)); web.close(); }
   }
   if (process.env.DRIFT_TESTREFOCUS && visWins.length > 1) {       // turning a monitor off and on: each screen keeps its tab, Surf included
     const tabs = () => Promise.all(visWins.map(async (v) => `${v.key}=${await v.win.webContents.executeJavaScript("document.querySelector('.tabs button.active').dataset.tab + (document.querySelectorAll('webview.web').length ? '+browser' : '')")}`));

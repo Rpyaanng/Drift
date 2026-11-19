@@ -2,7 +2,14 @@
 // While this PC is sharing, the picture and sound of the tab in front are streamed to friends' copies of Drift (renderer/app.js does that,
 // over WebRTC), and what friends do with their mouse and keyboard over that picture is played back into the page here.
 // Only this PC loads the pages: friends never open them themselves.
-const { app, session, net, BrowserWindow } = require('electron');
+// Two ways to show a page (Settings → "Draw Surf on the graphics card"):
+//   - normally, as a <webview> in the Drift window of the Surf monitor (renderer/app.js makes it). Other monitors mirroring it get a
+//     WebRTC stream of it, as friends do.
+//   - "gpu": in a hidden offscreen window made here. Each frame it draws is a texture on the graphics card, handed as it is to
+//     every Drift window showing the page (the Surf monitor's and any mirroring it: see preload.js), with no video encoding. Their
+//     mouse and keyboard are played back into it (input()). Chromium doesn't draw a <select>'s open list offscreen, so
+//     surf-select.js stands in for it there.
+const { app, session, net, BrowserWindow, sharedTexture } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -82,6 +89,9 @@ function learnIdent(wc) {
 //   bounds(key)    where monitor `key`'s Drift window is, to open the outside browser over it
 //   away(on)       a browser window of the PC's own is (on) or is no longer over the Surf monitor: Drift must not stay above it
 //   profile()      the folder the outside browser keeps Drift's profile in
+//   gpu()          should pages be drawn offscreen and handed to the windows as textures? (read each time the browser is put somewhere)
+//   win(key)       monitor `key`'s Drift window, and display(key) its display (for the offscreen page's size, scale and frame rate)
+//   pageSize(key)  { w, h }: the pixels to draw the page at, with the browser on monitor `key` (the widest monitor showing it)
 module.exports = function createWeb(hooks) {
   let on = false, key = '';  // is the browser showing, and on which monitor
   let gen = 0;               // goes up each time the browser is put somewhere: the window makes new <webview>s for it
@@ -90,6 +100,8 @@ module.exports = function createWeb(hooks) {
   let active = 0, nextId = 1;
   let sid = '';              // names the stream of the tab in front: friends ask for it again when it changes
   let out = null;            // { name, id, title, stop }: the page is open in the PC's own browser, whose window (`id`, a capture source) friends see instead
+  let gpu = false;           // the pages are offscreen windows of ours, drawn into the Drift windows in `viewers` (see the top)
+  const viewers = new Set(); // webContents of the Drift windows drawing the page in front (they say so: viewer())
   const outside = createOutside();
   let ses = null, made = 0;
   const asked = new Map();   // origin → the detailed Sec-CH-UA headers it asked for with Accept-CH (see sess())
@@ -134,6 +146,7 @@ module.exports = function createWeb(hooks) {
     });
     // In every page and frame: password boxes can't be turned into plain text, so nobody watching can read a password (see surf-guard.js)
     ses.registerPreloadScript({ type: 'frame', id: 'drift-password-guard', filePath: path.join(__dirname, 'surf-guard.js') });
+    ses.registerPreloadScript({ type: 'frame', id: 'drift-select', filePath: path.join(__dirname, 'surf-select.js') });       // (does nothing outside offscreen pages)
     // A download goes straight into this PC's Downloads folder, with no Save As box (it would open behind Drift's full-screen window).
     // Only this PC loads the pages, so a download started by a friend over the shared page lands here too, never on their PC.
     ses.on('will-download', (_e, item) => {
@@ -205,6 +218,7 @@ module.exports = function createWeb(hooks) {
     page.on('page-title-updated', (_e, title) => { if (!mine()) return; t.title = String(title || '').slice(0, 200); hooks.changed(); });
     page.on('enter-html-full-screen', () => { if (mine()) t.full = true; });
     page.on('leave-html-full-screen', () => { if (mine()) t.full = false; hooks.unfull(hostWc); });
+    page.on('audio-state-changed', () => { if (mine()) hooks.changed(); });       // the visuals listen to the PC's sound while a page plays some (see info().audible)
     page.on('before-input-event', (e, k) => {
       if (k.type !== 'keyDown') return;
       if (k.key === 'Escape' && !t.full && !k.alt && !k.control) { e.preventDefault(); hooks.escape(); }       // Esc leaves the page's full screen first, then asks for Drift's controls
@@ -236,7 +250,7 @@ module.exports = function createWeb(hooks) {
     const parent = BrowserWindow.fromWebContents(hostWc);
     return { action: 'allow', overrideBrowserWindowOptions: {
       parent: parent || undefined, autoHideMenuBar: true, backgroundColor: '#ffffff', show: true, minimizable: false,
-      webPreferences: { nodeIntegration: false, nodeIntegrationInSubFrames: true, contextIsolation: true, sandbox: true },       // as the page itself (the password guard runs in it too)
+      webPreferences: { nodeIntegration: false, nodeIntegrationInSubFrames: true, contextIsolation: true, sandbox: true, offscreen: false },       // as the page itself (the password guard runs in it too), but on screen
     } };
   }
   function popup(w, page, hostWc, mine) {
@@ -320,8 +334,14 @@ module.exports = function createWeb(hooks) {
   // Takes the pages off the screen. The tabs remember where they were, and load again when they are next shown.
   function unplace() {
     endOut(true);
-    for (const t of tabs) { if (!t.pending) t.pending = t.url || HOME; t.wc = null; t.full = false; t.ready = false; }
-    holder = null; sid = ''; fresh.clear();
+    for (const t of tabs) { if (!t.pending) t.pending = t.url || HOME; drop(t); t.full = false; t.ready = false; }
+    holder = null; sid = ''; fresh.clear(); gpu = false; frameOut = null;
+    if (frameNext) { frameNext.release(); frameNext = null; }
+  }
+  // A tab lets go of its page. An offscreen page is ours to close; a <webview> goes when the window takes it away.
+  function drop(t) {
+    const wc = t.wc; t.wc = null;
+    if (wc && !wc.isDestroyed() && wc.drift) { const w = BrowserWindow.fromWebContents(wc); if (w && !w.isDestroyed()) w.destroy(); }
   }
   // Shows the browser on monitor `k` (or where it last was). On a different monitor from now, the pages load again there.
   function show(k) {
@@ -329,8 +349,12 @@ module.exports = function createWeb(hooks) {
     sess();
     const there = hooks.screen(k || key);
     if (on && there === hooks.screen(key)) return;
-    unplace(); on = true; key = there; gen++; hooks.changed();
+    unplace(); on = true; key = there; gen++;
+    if (hooks.gpu() && hooks.win(key)) { gpu = true; for (const t of tabs) offscreen(t); }
+    hooks.changed();
   }
+  // The setting changed while the browser is up: put it up again the other way (its pages load again).
+  function gpuChanged() { if (!on || gpu === !!hooks.gpu()) return; const k = key; on = false; show(k); }
   function hide() { if (!on) return; on = false; unplace(); hooks.changed(); }       // out of sight, tabs kept
   function close() { if (!on && !tabs.length) return; on = false; unplace(); tabs.length = 0; active = 0; hooks.changed(); }
 
@@ -339,7 +363,8 @@ module.exports = function createWeb(hooks) {
     const t = { id: nextId++, wc: null, url: '', title: '', pending: u || HOME, full: false, ready: false, seq: 0 };
     tabs.splice(tabs.indexOf(cur()) + 1 || tabs.length, 0, t);       // next to the one it came from
     if (!behind || !cur()) { active = t.id; sid = ''; }
-    hooks.changed();
+    if (on && gpu) offscreen(t);
+    painting(); hooks.changed();
   }
   // ---- kept between runs: the open tabs, the one in front and the monitor ----
   const saved = () => (on && tabs.length ? { urls: tabs.map((t) => t.url || t.pending || HOME).filter(isPage), active: Math.max(0, tabs.indexOf(cur())), key } : null);
@@ -350,13 +375,13 @@ module.exports = function createWeb(hooks) {
     active = (tabs[Math.min(Math.max(0, s.active | 0), tabs.length - 1)]).id;
     show(String(s.key || ''));
   }
-  function select(id) { if (id === active || !tabs.some((t) => t.id === id)) return; active = id; restream(); hooks.changed(); }
+  function select(id) { if (id === active || !tabs.some((t) => t.id === id)) return; active = id; restream(); painting(); hooks.changed(); }
   function closeTab(id) {
     const i = tabs.findIndex((t) => t.id === id);
     if (i < 0) return;
     if (tabs.length === 1) { close(); return; }       // the last tab takes the browser with it
-    const t = tabs.splice(i, 1)[0]; t.wc = null;
-    if (id === active) { active = tabs[Math.min(i, tabs.length - 1)].id; restream(); }
+    const t = tabs.splice(i, 1)[0]; drop(t);
+    if (id === active) { active = tabs[Math.min(i, tabs.length - 1)].id; restream(); painting(); }
     hooks.changed();
   }
   // What was typed, as an address: an address as it is, anything else as a YouTube search.
@@ -394,12 +419,13 @@ module.exports = function createWeb(hooks) {
   const frame = (hostWc) => (!out && alive() && holder === hostWc ? cur().wc.mainFrame : null);
   // ...or, while the page is open in the PC's own browser, that browser's window (a desktop capture source id)
   const source = (hostWc) => (out && out.id && holder === hostWc ? out.id : null);
-  // Plays back what a friend did over their picture of the page. Positions are fractions of the page's width and height.
-  function input(e) {
+  // Plays back what a friend did over their picture of the page, or (local) what this PC did over a picture of it on one of its
+  // monitors. Positions are fractions of the page's width and height.
+  function input(e, local) {
     if (out || !alive() || !e || typeof e !== 'object' || !holder || holder.isDestroyed()) return;       // friends can't click in the PC's own browser
-    const wc = cur().wc, win = BrowserWindow.fromWebContents(holder);
+    const wc = cur().wc, win = BrowserWindow.fromWebContents(wc.drift ? wc : holder);
     if (!win) return;
-    const [w, h] = win.getContentSize();       // the page fills its Drift window
+    const [w, h] = wc.drift ? win.getContentSize() : pageDips();       // the page's own size, which may be bigger than its monitor (see pageSize)
     const x = Math.round(unit(e.x) * w), y = Math.round(unit(e.y) * h);
     const modifiers = (Array.isArray(e.m) ? e.m : []).filter((m) => MODS.includes(m));
     try {
@@ -414,7 +440,8 @@ module.exports = function createWeb(hooks) {
       } else if (e.k === 'key') {
         const k = String(e.key || ''), ch = [...k].length === 1, code = KEYS[k] || (ch || /^F([1-9]|1[0-2])$/.test(k) ? k : '');
         const cmd = modifiers.includes('control') || modifiers.includes('meta');
-        if (!code || k === 'Escape' || (cmd && /^v$/i.test(k))) return;       // Esc is for Drift's controls; pasting would hand over this PC's clipboard
+        if (local && e.d && modifiers.includes('alt') && !cmd && (k === 'ArrowLeft' || k === 'ArrowRight')) { nav(k === 'ArrowLeft' ? -1 : 1); return; }       // Alt+Left / Alt+Right: back and forward
+        if (!code || k === 'Escape' || (!local && cmd && /^v$/i.test(k))) return;       // Esc is for Drift's controls; a friend pasting would hand over this PC's clipboard
         wc.sendInputEvent({ type: e.d ? 'keyDown' : 'keyUp', keyCode: code, modifiers });
         if (e.d && !cmd && !modifiers.includes('alt') && (ch || k === 'Enter')) wc.sendInputEvent({ type: 'char', keyCode: k === 'Enter' ? '\r' : k, modifiers });       // what the key types
       }
@@ -465,7 +492,86 @@ module.exports = function createWeb(hooks) {
     if (!quiet) { restream(); hooks.changed(); }
   }
 
-  const info = () => ({ open: on, has: tabs.length > 0, key: on ? hooks.screen(key) : '', gen, ext: outside.name(), ...view() });
+  const info = () => ({ open: on, has: tabs.length > 0, key: on ? hooks.screen(key) : '', gen, gpu: on && gpu, page: on ? hooks.pageSize(hooks.screen(key)) : null, ext: outside.name(), audible: on && tabs.some((t) => live(t) && t.wc.isCurrentlyAudible()), ...view() });
+  // The page's size in its own units (CSS pixels): drawn at pageSize's pixels, at the scale of the Surf monitor
+  function dips(scale) { const px = hooks.pageSize(key); if (px) return [Math.round(px.w / scale), Math.round(px.h / scale)]; const hw = hooks.win(key); return hw ? hw.getContentSize() : [1280, 720]; }
+  function pageDips() { const d = hooks.display(key) || {}; return dips(d.scaleFactor || 1); }
+  // Mirroring started or stopped: an offscreen page takes its new size (a <webview> is sized by its window, from info().page)
+  function resized() {
+    if (!on || !gpu) { hooks.changed(); return; }
+    const d = hooks.display(key) || {}, [w, h] = dips(d.scaleFactor || 1);
+    for (const t of tabs) if (live(t) && t.wc.drift) { const pw = BrowserWindow.fromWebContents(t.wc); if (pw && !pw.isDestroyed()) pw.setContentSize(w, h); }
+    painting(); hooks.changed();
+  }
   outside.detect().then((b) => { if (b) hooks.changed(); });       // the Surf bar's button names it
-  return { host, attached, act, show, hide, close, nav, shared, frame, source, input, info, blockChanged, forget, outside: goOutside, saved, restore };
+  // ---- drawing offscreen (see the top) ----
+  // A tab's page as a hidden offscreen window, the size of the Surf monitor's Drift window and drawn at its scale and refresh rate.
+  function offscreen(t) {
+    const hw = hooks.win(key);
+    if (!hw || hw.isDestroyed() || live(t)) return;
+    const d = hooks.display(key) || {}, [w, h] = dips(d.scaleFactor || 1);
+    const win = new BrowserWindow({ show: false, width: w, height: h, useContentSize: true, frame: false, skipTaskbar: true,
+      webPreferences: { partition: 'persist:web', offscreen: { useSharedTexture: true, deviceScaleFactor: d.scaleFactor || 1 },
+        nodeIntegration: false, nodeIntegrationInSubFrames: true, contextIsolation: true, sandbox: true, backgroundThrottling: false,
+        additionalArguments: ['--drift-offscreen'] } });       // (surf-select.js looks for it)
+    win.setFullScreenable(false);       // a page going full screen fills its own picture, not a hidden window
+    // Windows makes a new window as big as a whole monitor a little narrower than asked (1920 wide came out 1872), which put bars
+    // beside the page on 16:9 monitors. Sized again once it exists, it takes the size asked for.
+    const fit = () => { if (win.isDestroyed()) return; const [tw, th] = dips(d.scaleFactor || 1), [cw, ch] = win.getContentSize(); if (cw !== tw || ch !== th) win.setContentSize(tw, th); };
+    fit(); win.webContents.once('did-finish-load', fit);
+    const page = win.webContents;
+    page.drift = true;
+    page.setFrameRate(Math.max(30, Math.min(240, Math.round(d.displayFrequency) || 60)));
+    page.on('will-navigate', (e, u) => { if (!isPage(u)) e.preventDefault(); });
+    page.on('paint', (e) => { const tex = e.texture; if (tex) paint(t, page, tex); });
+    page.on('cursor-changed', (_e, type) => { if (t.wc === page && t.id === active) cursor(type); });
+    bind(t, page, hw.webContents);
+    painting();
+  }
+  // Only the tab in front draws; showing it again draws it at once.
+  function painting() {
+    if (!gpu) return;
+    for (const t of tabs) if (live(t) && t.wc.drift) { if (t.id === active) repaint(t.wc); else t.wc.stopPainting(); }
+  }
+  // A new frame now, even of a page that is standing still. (invalidate() isn't enough: on a still page its paint comes without a
+  // texture. Stopping and starting painting again gives a whole new frame.)
+  function repaint(page) { page.stopPainting(); page.startPainting(); }
+  // Each frame goes to every window drawing the page, one at a time: a frame that comes while the last is still on its way waits,
+  // and is replaced by any newer one.
+  let frameOut = null, frameNext = null;
+  function paint(t, page, tex) {
+    if (t.wc !== page || t.id !== active || tex.textureInfo.widgetType !== 'frame' || !viewers.size) { tex.release(); return; }
+    if (frameOut) { if (frameNext) frameNext.release(); frameNext = tex; return; }
+    hand(tex);
+  }
+  function hand(tex) {
+    let imp;
+    try { imp = sharedTexture.importSharedTexture({ textureInfo: tex.textureInfo, allReferencesReleased: () => tex.release() }); } catch { tex.release(); return; }
+    const mine = frameOut = Promise.all([...viewers].filter((v) => !v.isDestroyed()).map((v) => sharedTexture.sendSharedTexture({ frame: v.mainFrame, importedSharedTexture: imp }).catch(() => {})))
+      .then(() => {
+        imp.release();
+        if (frameOut !== mine) return;
+        frameOut = null;
+        const n = frameNext; frameNext = null;
+        if (n) hand(n);
+      });
+  }
+  // A Drift window starts (or stops) drawing the page. It gets a frame straight away.
+  function viewer(wc, yes) {
+    if (!yes) { viewers.delete(wc); return; }
+    if (!viewers.has(wc)) { viewers.add(wc); wc.once('destroyed', () => viewers.delete(wc)); }
+    if (alive() && cur().wc.drift) repaint(cur().wc);
+    if (lastCursor) wc.send('cmd', { type: 'web-cursor', c: lastCursor });
+  }
+  // The pointer the page wants (a hand over a link, a bar over text…), as CSS names it
+  const CURSORS = { pointer: 'default', hand: 'pointer', nodrop: 'no-drop', 'm-panning': 'all-scroll', custom: 'default' };
+  let lastCursor = '';
+  function cursor(type) {
+    const c = CURSORS[type] || (/^[a-z-]+$/.test(type) && !/panning/.test(type) ? type : 'default');
+    if (c === lastCursor) return;
+    lastCursor = c;
+    for (const v of viewers) if (!v.isDestroyed()) v.send('cmd', { type: 'web-cursor', c });
+  }
+
+  return { host, attached, act, show, hide, close, nav, shared, frame, source, input, info, blockChanged, forget, outside: goOutside, saved, restore, viewer, gpuChanged, resized };
 };

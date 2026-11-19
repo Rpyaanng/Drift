@@ -23,6 +23,7 @@
     <button class="glass round" id="sbReload" title="Load this page again"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg></button>
     <button class="glass round" id="sbHome" title="Home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11l8-7 8 7"/><path d="M6 9.5V20h12V9.5"/></svg></button>
     <button class="glass round" id="sbOut" title="Open in your browser"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg></button>
+    <button class="glass round" id="sbMirror" title="Show this page on your other monitors too"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="9" height="7" rx="1.2"/><rect x="12.5" y="5" width="9" height="7" rx="1.2"/><path d="M7 12v3M17 12v3M4.5 17.5h5M14.5 17.5h5"/></svg></button>
     <label class="glass sbSearch"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.4-4.4"/></svg><input type="search" id="sbUrl" placeholder="Search" spellcheck="false" autocomplete="off"></label>
   </div>
 </div>
@@ -253,6 +254,7 @@
             <label class="chk"><input type="checkbox" id="onTop"><i></i>Stay above other windows</label>
             <label class="chk"><input type="checkbox" id="algoInfo"><i></i>Algorithm captions</label>
             <label class="chk" title="Block adverts and trackers in Surf's web pages"><input type="checkbox" id="shAdblock"><i></i>Block adverts in Surf</label>
+            <label class="chk" title="Experimental. Surf draws its pages off screen and hands each frame to your monitors on the graphics card, so pages mirrored on other monitors stay sharp and smooth at your screen's full frame rate. Open pages load again when you change it"><input type="checkbox" id="surfGpu"><i></i>Draw Surf on the graphics card</label>
           </div>
           <label>Sleep timer — fade out and close <output id="o-sleep"></output>
             <select id="sleep"><option value="0">Off</option><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="45">45 minutes</option><option value="60">1 hour</option><option value="90">1.5 hours</option><option value="120">2 hours</option></select>

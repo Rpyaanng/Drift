@@ -161,6 +161,13 @@ box and a few places to drift to. Share it from **Together** and your friends se
 you. If you let them, they can click, scroll and type in it from their own PC too. Everyone's mouse shows
 over the page as a coloured arrow with their name, so you can point things out to each other. Close Drift
 with the browser open and your tabs come back next time, without anything starting to play by itself.
+With more than one monitor, the two-screens button in the browser's bar shows the page on all your other
+monitors too, and you can click, scroll and type in it from any of them. Choosing **Mirror** in Settings while a page is
+open does the same, and Span or Mix puts it back on its own monitor. While mirrored, the page is drawn at the size of your
+widest monitor, so it stays sharp there; monitors of another shape show it whole, with black bars.
+Mirrored pages are sent to your other monitors as a video stream. For a sharper, smoother picture at your screen's
+full frame rate, try **Settings → Draw Surf on the graphics card** (experimental): pages are then drawn off screen and
+handed to every monitor straight from the graphics card, with no video encoding in between.
 
 <p align="center">
   <img src="docs/images/surf-together.jpg" width="820" alt="A Wikipedia article shared in Surf, seen on a friend's screen, with two named pointers in their own colours, Tess and Mia, over the page">
@@ -384,7 +391,7 @@ settings (two copies on one PC can share with each other), `DRIFT_SHARE_LOCAL=1`
 `DRIFT_FAKE_HDR=0|1` pretends the screens are SDR or HDR, `DRIFT_HIDDEN=1` and `DRIFT_MUTE=1` run without
 windows or sound. `DRIFT_SHOTS=<folder>` runs the screenshot tour (add `DRIFT_ONLY=<scene,...>`,
 `DRIFT_PALETTE=<name>`, `DRIFT_PANEL=1` and `DRIFT_SHOTWAIT=<ms>` to wait longer per scene); the README images
-were made with it. Add `DRIFT_TESTSURF=1` for the picture of Surf's start page. The picture of a page shared in
+were made with it. Add `DRIFT_TESTSURF=1` for the picture of Surf's start page. `DRIFT_TESTMIRROR=1` with `DRIFT_FAKE_DISPLAYS=2` checks Surf's mirroring (`DRIFT_FAKE_WIDTHS=1,2` makes the fake monitors different widths; add `DRIFT_TESTGPU=1` for the graphics-card drawing, and `DRIFT_HIDDEN=1` so your own mouse can't reach the test page). The picture of a page shared in
 Surf comes from two copies run at once with `DRIFT_TESTWEB=host` and `=guest` (with the same `DRIFT_TESTCODE`
 file, `DRIFT_TESTURL` and `DRIFT_SHARE_LOCAL=1`); `DRIFT_TESTNAME` sets each one's name.
 To try updating, run a packaged copy with `DRIFT_FAKE_VERSION=1.0.0` (it then thinks the latest release is

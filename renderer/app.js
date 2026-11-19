@@ -571,16 +571,17 @@
       else surf('new');
     }
     else if (t !== 'settings' && t !== 'share' && w.open && w.key === me.key) surf('hide');
+    else if (t !== 'settings' && t !== 'share' && (mirEl || (gpuEl && !gpuEl.own))) api.patch({ surfMirror: false });       // on a monitor mirroring the page: Scenes or Media is what was asked for here
   }
   panel.addEventListener('mouseenter', () => { overPanel = true; });
   panel.addEventListener('mouseleave', () => { overPanel = false; armHide(); });
   let lastMove = [0, 0];
   addEventListener('mousemove', (e) => {
-    if (e.target === vidEl || surfBar.contains(e.target) || e.target === surfEdge) return;       // over a friend's web page the mouse is theirs to follow, not a call for the panel; nor is the browser's own bar
+    if (e.target === vidEl || e.target === mirEl || (gpuEl && e.target === gpuEl) || surfBar.contains(e.target) || e.target === surfEdge) return;       // over a friend's web page the mouse is theirs to follow, not a call for the panel; nor is the browser's own bar
     if (Math.abs(e.screenX - lastMove[0]) + Math.abs(e.screenY - lastMove[1]) < 4) return;   // ignore jitter
     lastMove = [e.screenX, e.screenY]; showPanel();
   });
-  addEventListener('mousedown', (e) => { if (e.target === vidEl || surfBar.contains(e.target)) return; if (!panel.contains(e.target) && !confirmEl.contains(e.target)) { if (panel.classList.contains('open')) { panel.classList.remove('open'); } else showPanel(); } });
+  addEventListener('mousedown', (e) => { if (e.target === vidEl || e.target === mirEl || (gpuEl && e.target === gpuEl) || surfBar.contains(e.target)) return; if (!panel.contains(e.target) && !confirmEl.contains(e.target)) { if (panel.classList.contains('open')) { panel.classList.remove('open'); } else showPanel(); } });
 
   const fill = (el) => el.style.setProperty('--fill', ((el.value - el.min) / (el.max - el.min)) * 100 + '%');
   const setVal = (el, v) => { if (document.activeElement !== el || el.tagName !== 'INPUT') { el.value = v; } if (el.type === 'range') fill(el); };
@@ -611,7 +612,7 @@
     $('#modeHint').style.display = multi ? '' : 'none';
     $('#modeNote').textContent = !multi ? 'Only one monitor is on, so this changes nothing yet.'
       : S.mode === 'span' ? 'Scenes and videos stretch as one picture across all monitors.'
-      : S.mode === 'mirror' ? 'Each monitor shows the whole scene or video.'
+      : S.mode === 'mirror' ? 'Each monitor shows the whole scene or video, and a page open in Surf.'
       : 'Each monitor plays its own scene or video: open the panel on a monitor and pick one there.';
     const ambOn = !S.music.ambientOff && S.music.source !== 'off';       // the ambient choice (it waits while your music plays)
     $$('.preset').forEach((x) => x.classList.toggle('active', x.dataset.id === (ambOn ? S.music.preset : 'off')));
@@ -625,7 +626,7 @@
     $('#o-reactivity').textContent = S.reactivity < 0.01 ? 'Off' : Math.round(S.reactivity * 100) + '%';
     $('#o-volume').textContent = Math.round(S.music.volume * 100) + '%';
     for (const k of ['autoCycle', 'quality', 'fps']) $('#' + k).value = String(S[k]);
-    for (const k of ['cycleShuffle', 'clock', 'breathing', 'keepAwake', 'onTop', 'autoUpdate']) $('#' + k).checked = !!S[k];
+    for (const k of ['cycleShuffle', 'clock', 'breathing', 'keepAwake', 'onTop', 'autoUpdate', 'surfGpu']) $('#' + k).checked = !!S[k];
     syncUpdate();
     $('#shuffle').checked = !!S.music.shuffle;
     if (!(S.sleepAt > Date.now())) $('#sleep').value = '0';
@@ -675,9 +676,20 @@
   // ---------- a web page on this screen (watching a web page together): main's web.js loads and steers it ----------
   const webEls = new Map(), surfBar = $('#surfBar'), surfEdge = $('#surfEdge');       // one <webview> for each of the browser's tabs
   let webEl = null, webGen = 0, capSid = '';       // webEl: the tab in front
+  let gpuEl = null;       // the canvas a page drawn offscreen is drawn in (web.js), here on its own monitor (gpuEl.own) or mirroring it
+  const pageEl = () => webEl || (gpuEl && gpuEl.own ? gpuEl : null);       // what stands for our own page on this screen, for friends' capture
   const edgeHint = () => { if (!init.testMode) toast('Mouse to the top edge for tabs and the address  ·  to the bottom edge for Drift’s controls', 7000); };
+  // A page drawn bigger than this monitor (the widest monitor showing it sets its size: web.js pageSize) is shrunk to fit, whole, with
+  // black bars where its shape differs. Its layout stays its own; friends and mirrors get its full size.
+  function fitPage(el, px) {
+    const dpr = devicePixelRatio || 1, w = px ? px.w / dpr : innerWidth, h = px ? px.h / dpr : innerHeight;
+    if (Math.abs(w - innerWidth) < 2 && Math.abs(h - innerHeight) < 2) { el.style.cssText = ''; return; }
+    const k = Math.min(innerWidth / w, innerHeight / h);
+    el.style.cssText = `width:${w}px;height:${h}px;right:auto;bottom:auto;transform-origin:0 0;transform:translate(${(innerWidth - w * k) / 2}px,${(innerHeight - h * k) / 2}px) scale(${k})`;
+  }
+  addEventListener('resize', () => { for (const el of webEls.values()) fitPage(el, (S.web || {}).page); });
   function syncWeb() {
-    const w = S.web || {}, here = !!w.open && w.key === me.key, pages = here && !w.stream, live = (S.p2p || {}).status === 'connected';
+    const w = S.web || {}, here = !!w.open && w.key === me.key, pages = here && !w.stream && !w.gpu, live = (S.p2p || {}).status === 'connected';
     if (webEls.size && (!pages || w.gen !== webGen)) { for (const el of webEls.values()) el.remove(); webEls.clear(); webEl = null; dropPeers(); }
     if (pages) {
       const first = !webEls.size, was = webEl;
@@ -693,19 +705,27 @@
         webEls.set(t.id, el);
       }
       webEl = webEls.get(w.active) || null;
-      for (const el of webEls.values()) el.classList.toggle('on', el === webEl);
+      for (const el of webEls.values()) { el.classList.toggle('on', el === webEl); fitPage(el, w.page); }
       if (webEl && webEl !== was && !surfBar.contains(document.activeElement) && !panel.contains(document.activeElement)) { try { webEl.focus(); } catch { /* not ready to take the keys yet */ } }
       if (first) { edgeHint(); surfPeek(); }
     }
     if ((w.sid || '') !== capSid) { capSid = w.sid || ''; dropPeers(); }       // another tab came to the front: friends ask for its picture
-    if (pcs.size && (S.p2p || {}).role !== 'host') dropPeers();
+    if ((S.p2p || {}).role !== 'host') for (const id of [...pcs.keys()]) if (!isLocal(id)) dropPeer(id);       // (this PC's other monitors keep theirs)
+    if (!S.surfMirror || !webEl) for (const id of [...pcs.keys(), ...asks.keys()]) if (isLocal(id)) dropPeer(id);
+    const gpuWant = !!w.open && !w.stream && !!w.gpu && (here || !!S.surfMirror);       // drawn offscreen: shown here, or mirrored here
+    if (gpuEl && (!gpuWant || gpuEl.own !== here)) dropGpuView();
+    if (gpuWant && !gpuEl) { makeGpuView(here); if (here) { edgeHint(); surfPeek(); } }
+    const mirror = mirrorHere(), mirroring = mirror || (!!gpuEl && !gpuEl.own);
+    if (mirEl && !mirror) { mirHangUp(); mirEl.remove(); mirEl = null; msid = ''; }
+    if (mirror && !mirEl) makeMirrorView();
+    if (mirEl && w.sid !== msid) { msid = w.sid; mirAsk(); }       // a new page, or another tab came to the front
     if (vidEl && !(here && w.stream)) { vidEl.meEl.remove(); vidEl.remove(); vidEl = null; hangUp(); gsid = ''; }
     if (here && w.stream && !vidEl) { makeStreamView(); edgeHint(); surfPeek(); }
     if (vidEl && live && (w.sid !== gsid || !gLive)) { gsid = w.sid; ask(); }       // a new page, or the connection came back
     gLive = live;
-    document.body.classList.toggle('web', !!webEls.size || !!vidEl);
-    document.body.classList.toggle('surfing', here && (!w.stream || !!(S.p2p || {}).ctrl));       // the bar is for whoever may steer the browser
-    if (!here) surfBar.classList.remove('show');
+    document.body.classList.toggle('web', !!webEls.size || !!vidEl || !!mirEl || !!gpuEl);
+    document.body.classList.toggle('surfing', (here && (!w.stream || !!(S.p2p || {}).ctrl)) || mirroring);       // the bar is for whoever may steer the browser
+    if (!here && !mirroring) surfBar.classList.remove('show');
     syncSurfBar();
   }
 
@@ -716,9 +736,10 @@
   const PTR = '<svg viewBox="0 0 20 24" width="20" height="24"><path d="M3.2 4Q3.2 2.4 4.5 3.4L16.6 13.2Q17.8 14.3 16.2 14.6L10.8 15.2Q9.6 15.3 8.8 16.2L5.2 20.4Q3.2 22.4 3.2 19.8Z"/></svg><b></b>';
   // where the page is on this screen: all of it here, or the picture inside a friend's stream (which may have bars beside it)
   function pageBox() {
-    if (webEl) return { l: 0, t: 0, w: innerWidth, h: innerHeight };
-    if (!vidEl || !vidEl.videoWidth) return null;
-    const r = vidEl.getBoundingClientRect(), k = Math.min(r.width / vidEl.videoWidth, r.height / vidEl.videoHeight), w = vidEl.videoWidth * k, h = vidEl.videoHeight * k;
+    if (webEl) { const r = webEl.getBoundingClientRect(); return { l: r.left, t: r.top, w: r.width, h: r.height }; }
+    const [el, vw, vh] = gpuEl && gpuEl.own ? [gpuEl, +gpuEl.dataset.fw || 0, +gpuEl.dataset.fh || 0] : vidEl ? [vidEl, vidEl.videoWidth, vidEl.videoHeight] : [null, 0, 0];
+    if (!vw || !vh) return null;
+    const r = el.getBoundingClientRect(), k = Math.min(r.width / vw, r.height / vh), w = vw * k, h = vh * k;
     return { l: r.left + (r.width - w) / 2, t: r.top + (r.height - h) / 2, w, h };
   }
   function showPtrs(list) {
@@ -764,6 +785,10 @@
     ob.hidden = !!w.stream || !w.ext;
     ob.title = w.out ? `Open in ${w.out}: close its window to come back to Surf` : `Open this page in ${w.ext || 'your browser'} (for sign-ins Surf can't do, like Google). Friends watch it but can't click in it`;
     ob.classList.toggle('off', !!w.out);
+    const mb = $('#sbMirror');       // show the page on every other monitor too: this PC's own browser, with more than one monitor
+    mb.hidden = !!w.stream || !((S.screens || 0) > 1);
+    mb.classList.toggle('lit', !!S.surfMirror);
+    mb.title = S.surfMirror ? 'Showing this page on your other monitors too. Click to stop' : 'Show this page on your other monitors too';
     const u = $('#sbUrl'), url = /^drift:\/\/home\//i.test(w.url || '') ? '' : w.url || '';       // Drift's start page: an empty box to type in
     if (document.activeElement !== u && u.value !== url) u.value = url;
   }
@@ -779,11 +804,12 @@
   $('#sbReload').addEventListener('click', () => surf('reload'));
   $('#sbHome').addEventListener('click', () => surf('home'));
   $('#sbOut').addEventListener('click', () => { surf('outside'); surfHideSoon(300); });
+  $('#sbMirror').addEventListener('click', () => api.patch({ surfMirror: !S.surfMirror }));
   $('#sbUrl').addEventListener('focus', (e) => e.target.select());
   $('#sbUrl').addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return;
     surf('go', { text: e.target.value.trim() }); e.target.blur();
-    if (webEl) webEl.focus(); else if (vidEl) vidEl.focus();       // the keys go back to the page
+    if (webEl) webEl.focus(); else if (vidEl) vidEl.focus(); else if (mirEl) mirEl.focus(); else if (gpuEl) gpuEl.focus();       // the keys go back to the page
     surfHideSoon();
   });
 
@@ -792,18 +818,19 @@
   const rtcConf = (stun) => ({ iceServers: stun ? [{ urls: 'stun:stun.l.google.com:19302' }] : [] });
   const stereo = (sdp) => sdp.replace(/useinbandfec=1/g, 'useinbandfec=1;stereo=1;maxaveragebitrate=192000');       // it is a soundtrack, not a phone call
   const signal = (d, to) => api.cmd({ type: 'rtc', to, d });
+  const isLocal = (id) => String(id).startsWith('local:');       // another of this PC's monitors, mirroring the page
 
   // -- sharing: one connection per friend, all fed by a single capture of the page --
   const pcs = new Map(), asks = new Map();
   let cap = null;
   function capture() {
     if (!cap) {
-      const el = webEl;
+      const el = pageEl();
       const got = navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
       const late = new Promise((_r, no) => setTimeout(() => no(new Error('no answer')), 2500));       // it has been known not to answer at all
-      got.then((st) => { if (cap !== mine || webEl !== el) st.getTracks().forEach((t) => t.stop()); }, () => {});
+      got.then((st) => { if (cap !== mine || pageEl() !== el) st.getTracks().forEach((t) => t.stop()); }, () => {});
       const mine = cap = Promise.race([got, late])
-        .then((st) => (cap === mine && webEl === el ? st : null))
+        .then((st) => (cap === mine && pageEl() === el ? st : null))
         .catch((e) => { console.log('the page could not be captured: ' + e.message); if (cap === mine) cap = null; return null; });
     }
     return cap;
@@ -830,10 +857,11 @@
   function dropPeers() { for (const id of [...pcs.keys(), ...asks.keys()]) dropPeer(id); uncapture(); }
   async function rtcHost(id, d) {
     if (d.type === 'bye') { dropPeer(id); return; }
-    if (d.type === 'want') {       // a friend asks for the page
+    if (d.type === 'want') {       // a friend asks for the page (or another monitor, to mirror it)
+      if (isLocal(id) && !S.surfMirror) return;
       dropPeer(id);
-      if (!webEl || d.sid !== (S.web || {}).sid) return;       // not this page: they will ask again when they hear of the new one
-      const my = {}, el = webEl; asks.set(id, my);
+      if (!pageEl() || d.sid !== (S.web || {}).sid) return;       // not this page: they will ask again when they hear of the new one
+      const my = {}, el = pageEl(); asks.set(id, my);
       let st = null;
       for (let i = 0; i < 8 && !st; i++) {       // a page that has only just appeared can't be captured straight away
         if (i) await new Promise((r) => setTimeout(r, 400));
@@ -844,8 +872,8 @@
       const codecs = await videoCodecs();
       if (asks.get(id) !== my) return;
       asks.delete(id);
-      if (!st || webEl !== el) { if (!pcs.size && !asks.size) uncapture(); return; }
-      const stun = !!(S.share || {}).internet, pc = new RTCPeerConnection(rtcConf(stun));
+      if (!st || pageEl() !== el) { if (!pcs.size && !asks.size) uncapture(); return; }
+      const local = isLocal(id), stun = !local && !!(S.share || {}).internet, pc = new RTCPeerConnection(rtcConf(stun));
       pcs.set(id, pc); pc.early = [];
       for (const t of st.getTracks()) pc.addTrack(t, st);
       if (codecs) for (const tr of pc.getTransceivers()) if (tr.sender.track && tr.sender.track.kind === 'video') { try { tr.setCodecPreferences(codecs); } catch { /* Chromium's own order then */ } }
@@ -854,7 +882,7 @@
       const offer = await pc.createOffer();
       await pc.setLocalDescription({ type: 'offer', sdp: stereo(offer.sdp) });
       const out = pc.getSenders().find((x) => x.track && x.track.kind === 'video'), prm = out && out.getParameters();
-      if (prm && prm.encodings && prm.encodings[0]) { prm.encodings[0].maxBitrate = 8e6; out.setParameters(prm).catch(() => {}); }
+      if (prm && prm.encodings && prm.encodings[0]) { prm.encodings[0].maxBitrate = local ? 25e6 : 8e6; out.setParameters(prm).catch(() => {}); }       // (between monitors of one PC there is room to spare)
       if (pcs.get(id) === pc) signal({ type: 'offer', sdp: pc.localDescription.sdp, sid: d.sid, stun }, id);
       return;
     }
@@ -891,7 +919,87 @@
       if (gpc === pc) signal({ type: 'answer', sdp: pc.localDescription.sdp });
     } else if (d.type === 'ice' && d.c && gpc) await gpc.addIceCandidate(d.c);
   }
-  const onRtc = (c) => { if (!c.d || typeof c.d !== 'object') return; (c.from ? rtcHost(c.from, c.d) : rtcGuest(c.d)).catch((e) => console.log('stream set-up: ' + e.message)); };
+  const onRtc = (c) => { if (!c.d || typeof c.d !== 'object') return; (c.local ? rtcMirror(c.d) : c.from ? rtcHost(c.from, c.d) : rtcGuest(c.d)).catch((e) => console.log('stream set-up: ' + e.message)); };
+
+  // -- mirroring: this PC's own page, held in the window of another monitor, shown here too. It comes over a WebRTC connection
+  // between the two windows (on this PC only), fed by the same single capture friends get. Its sound stays on the page's monitor.
+  // The mouse, keyboard and the Surf bar here steer the page as they would there.
+  let mirEl = null, mpc = null, msid = '', mAsked = 0, mGood = 0;
+  const mirrorHere = () => { const w = S.web || {}; return !!S.surfMirror && !!w.open && !w.stream && !w.gpu && !!w.sid && w.key !== me.key; };       // (a page drawn offscreen is mirrored by gpuEl instead)
+  const mirSignal = (d) => api.cmd({ type: 'rtc', local: true, d });
+  function mirHangUp() { if (mpc) { const pc = mpc; mpc = null; pc.close(); mirSignal({ type: 'bye' }); } if (mirEl) mirEl.srcObject = null; }
+  function mirAsk() { mirHangUp(); mAsked = Date.now(); mirSignal({ type: 'want', sid: msid }); }
+  setInterval(() => {       // no picture yet (the page had only just changed, its window was rebuilt...): ask again
+    if (!mirEl) return;
+    const now = Date.now();
+    if (mpc && mpc.connectionState === 'connected') mGood = now; else if (now - Math.max(mAsked, mGood) > 3000) mirAsk();
+  }, 1000);
+  async function rtcMirror(d) {
+    if (!mirEl) return;
+    if (d.type === 'offer') {
+      if (d.sid !== msid) return;
+      if (mpc) { const old = mpc; mpc = null; old.close(); }
+      const pc = mpc = new RTCPeerConnection(rtcConf(false));
+      pc.ontrack = (e) => {
+        if (mpc !== pc || !mirEl) return;
+        try { e.receiver.jitterBufferTarget = 0; } catch { /* older Chromium */ }
+        if (mirEl.srcObject !== e.streams[0]) mirEl.srcObject = e.streams[0];
+      };
+      pc.onicecandidate = (e) => { if (e.candidate) mirSignal({ type: 'ice', c: e.candidate.toJSON() }); };
+      pc.setRemoteDescription({ type: 'offer', sdp: String(d.sdp) }).catch(() => {});       // candidates that follow wait their turn behind this
+      const ans = await pc.createAnswer();
+      await pc.setLocalDescription(ans);
+      if (mpc === pc) mirSignal({ type: 'answer', sdp: pc.localDescription.sdp });
+    } else if (d.type === 'ice' && d.c && mpc) await mpc.addIceCandidate(d.c);
+  }
+  function makeMirrorView() {
+    const v = mirEl = document.createElement('video');
+    v.id = 'webMirror'; v.autoplay = true; v.playsInline = true; v.muted = true; v.tabIndex = 0;
+    document.body.insertBefore(v, $('#webEdge'));
+    steer(v, () => [v.videoWidth, v.videoHeight]);
+  }
+  // -- a page drawn offscreen (web.js, "Draw Surf on the graphics card"): its frames come from main as textures on the graphics card and
+  // preload.js draws them into this canvas, on the page's own monitor and on any mirroring it. Mouse and keyboard go back to it.
+  function makeGpuView(own) {
+    const c = gpuEl = document.createElement('canvas');
+    c.id = 'webGpu'; c.tabIndex = 0; c.own = own;
+    document.body.insertBefore(c, $('#webEdge'));
+    steer(c, () => [+c.dataset.fw || 0, +c.dataset.fh || 0]);
+    api.cmd({ type: 'surf', do: 'view', on: true });       // main starts sending it frames
+    if (own && !surfBar.contains(document.activeElement) && !panel.contains(document.activeElement)) c.focus();
+  }
+  function dropGpuView() {
+    const c = gpuEl; gpuEl = null;
+    api.cmd({ type: 'surf', do: 'view', on: false });
+    c.remove();
+    if (c.own) dropPeers();       // friends' capture was of this page
+  }
+  // This PC's mouse and keyboard over a picture of its own page (`el`, showing a page `size()` pixels big) go to the page
+  function steer(v, size) {
+    const at = (e) => {       // where on the page the mouse is, as fractions of its width and height (the picture may have bars beside it)
+      const r = v.getBoundingClientRect(), [vw, vh] = size();
+      if (!vw || !vh) return null;
+      const k = Math.min(r.width / vw, r.height / vh), w = vw * k, h = vh * k;
+      return { x: Math.max(0, Math.min(1, (e.clientX - r.left - (r.width - w) / 2) / w)), y: Math.max(0, Math.min(1, (e.clientY - r.top - (r.height - h) / 2) / h)) };
+    };
+    const mods = (e) => [e.shiftKey && 'shift', e.ctrlKey && 'control', e.altKey && 'alt', e.metaKey && 'meta'].filter(Boolean);
+    const send = (e, p, more) => { if (p) api.cmd({ type: 'web-input', e: { ...p, ...more, m: mods(e) } }); };
+    let move = null;
+    v.addEventListener('mousemove', (e) => {       // at most one a frame
+      const first = !move; move = e;
+      if (first) requestAnimationFrame(() => { const m = move; move = null; if (v.isConnected) send(m, at(m), { k: 'move', bt: m.buttons }); });
+    });
+    v.addEventListener('mousedown', (e) => { e.preventDefault(); v.focus(); send(e, at(e), { k: 'down', b: e.button, n: e.detail }); });
+    v.addEventListener('mouseup', (e) => send(e, at(e), { k: 'up', b: e.button, n: e.detail }));
+    v.addEventListener('wheel', (e) => { e.preventDefault(); const u = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 800 : 1; send(e, at(e), { k: 'wheel', dx: e.deltaX * u, dy: e.deltaY * u }); }, { passive: false });
+    v.addEventListener('contextmenu', (e) => e.preventDefault());
+    const key = (d) => (e) => {
+      if (e.key === 'Escape') { if (d) { v.blur(); tab = 'surf'; showPanel(true); syncUI(); } e.stopPropagation(); return; }       // Esc: our controls, and the keys come back to us
+      e.preventDefault(); e.stopPropagation();
+      api.cmd({ type: 'web-input', e: { k: 'key', d, key: e.key, m: mods(e) } });
+    };
+    v.addEventListener('keydown', key(true)); v.addEventListener('keyup', key(false));
+  }
 
   function makeStreamView() {
     const v = vidEl = document.createElement('video');
@@ -1257,7 +1365,7 @@
   $('#volume').addEventListener('input', (e) => { fill(e.target); P({ music: { volume: +e.target.value } }); });
   $$('[data-nature]').forEach((x) => x.addEventListener('input', () => { fill(x); P({ music: { nature: { [x.dataset.nature]: +x.value } } }); }));
   for (const k of ['autoCycle', 'quality', 'fps']) $('#' + k).addEventListener('change', (e) => P({ [k]: +e.target.value }));
-  for (const k of ['cycleShuffle', 'clock', 'breathing', 'keepAwake', 'onTop', 'autoUpdate']) $('#' + k).addEventListener('change', (e) => P({ [k]: e.target.checked }));
+  for (const k of ['cycleShuffle', 'clock', 'breathing', 'keepAwake', 'onTop', 'autoUpdate', 'surfGpu']) $('#' + k).addEventListener('change', (e) => P({ [k]: e.target.checked }));
   $('#shuffle').addEventListener('change', (e) => P({ music: { shuffle: e.target.checked } }));
   // Settings → Updates: what the updater is doing, and the one button that does the next thing
   function syncUpdate() {
@@ -1441,6 +1549,7 @@
     else if (c.type === 'toast') { if (isCenter || panel.classList.contains('show')) toast(c.text, Math.max(3200, Math.min(9000, c.text.length * 70))); }     // one screen is enough
     else if (c.type === 'ask-quit') { if (confirmEl.classList.contains('on')) api.cmd({ type: 'quit' }); else askQuit(); }
     else if (c.type === 'rtc') onRtc(c);
+    else if (c.type === 'web-cursor') { if (gpuEl && /^[a-z-]{1,24}$/.test(c.c)) gpuEl.style.cursor = c.c; }       // the pointer the offscreen page wants
     else if (c.type === 'music-pos') musicPos = { t: +c.t || 0, d: +c.d || 0, at: performance.now() };
     else if (c.type === 'ptrs') showPtrs(Array.isArray(c.list) ? c.list : []);
     else if (c.type === 'web-esc') { if (webEl) webEl.blur(); window.focus(); tab = 'surf'; showPanel(true); syncUI(); }       // Esc in the web page: our controls, and the keys come back to us
