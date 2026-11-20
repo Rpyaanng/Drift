@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Builds an unpacked Windows x64 dev copy of Drift into dev-build/Drift-win32-x64/.
+// Builds an unpacked x64 dev copy of Drift into dev-build/Drift-<platform>-x64/, for the platform it runs on
+// (or the one given: `npm run dev-build -- --platform linux` / `win32`).
 // Unpacked (no asar) so every source file can be inspected directly.
 // Run manually with `npm run dev-build`, or automatically by the git post-commit hook.
 
@@ -11,9 +12,14 @@ const { packager } = require('@electron/packager');
 const root = path.resolve(__dirname, '..');
 const pkg = require(path.join(root, 'package.json'));
 const outDir = path.join(root, 'dev-build');
-// ffmpeg.exe is too big for git: keep a copy in vendor/ (ignored), or point FFMPEG_EXE at one.
-const ffmpegExe = [process.env.FFMPEG_EXE, path.join(root, 'vendor', 'ffmpeg.exe'), '/home/claude/ff/ffmpeg.exe']
-  .filter(Boolean).find((f) => fs.existsSync(f)) || path.join(root, 'vendor', 'ffmpeg.exe');
+const argAt = process.argv.indexOf('--platform');
+const platform = argAt > 0 ? process.argv[argAt + 1] : process.platform === 'win32' ? 'win32' : 'linux';
+if (!['win32', 'linux'].includes(platform)) { console.error(`dev build: unsupported platform "${platform}" (win32 or linux)`); process.exit(1); }
+const ffName = platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+// ffmpeg is too big for git: keep a copy in vendor/ (ignored), or point FFMPEG_EXE at one. A Linux build without one
+// falls back to the system's ffmpeg on the PATH at run time (see ffmpegPath() in main.js).
+const ffmpegExe = [process.env.FFMPEG_EXE, path.join(root, 'vendor', ffName), platform === 'win32' && '/home/claude/ff/ffmpeg.exe']
+  .filter(Boolean).find((f) => fs.existsSync(f)) || path.join(root, 'vendor', ffName);
 
 function gitInfo() {
   try {
@@ -41,19 +47,19 @@ function vmpSign(appDir) {
   const started = Date.now();
   const extraResource = fs.existsSync(ffmpegExe) ? [ffmpegExe] : [];
   if (!extraResource.length) {
-    console.warn(`warning: ffmpeg.exe not found at ${ffmpegExe}; video audio conversion will be unavailable in this build`);
+    console.warn(`warning: ${ffName} not found at ${ffmpegExe}; ` + (platform === 'win32' ? 'video audio conversion will be unavailable in this build' : 'this build will use the system ffmpeg if there is one'));
   }
 
   const paths = await packager({
     dir: root,
     name: 'Drift',
-    platform: 'win32',
+    platform,
     arch: 'x64',
     out: outDir,
     overwrite: true,
     prune: true,
     asar: false,
-    icon: path.join(root, 'icon.ico'),
+    icon: path.join(root, platform === 'win32' ? 'icon.ico' : 'icon.png'),
     // castLabs' Electron (with Widevine, for copy-protected video in Surf): its builds come from castLabs, not from Electron's own releases
     download: { mirrorOptions: { mirror: 'https://github.com/castlabs/electron-releases/releases/download/' } },
     appVersion: pkg.version,
@@ -73,7 +79,7 @@ function vmpSign(appDir) {
     path.join(appDir, 'BUILD-INFO.txt'),
     `Drift dev build\nbuilt: ${new Date().toISOString()}\ncommit: ${gitInfo()}\n`
   );
-  vmpSign(appDir);
+  if (platform === 'win32') vmpSign(appDir);       // VMP signing is for Windows and macOS only
   console.log(`dev build ready in ${((Date.now() - started) / 1000).toFixed(1)}s: ${appDir}`);
 })().catch((err) => {
   console.error('dev build failed:', err.message || err);

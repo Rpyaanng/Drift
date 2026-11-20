@@ -15,6 +15,9 @@ const createUpdater = require('./updater');
 
 if (process.env.DRIFT_USERDATA) app.setPath('userData', path.resolve(process.env.DRIFT_USERDATA));   // dev: a second copy with its own settings (e.g. to try sharing on one PC)
 
+// On Linux, run through X11 (XWayland on a Wayland desktop): Wayland doesn't let an app place its own windows, so one window
+// per monitor (Span / Mirror / Mix) would all land on the same screen.
+if (process.platform === 'linux' && !process.env.DRIFT_WAYLAND) app.commandLine.appendSwitch('ozone-platform', 'x11');
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-features', 'HardwareMediaKeyHandling,WebRtcHideLocalIpsWithMdns');   // media keys must reach Spotify, not Drift; a shared web page's stream is offered on this PC's real local address
