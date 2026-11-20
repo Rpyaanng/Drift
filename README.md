@@ -183,9 +183,10 @@ handed to every monitor straight from the graphics card, with no video encoding 
 
 Your settings are saved and carry over to new versions.
 
-From 1.5.0 on, Drift **updates itself**. Now and then it checks for a new release, downloads it in the
-background and installs it when you close Drift. You can also install it straight away from **Settings →
-Updates**, or untick *Update Drift automatically* there. Copies of 1.4.1 and older need this one update by hand.
+From 1.5.0 on, Drift **updates itself**. Now and then it checks for a new release. When there is one, a
+download icon appears on the **Settings** tab; press **Download update** under *Updates*, then restart
+straight away or let it install when you close Drift. Tick *Update Drift automatically* there (it's off to
+start with) to have new releases downloaded in the background and installed when you close Drift. Copies of 1.4.1 and older need this one update by hand.
 
 ---
 
@@ -328,9 +329,9 @@ not beside your videos.
 Drift has no account, no telemetry and no ads. Apart from checking for updates (see below), it only goes online when you ask it to: looking up
 subtitles, or sharing a video with friends (and then finding your public address if your router doesn't
 say). Spotify control talks to the Spotify app on this PC, not the internet. Nothing about you goes with
-the update check: it is a plain request for the release list. With *Update Drift
-automatically* on (in Settings), Drift asks GitHub about its latest release a little after it starts and
-every 12 hours after that, and downloads the release from GitHub when there is a new one.
+the update check: it is a plain request for the release list. Drift asks GitHub about its latest release a
+little after it starts and every 12 hours after that. It downloads a new release from GitHub when you press
+*Download update*, or by itself with *Update Drift automatically* on (in Settings).
 
 ## Development
 

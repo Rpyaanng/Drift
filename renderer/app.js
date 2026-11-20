@@ -1371,16 +1371,21 @@
   function syncUpdate() {
     const u = S.update, b = $('#updBtn'), n = $('#updNote');
     $('#updRow').style.display = u && u.supported ? '' : 'none';
+    // a newer version is out and hasn't been downloaded: the same download icon on the Settings tab and on the button
+    const waiting = !!(u && u.supported && ['available', 'manual'].includes(u.status));
+    $('#updTabIcon').classList.toggle('on', waiting);
+    b.querySelector('.updIcon').classList.toggle('on', waiting);
     if (!u || !u.supported) return;
     const pct = Math.round((u.progress || 0) * 100);
-    b.textContent = { ready: `Restart to update to ${u.version}`, manual: `Download ${u.version}`, checking: 'Checking…', downloading: `Downloading ${u.version}… ${pct}%` }[u.status] || 'Check for updates';
-    b.classList.toggle('ghost', !['ready', 'manual'].includes(u.status));
+    b.querySelector('span').textContent = { available: 'Download update', manual: 'Download update', ready: `Restart to update to ${u.version}`, checking: 'Checking…', downloading: `Downloading ${u.version}… ${pct}%` }[u.status] || 'Check for updates';
+    b.classList.toggle('ghost', !['available', 'ready', 'manual'].includes(u.status));
     b.style.pointerEvents = ['checking', 'downloading'].includes(u.status) ? 'none' : '';
-    n.textContent = u.error || { latest: `Drift ${u.current} is the latest version`, ready: 'Or it installs by itself when you close Drift', manual: 'This copy can’t update itself here: get the new one from the releases page' }[u.status] || `You have Drift ${u.current}`;
+    n.textContent = u.error || { latest: `Drift ${u.current} is the latest version`, available: `Drift ${u.version} is out (you have ${u.current})`, ready: 'Or it installs by itself when you close Drift', manual: `Drift ${u.version} is out. This copy can’t update itself here: the button opens the releases page` }[u.status] || `You have Drift ${u.current}`;
   }
   $('#updBtn').addEventListener('click', () => {
     const u = S.update || {};
     if (u.status === 'ready') api.cmd({ type: 'update-install' });
+    else if (u.status === 'available') api.cmd({ type: 'update-download' });
     else if (u.status === 'manual') api.cmd({ type: 'update-page' });
     else api.cmd({ type: 'update-check' });
   });

@@ -52,7 +52,7 @@ const DEFAULTS = {
   onTop: false,
   surfMirror: false,       // the Surf page shows on every other monitor too (see "mirroring" in renderer/app.js)
   surfGpu: false,          // Surf's pages are drawn offscreen and handed to the windows as textures on the graphics card (see web.js)
-  autoUpdate: true,        // look for a new release now and then, download it and install it when Drift closes
+  autoUpdate: false,       // download a new release by itself and install it when Drift closes (new releases are looked for either way)
   sleepAt: 0,
   // hdr: auto = convert HDR videos to SDR on screens that aren't showing HDR | always | never; tone = how bright highlights are squeezed in;
   // enc = which ffmpeg encoder converts (auto = the fastest that works on this PC); xq = picture height of converted video (auto = the screen's)
@@ -1266,6 +1266,7 @@ ipcMain.on('cmd', async (e, c) => {
   switch (c.type) {
     case 'quit': quitting = true; app.quit(); break;
     case 'update-check': if (updater) updater.check(); break;
+    case 'update-download': if (updater) updater.download(); break;
     case 'update-page': if (updater) shell.openExternal(updater.info().page).catch(() => {}); break;
     case 'update-install': if (updater && updater.install(true)) { quitting = true; app.quit(); } break;
     case 'monitor-off': {      // from the "Close Drift?" prompt: leave this one monitor alone and keep Drift on the others
@@ -1544,7 +1545,8 @@ else {
     if (SHOT_DIR) runShots();
     updater = createUpdater({
       app, net, version: process.env.DRIFT_FAKE_VERSION || app.getVersion(),       // dev: pretend to be an older copy
-      enabled: () => state.autoUpdate && (!SHOT_DIR || !!process.env.DRIFT_FAKE_VERSION),
+      enabled: () => !SHOT_DIR || !!process.env.DRIFT_FAKE_VERSION,
+      auto: () => state.autoUpdate,
       onChange: (u) => {
         if (u.status === 'ready' && updTold !== u.version) { updTold = u.version; say(`Drift ${u.version} is ready. It installs when you close Drift, or restart now from Settings`); }
         pushState();

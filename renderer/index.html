@@ -262,10 +262,10 @@
           <p class="keys"><b>Esc</b> exit (asks first) · <b>Tab</b> controls · <b>Space</b> play/pause · <b>← →</b> previous/next · <b>↑ ↓</b> volume · <b>P</b> colour · <b>C</b> clock · <b>B</b> breathing<br>During a video: <b>S</b> subtitles on/off · <b>V</b> next subtitle track · <b>Z X</b> subtitle timing<br>Play, previous and next act on the selected tab: Scenes, or in Media whichever of your video and music is playing. In Surf, previous and next go back and forward. While Spotify plays and Drift has no video or music on, they control Spotify.</p>
           <h3 class="sub">Updates</h3>
           <div class="checks">
-            <label class="chk" title="Look for a new version of Drift now and then, download it in the background and install it when Drift closes"><input type="checkbox" id="autoUpdate"><i></i>Update Drift automatically</label>
+            <label class="chk" title="Download new versions of Drift in the background and install them when Drift closes. When it's off, Drift still looks for new versions and shows them here, and you choose when to download"><input type="checkbox" id="autoUpdate"><i></i>Update Drift automatically</label>
           </div>
           <div class="row" id="updRow">
-            <button class="btn" id="updBtn">Check for updates</button>
+            <button class="btn" id="updBtn"><svg class="updIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5"/><path d="M5 20h14"/></svg><span>Check for updates</span></button>
             <span class="note" id="updNote" style="margin:0"></span>
           </div>
           <div class="row">
@@ -288,7 +288,7 @@
       <button data-tab="media" title="Your videos and music">Media</button>
       <button data-tab="surf" title="Browse the web on this screen, in tabs">Surf</button>
       <button data-tab="share" title="Watch a video with friends, in step">Together</button>
-      <button data-tab="settings">Settings</button>
+      <button data-tab="settings">Settings<svg class="updIcon" id="updTabIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5"/><path d="M5 20h14"/></svg></button>
     </div>
     <div class="quick">
       <span id="ctxTag"></span>

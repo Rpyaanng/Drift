@@ -1,7 +1,8 @@
 'use strict';
 // Keeps Drift up to date from its GitHub releases.
-// It asks GitHub for the latest release now and then; when that is newer than this copy it downloads the release's zip in the
-// background, checks it against the SHA-256 written in the release notes and unpacks it. The new files are copied over this
+// It asks GitHub for the latest release now and then. When that is newer than this copy it says so (Settings shows it), and
+// downloads the release's zip when asked, or by itself with automatic updates on. The zip is checked against the SHA-256
+// written in the release notes and unpacked. The new files are copied over this
 // copy once Drift has closed (by a small PowerShell script started as Drift quits), and Drift is started again if asked to.
 // Only for the packaged Windows app: a copy run from the source (npm start) is left alone.
 
@@ -21,12 +22,12 @@ function newer(a, b) {       // is version a newer than b?
   return false;
 }
 
-module.exports = function createUpdater({ app, net, version, enabled, onChange, onReadyDev = () => {}, log = () => {} }) {
+module.exports = function createUpdater({ app, net, version, enabled, auto, onChange, onReadyDev = () => {}, log = () => {} }) {
   const dir = path.join(app.getPath('userData'), 'update');
   const appDir = path.dirname(process.execPath);
-  // idle | checking | latest | downloading | ready | manual (newer, but this copy can't update itself) | error
+  // idle | checking | latest | available (newer, not downloaded yet) | downloading | ready | manual (newer, but this copy can't update itself) | error
   let info = { status: 'idle', version: '', notes: '', page: `https://github.com/${REPO}/releases/latest`, progress: 0, error: '', checked: 0 };
-  let timer = null, busy = false, staged = '';
+  let timer = null, busy = false, staged = '', release = null;       // release: the newer one found, { url, size, sha, v }
   const supported = process.platform === 'win32' && (app.isPackaged || !!process.env.DRIFT_FAKE_VERSION);
   const set = (p) => { info = { ...info, ...p }; onChange(info); };
 
@@ -45,7 +46,7 @@ module.exports = function createUpdater({ app, net, version, enabled, onChange, 
   }
 
   async function check(byHand) {
-    if (!supported || busy || info.status === 'ready') return;
+    if (!supported || busy || ['ready', 'downloading'].includes(info.status)) return;
     busy = true;
     set({ status: 'checking', error: '' });
     try {
@@ -58,13 +59,27 @@ module.exports = function createUpdater({ app, net, version, enabled, onChange, 
       if (!newer(v, version)) { set({ status: 'latest', version: v, page, checked: Date.now() }); return; }
       log(`update: ${v} is out (this is ${version})`);
       if (!asset || !sha || !writable()) { set({ status: 'manual', version: v, page, notes, checked: Date.now() }); return; }
-      set({ status: 'downloading', version: v, page, notes, progress: 0, checked: Date.now() });
-      staged = await fetchAndUnpack(asset.browser_download_url, asset.size, sha.toLowerCase(), v);
+      release = { url: asset.browser_download_url, size: asset.size, sha: sha.toLowerCase(), v };
+      set({ status: 'available', version: v, page, notes, progress: 0, checked: Date.now() });
+    } catch (e) {
+      log('update: ' + e.message);
+      set({ status: byHand ? 'error' : 'idle', error: byHand ? 'Couldn\'t check for updates: ' + e.message : '' });
+    } finally { busy = false; }
+    if (info.status === 'available' && auto()) download();
+  }
+
+  // fetches the newer release check() found
+  async function download() {
+    if (busy || info.status !== 'available' || !release) return;
+    busy = true;
+    set({ status: 'downloading', progress: 0, error: '' });
+    try {
+      staged = await fetchAndUnpack(release.url, release.size, release.sha, release.v);
       set({ status: 'ready', progress: 1 });
       if (process.env.DRIFT_UPDATE_AUTOINSTALL) onReadyDev();       // dev: try the whole round trip
     } catch (e) {
       log('update: ' + e.message);
-      set({ status: byHand ? 'error' : 'idle', error: byHand ? 'Couldn\'t check for updates: ' + e.message : '' });
+      set({ status: 'available', error: 'Couldn\'t download the update: ' + e.message });
     } finally { busy = false; }
   }
 
@@ -138,12 +153,14 @@ module.exports = function createUpdater({ app, net, version, enabled, onChange, 
   function schedule() {
     clearTimeout(timer); clearInterval(timer);
     if (!supported || !enabled()) return;
+    if (info.status === 'available' && auto()) download();       // automatic updates just turned on, with one waiting
     timer = setTimeout(() => { check(false); timer = setInterval(() => check(false), EVERY); }, FIRST_CHECK);
   }
 
   return {
     info: () => ({ ...info, supported, current: version }),
     check: () => check(true),
+    download,
     install,
     settingChanged: schedule,
     start: schedule,

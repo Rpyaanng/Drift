@@ -332,6 +332,10 @@ input.num { width: 46px; text-align: center; padding: 6px 4px; }
 .tabs button .cnt { display: inline-grid; place-items: center; min-width: 17px; height: 17px; margin: 0 -4px 0 7px; padding: 0 5px; border-radius: 999px; box-sizing: border-box;
   background: color-mix(in srgb, var(--accent) 32%, rgba(255,255,255,.08)); color: var(--ink); font: 700 10.5px/1 "Segoe UI Variable Text", "Segoe UI", system-ui; font-variant-numeric: tabular-nums; vertical-align: 1px; }
 .tabs button.active .cnt { background: var(--accent); color: #0b0d13; }
+.updIcon { display: none; width: 14px; height: 14px; vertical-align: -2px; }
+.tabs button .updIcon { margin-left: 6px; color: var(--accent); filter: drop-shadow(0 0 6px var(--accent)); }
+.updIcon.on { display: inline-block; }
+#updBtn .updIcon { margin-right: 7px; }
 .tabs button.live::after { content: ""; display: inline-block; width: 6px; height: 6px; margin: 0 0 2px 6px; border-radius: 50%; background: #1ed760; box-shadow: 0 0 8px #1ed760; }
 [data-tab="share"] .row { flex-wrap: nowrap; }
 [data-tab="share"] input[type=search] { user-select: text; }
