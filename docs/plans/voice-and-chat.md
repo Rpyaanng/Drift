@@ -115,6 +115,7 @@ No accounts and no passwords.
   - **Default: relay voice through the hub (TURN)**, with `iceTransportPolicy: 'relay'`, so members only see the hub's address.
   - A setting "Connect directly in calls (lower delay; others in the call can see your IP address)" for groups of
     people who trust each other.
+  - Push-to-talk uses a key-state helper, not `globalShortcut` (which never reports releases; spike 1).
   - This needs a small TURN server inside `hub.js` (UDP Allocate, Permission, ChannelBind and Send/Data, about 500
     lines). Building it is spike 3. If it's too much, a standalone hub can run coturn beside it instead.
   - The STUN server (Google's today) also sees your IP. With relay on, STUN isn't needed.
@@ -176,6 +177,30 @@ option C isn't recommended. Drift's licence text should also say the software is
 0. **Spikes** (each a throwaway branch or file, with a measurement written back into this plan):
    1. Two Drift copies on one PC (separate `userData`): mesh voice through `RTCPeerConnection`, an audio-only
       track with Opus, push-to-talk via `globalShortcut`, and the "mic live" indicator. Measure the delay.
+      **Done 2026-11-21** (`spikes/voice/`, run `VOICE_AUTO=out.json electron spikes/voice/main.js`). The windows are
+      separate renderer processes in a full mesh over loopback, with IPC standing in for the hub's signalling:
+      - **Delay** from a sound entering the sender's track to it reaching the receiver's audio graph: median **42–55 ms**
+        with 2 people, **52–69 ms** (p90 up to 82) with 8 windows sharing one PC. The jitter buffer holds 20–30 ms of that.
+        Windows then adds **42 ms of output latency** (`AudioContext.outputLatency`, shared-mode audio), plus about
+        10 ms of capture. So about **110 ms from mouth to ear on one PC**, before the internet's own delay. Opus at 10 ms
+        frames (`minptime=10` is already offered) could save about 10 ms if it ever matters.
+      - **DTX has to be asked for.** Chromium doesn't turn it on by itself. Adding `usedtx=1` to the remote SDP's Opus
+        `fmtp` line takes a silent stream from **12.5 kb/s to 1.1 kb/s**. While sounding it's **44.5 kb/s** with
+        RTP headers. Because most people are quiet most of the time, a relayed 8-person call with one or two people
+        talking is about **0.75 Mb/s** at the hub, not the 3.4 Mb/s estimated in §11.
+      - **Processor**: about **3%** of one core for each member with 1 other person in the call, and about **13%**
+        with 7 others (8 windows used 103% between them). That's fine for a mesh of 8.
+      - **Hold-to-talk**: `globalShortcut` reports presses but never releases, so it can't do hold-to-talk. A small
+        PowerShell+C# helper that polls `GetAsyncKeyState` every 5 ms works (the same approach as the Spotify volume
+        helper in `main.js`). It saw 6 of 6 key presses from Windows' keyboard input, and switching the track on adds
+        **no delay** beyond the call's own (53–70 ms). It works for mouse side buttons too (`VK_XBUTTON1/2`). The mic
+        stays open for the whole call and hold-to-talk only sets `track.enabled`, as Discord does. Not yet checked:
+        whether it still sees the key while a game runs as administrator.
+      - **"Mic live" light**: a tray icon, grey for "in a call, muted" and red for "people can hear you", plus a
+        badge in the window. Remote voices only reach Web Audio (for the speaking ring) while an `<audio>` element
+        plays the stream, even a muted one.
+      - Still to try by ear: `VOICE_SRC=mic electron spikes/voice/main.js` with headphones (you hear yourself through
+        the call, delayed).
    2. Echo: play a video in Drift while in a call, with speakers. Does the other side hear it? Check both Chromium
       playback and ffmpeg-converted audio.
    3. A minimal TURN server inside Node. Does Chromium accept it with `iceTransportPolicy: 'relay'`? What does it cost
@@ -195,9 +220,9 @@ option C isn't recommended. Drift's licence text should also say the software is
 1. **B, the Drift Hub.** Not Matrix: it would tie Drift to someone else's protocol, servers and account model, and it
    needs a domain and HTTPS, so it can't run inside a friend's Drift. Moving to Matrix later would mean rewriting
    the protocol and hub layers. The UI could mostly stay, as long as `renderer/chat.js` only talks to `chat.js` over IPC.
-2. **Voice is relayed through the hub by default**, with the "Connect directly" setting for trusting groups. An
-   8-person call through the hub is about 3.4 Mb/s each way at the hub before Opus DTX (much less in practice), so
-   turn DTX on, and show the hub owner how much bandwidth calls use.
+2. **Voice is relayed through the hub by default**, with the "Connect directly" setting for trusting groups. With DTX
+   on (which has to be asked for in the SDP, see spike 1), an 8-person call through the hub is about 0.75 Mb/s each
+   way while one or two people talk. Without DTX it would be 3.4 Mb/s. Show the hub owner how much bandwidth calls use.
 3. **DMs are transport-encrypted only in the first release**, like channels. The UI says so. DMs are stored as an
    opaque `body` plus a `v` version field from day one, so a sealed box per message (X25519 + AES-GCM, `node:crypto`)
    can follow soon after without a migration. A full double ratchet is not planned for now.
