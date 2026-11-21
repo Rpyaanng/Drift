@@ -1,6 +1,6 @@
 # Plan: voice and chat in Drift (Discord-style)
 
-Status: design draft, 2026-11-21, branch `voip`. Nothing is implemented yet. Spikes come first: a few of the
+Status: design settled (§11), 2026-11-21, branch `voip`. Nothing is implemented yet. Spikes come first: a few of the
 choices below depend on facts that can only be found by measuring a real build.
 
 The goal is a Discord-like space for a group of friends inside Drift:
@@ -190,16 +190,25 @@ option C isn't recommended. Drift's licence text should also say the software is
 5. **Standalone hub**: `electron hub.js` / Node 24, a guide for running it on a Pi or VPS, and backups of the SQLite file.
 6. Later: end-to-end encrypted DMs, an SFU for big channels, and mobile? (out of scope).
 
-## 11. Open decisions
+## 11. Decisions (settled 2026-11-21)
 
-1. Option **B (Drift Hub)**, or D (Matrix)? Everything above assumes B.
-2. Voice IP privacy: **relay through the hub by default** (recommended), or direct by default?
-3. Should text start transport-encrypted only (Phase 1 as written), or is end-to-end encryption for DMs a must-have for the first release?
-4. Biggest group to plan for: 8 (mesh is enough) or 25+ (needs an SFU sooner)?
-5. Attachment size limit default: 25 MB?
+1. **B, the Drift Hub.** Not Matrix: it would tie Drift to someone else's protocol, servers and account model, and it
+   needs a domain and HTTPS, so it can't run inside a friend's Drift. Moving to Matrix later would mean rewriting
+   the protocol and hub layers. The UI could mostly stay, as long as `renderer/chat.js` only talks to `chat.js` over IPC.
+2. **Voice is relayed through the hub by default**, with the "Connect directly" setting for trusting groups. An
+   8-person call through the hub is about 3.4 Mb/s each way at the hub before Opus DTX (much less in practice), so
+   turn DTX on, and show the hub owner how much bandwidth calls use.
+3. **DMs are transport-encrypted only in the first release**, like channels. The UI says so. DMs are stored as an
+   opaque `body` plus a `v` version field from day one, so a sealed box per message (X25519 + AES-GCM, `node:crypto`)
+   can follow soon after without a migration. A full double ratchet is not planned for now.
+4. **Up to 8 people in a voice channel at once; no limit on members.** Voice uses a mesh. An SFU for bigger calls
+   comes later. It would decrypt media on the server unless SFrame is added, so don't promise "voice is always
+   end-to-end encrypted" in a way that rules that out. Say "end-to-end encrypted in calls of up to 8".
+5. **25 MB per file by default**, changeable by the hub owner, with a total quota for each hub. Later: offer to
+   shrink an oversized video with Drift's ffmpeg before sending it.
 
 ## 12. For the next session
 
-Start here: read this plan, then `p2p.js` (the connection, the invite codes and `wire()`), then
+Start here: read this plan (the decisions in §11 are settled), then `p2p.js` (the connection, the invite codes and `wire()`), then
 `renderer/app.js` around line 844 (WebRTC signalling over the p2p channel), then `main.js`'s `runShots` (how the
 `DRIFT_TEST*` checks work). Begin with the spikes in §10.0, in order.
