@@ -827,11 +827,11 @@ function guestCmd(m) {
     if (m.do === 'toggle') patch({ music: { playing: !state.music.playing } });
     else if ((m.do === 'next' || m.do === 'prev') && state.music.source === 'files' && audioWin && !audioWin.isDestroyed()) audioWin.webContents.send('cmd', { type: m.do });
   }
-  else if (m.a === 'surf') { if (web.info().open && !web.info().out && m.m && typeof m.m === 'object' && SURF.includes(m.m.do)) web.act({ do: m.m.do, text: m.m.text, id: m.m.id }); }       // the browser's own controls: tabs, back, the address…
+  else if (m.a === 'surf') { if (web.info().open && !web.info().out && m.m && typeof m.m === 'object' && SURF.includes(m.m.do)) web.act({ do: m.m.do, text: m.m.text, id: m.m.id, n: m.m.n }); }       // the browser's own controls: tabs, back, the address…
   else if (m.a === 'input') web.input(m.e);       // their mouse or keyboard, over the picture of our web page
 }
 // The Surf tab's browser, which friends see too while this PC shares: see web.js.
-const SURF = ['go', 'home', 'new', 'tab', 'close', 'back', 'fwd', 'reload'];
+const SURF = ['go', 'home', 'new', 'tab', 'close', 'back', 'fwd', 'reload', 'hard', 'reopen', 'step', 'nth', 'zoom'];       // (the last five: keyboard shortcuts)
 const screenFor = (key) => (visWins.some((x) => x.key === key) ? key : (visWins.find((x) => (allDisplays().find((d) => d.key === x.key) || {}).primary) || visWins[0] || { key: 'd0' }).key);
 let streamKey = '', streamShown = true;       // as a guest: the monitor a friend's browser is shown on, and whether it is showing here
 const web = createWeb({
@@ -843,7 +843,7 @@ const web = createWeb({
     if (x && FAKE <= 1 && !process.env.DRIFT_HIDDEN && !x.win.isFullScreen()) x.win.setFullScreen(true);
   }, 150),
   blockAds: () => state.share.adblock,
-  listsFile: () => path.join(app.getPath('userData'), 'adblock-lists.bin'),
+  ublockDir: () => path.join(app.getPath('userData'), 'ublock'),
   say,
   bounds: (key) => { const x = visWins.find((y) => y.key === screenFor(key)); return x && !x.win.isDestroyed() ? x.win.getBounds() : screen.getPrimaryDisplay().bounds; },
   away: (on) => {       // the PC's own browser is over the Surf monitor: Drift's window there must not stay above it
@@ -1325,7 +1325,7 @@ ipcMain.on('cmd', async (e, c) => {
       else if (remote) {       // a friend's browser: ask their PC
         if (!remote.web) say('Leave your friend\'s session to open your own page');
         else if (!remote.ctrl) say(`Only ${p2p.info().host || 'the host'} can control the page`);
-        else p2p.send({ t: 'cmd', a: 'surf', m: { do: d, text: String(c.text || '').slice(0, 2000), id: +c.id || 0 } });
+        else p2p.send({ t: 'cmd', a: 'surf', m: { do: d, text: String(c.text || '').slice(0, 2000), id: +c.id || 0, n: +c.n || 0 } });
       } else { const r = web.act(c, was ? web.info().key : k); if (r.error) say(r.error); }       // (the bar on a monitor mirroring the page steers it where it is)
       break;
     }
@@ -1889,6 +1889,40 @@ async function runShots() {
     }
     srv.close(); web.close(); await wait(800);
   }
+  if (process.env.DRIFT_TESTKEYS) {       // Surf's keyboard shortcuts, pressed in the page (with DRIFT_TESTGPU=1, over the offscreen page's picture)
+    try {
+    const gpuRun = !!process.env.DRIFT_TESTGPU;
+    if (gpuRun) { patch({ surfGpu: true }); await wait(300); }
+    const srv = http.createServer((q, r) => { r.writeHead(200, { 'Content-Type': 'text/html' }); r.end(`<!DOCTYPE html><title>page ${q.url}</title><body>keys</body>`); });
+    await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+    const url = `http://127.0.0.1:${srv.address().port}/`, sw = visWins[0].win.webContents;
+    web.act({ do: 'go', text: url + 'one' }, visWins[0].key); await wait(4000);
+    const front = () => { const w = web.info(); return webContents.getAllWebContents().find((x) => x.getURL() === w.url); };
+    const press = async (key, m = []) => {
+      if (gpuRun) { web.input({ k: 'key', d: true, key, m }, true); web.input({ k: 'key', d: false, key, m }, true); }
+      else { const pg = front(); if (pg) { pg.focus(); pg.sendInputEvent({ type: 'keyDown', keyCode: key, modifiers: m }); pg.sendInputEvent({ type: 'keyUp', keyCode: key, modifiers: m }); } }
+      await wait(1500);
+    };
+    const tabs = () => { const w = web.info(); return w.tabs.map((t) => (t.id === w.active ? '*' : '') + t.title).join(' | '); };
+    log.push(`keys (${gpuRun ? 'gpu' : 'webview'}) start: ${tabs()}`);
+    await press('t', ['control']); log.push('Ctrl+T: ' + tabs());
+    await press('Tab', ['control']); log.push('Ctrl+Tab: ' + tabs());
+    await press('2', ['control']); log.push('Ctrl+2: ' + tabs());
+    await press('w', ['control']); log.push('Ctrl+W: ' + tabs());
+    web.act({ do: 'go', text: url + 'two' }); await wait(2500);
+    await press('t', ['control']); web.act({ do: 'go', text: url + 'three' }); await wait(2500); await press('w', ['control']); log.push('Ctrl+T, to /three, Ctrl+W: ' + tabs());
+    await press('t', ['control', 'shift']); await wait(1500); log.push('Ctrl+Shift+T: ' + tabs());
+    await press('=', ['control']); await press('=', ['control']); log.push('Ctrl+= twice: zoom ' + (front() && front().getZoomFactor()));
+    await press('0', ['control']); log.push('Ctrl+0: zoom ' + (front() && front().getZoomFactor()));
+    if (!gpuRun) { await press('l', ['control']); log.push('Ctrl+L: focus in ' + await sw.executeJavaScript('document.activeElement.id')); }
+    if (gpuRun) {
+      const pw = front() && BrowserWindow.fromWebContents(front()), hb = visWins[0].win.getBounds();
+      log.push(`offscreen window: onTop=${pw && pw.isAlwaysOnTop()} visible=${pw && pw.isVisible()} at ${pw && JSON.stringify(pw.getBounds())}, Surf monitor at ${JSON.stringify(hb)}`);
+      patch({ surfGpu: false }); await wait(1000);
+    }
+    srv.close(); web.close(); await wait(800);
+    } catch (e) { log.push('keys test failed: ' + (e && e.stack || e)); web.close(); }
+  }
   if (process.env.DRIFT_TESTMIRROR && visWins.length > 1) {       // Surf mirrored on the other monitors (run with DRIFT_FAKE_DISPLAYS=2): the picture arrives, and a click there reaches the page. With DRIFT_TESTGPU=1, drawn offscreen
     try {
     const gpuRun = !!process.env.DRIFT_TESTGPU;
@@ -1996,6 +2030,47 @@ async function runShots() {
       await wc.executeJavaScript("document.querySelector('#forgetSurf').click()"); await wait(1500);
       log.push(`forget: cookies ${before} -> ${(await ws.cookies.get({})).length}, asked="${asked}", browser open=${web.info().open} tabs=${web.info().tabs.length}`);
     }
+  }
+  if (process.env.DRIFT_TESTBLOCK) {       // the advert blocker (uBlock Origin) in Surf, and the Sec-CH-UA headers beside it. With DRIFT_TESTGPU=1, drawn offscreen; =ytquit quits with YouTube still open
+    const tl = (x) => { log.push(x); console.log('[test] ' + x); };       // (also printed: a crash leaves no log.txt)
+    try {
+      const gpuRun = !!process.env.DRIFT_TESTGPU;
+      patch({ surfGpu: gpuRun, share: { adblock: true } }); await wait(300);
+      const srv = http.createServer((q, r) => {       // shows the headers it was sent, and asks for the detailed hints
+        r.writeHead(200, { 'Content-Type': 'text/html', 'Accept-CH': 'Sec-CH-UA-Full-Version-List, Sec-CH-UA-Platform-Version' });
+        r.end(`<!DOCTYPE html><title>hints</title><pre id="h">${JSON.stringify(Object.fromEntries(Object.entries(q.headers).filter(([k]) => k.startsWith('sec-ch-ua')))).replace(/</g, '&lt;')}</pre>`);
+      });
+      await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+      const ws = session.fromPartition('persist:web');
+      const page = (host) => webContents.getAllWebContents().find((x) => !x.isDestroyed() && x.session === ws && x.getType() !== 'backgroundPage' && x.getURL().includes(host));
+      const probe = `JSON.stringify({
+        ytAds: typeof ytInitialPlayerResponse === 'undefined' ? 'n/a' : !!(ytInitialPlayerResponse && (ytInitialPlayerResponse.adPlacements || ytInitialPlayerResponse.playerAds)),
+        iframes: document.querySelectorAll('iframe').length, sheets: document.adoptedStyleSheets.length,
+        adEls: [...document.querySelectorAll('[id*=google_ads], ins.adsbygoogle, [data-ad-slot], [id^=div-gpt-ad], ytd-ad-slot-renderer')].filter((e) => e.offsetHeight > 0).length })`;
+      const visit = async (what, u, host, ms = 12000) => {
+        const t0 = Date.now();
+        web.act({ do: 'go', text: u }, visWins[0].key); await wait(ms);
+        const p = page(host);
+        tl(`block ${what}: ${p ? await p.executeJavaScript(probe).catch((e) => e.message) : 'page not found'} (${Date.now() - t0}ms)`);
+      };
+      const exts = () => (ws.extensions || ws).getAllExtensions().map((e) => e.name).join(', ');
+      tl(`block (${gpuRun ? 'gpu' : 'webview'}) start`);
+      await visit('youtube', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'youtube.com', 25000);       // (the first time, uBO is downloaded first)
+      tl('block extensions: ' + exts());
+      await visit('news', 'https://www.theverge.com/', 'theverge.com');
+      const hu = `http://127.0.0.1:${srv.address().port}/hints`;
+      web.act({ do: 'go', text: hu }); await wait(2500); web.act({ do: 'reload' }); await wait(2500);       // (the detailed ones come on the second visit)
+      const hp = page('127.0.0.1');
+      tl('block hints: ' + (hp ? await hp.executeJavaScript("document.querySelector('#h').textContent").catch((e) => e.message) : 'page not found'));
+      patch({ share: { adblock: false } }); await wait(500);
+      await visit('youtube, blocking off', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'youtube.com');
+      tl('block extensions, blocking off (uBO stays loaded, everything trusted): ' + exts());
+      patch({ share: { adblock: true } }); await wait(500);
+      await visit('youtube, blocking on again', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'youtube.com');
+      await snap('block-youtube');
+      if (process.env.DRIFT_TESTBLOCK === 'ytquit') { tl('quitting with the page open'); fs.writeFileSync(path.join(SHOT_DIR, 'log.txt'), log.join('\n')); quitting = true; app.quit(); return; }
+      srv.close(); web.close(); await wait(800); patch({ surfGpu: false }); await wait(800);
+    } catch (e) { tl('block test failed: ' + (e && e.stack || e)); web.close(); }
   }
   fs.writeFileSync(path.join(SHOT_DIR, 'log.txt'), log.join('\n'));
   quitting = true; app.quit();

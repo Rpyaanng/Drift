@@ -9,11 +9,13 @@
 //     every Drift window showing the page (the Surf monitor's and any mirroring it: see preload.js), with no video encoding. Their
 //     mouse and keyboard are played back into it (input()). Chromium doesn't draw a <select>'s open list offscreen, so
 //     surf-select.js stands in for it there.
-const { app, session, net, BrowserWindow, sharedTexture } = require('electron');
+const { app, session, ipcMain, webContents, BrowserWindow, sharedTexture } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const createOutside = require('./outside');
+const ublock = require('./surf-ublock');
+const surfKey = require('./renderer/surf-keys');       // the browser's keyboard shortcuts (Ctrl+T, Ctrl+W, Ctrl+Tab…)
 
 const isWeb = (u) => /^https?:\/\//i.test(String(u || ''));
 const isHome = (u) => /^drift:\/\/home\//i.test(String(u || ''));
@@ -27,6 +29,7 @@ const KEYS = { ' ': 'Space', ArrowLeft: 'Left', ArrowRight: 'Right', ArrowUp: 'U
 
 // A new tab opens on Drift's own start page (renderer/surf-home.html), served inside the browser's session as drift://home/.
 const HOME = 'drift://home/', MAX_TABS = 12;
+const ZOOMS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5];       // Chrome's zoom steps
 const HOME_FILE = path.join(__dirname, 'renderer', 'surf-home.html');
 // Run in a page brought back from last time: pauses anything already playing, and anything that starts by itself before someone
 // clicks or presses a key in the page (YouTube starts its video a moment after the page is in).
@@ -39,7 +42,7 @@ const HOLD = `(() => {
 })()`;
 const site = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } };
 
-// ---- what the browser says it is, in the Sec-CH-UA headers (see sess()) ----
+// ---- what the browser says it is, in the Sec-CH-UA headers (surf-net/background.js adds them to requests) ----
 // navigator.userAgentData, read from a Drift window (its values are the same in every page): when the window loads, and again
 // whenever a Surf page attaches to it (the window is surely loaded then, and the page hasn't loaded anything yet). Until it is known, the basic
 // headers say what Chromium itself would ("Not:A-Brand" is Chromium's made-up brand, and can change between versions: hence
@@ -47,32 +50,13 @@ const site = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } 
 const ID_FIELDS = ['brands', 'mobile', 'platform', 'fullVersionList', 'uaFullVersion', 'platformVersion', 'architecture', 'bitness', 'wow64', 'model', 'formFactors'];
 let ident = { brands: [{ brand: 'Not:A-Brand', version: '8' }, { brand: 'Chromium', version: (process.versions.chrome || '').split('.')[0] }],
   mobile: false, platform: { win32: 'Windows', darwin: 'macOS' }[process.platform] || 'Linux', known: false };
-const sfStr = (s) => `"${String(s == null ? '' : s).replace(/[\\"]/g, '\\$&')}"`;       // a structured-header string, as Chrome writes it
-const sfList = (bs) => (Array.isArray(bs) ? bs : []).map((b) => `${sfStr(b.brand)};v=${sfStr(b.version)}`).join(', ');
-const sfBool = (b) => (b ? '?1' : '?0');
-// the detailed hints a site can ask for with Accept-CH: header → [navigator.userAgentData field, how it is written]
-const HIGH = {
-  'sec-ch-ua-full-version-list': ['fullVersionList', sfList],
-  'sec-ch-ua-full-version': ['uaFullVersion', sfStr],
-  'sec-ch-ua-platform-version': ['platformVersion', sfStr],
-  'sec-ch-ua-arch': ['architecture', sfStr],
-  'sec-ch-ua-bitness': ['bitness', sfStr],
-  'sec-ch-ua-wow64': ['wow64', sfBool],
-  'sec-ch-ua-model': ['model', sfStr],
-  'sec-ch-ua-form-factors': ['formFactors', (f) => [].concat(f).map(sfStr).join(', ')],
-};
-// The headers for one request: the three every Chrome sends, and those of `want` (header names a site asked for) once known
-function hints(want) {
-  const h = { 'sec-ch-ua': sfList(ident.brands), 'sec-ch-ua-mobile': sfBool(ident.mobile), 'sec-ch-ua-platform': sfStr(ident.platform) };
-  if (ident.known && want) for (const k of want) { const [field, write] = HIGH[k] || []; if (field && ident[field] !== undefined) h[k] = write(ident[field]); }
-  return h;
-}
-function learnIdent(wc) {
+// `then()` is called once it is known
+function learnIdent(wc, then) {
   if (ident.known || !wc || wc.isDestroyed()) return;
   const read = () => {
     if (ident.known || wc.isDestroyed()) return;
     wc.executeJavaScript(`navigator.userAgentData ? navigator.userAgentData.getHighEntropyValues(${JSON.stringify(ID_FIELDS)}) : null`)
-      .then((v) => { if (v && Array.isArray(v.brands) && v.brands.length && !ident.known) ident = { ...v, known: true }; })
+      .then((v) => { if (v && Array.isArray(v.brands) && v.brands.length && !ident.known) { ident = { ...v, known: true }; then(); } })
       .catch(() => {});
   };
   if (wc.isLoading()) wc.once('did-finish-load', read); else read();
@@ -84,7 +68,7 @@ function learnIdent(wc) {
 //   escape()       Esc was pressed in a page: bring Drift's own controls up
 //   unfull(host)   a page left full screen (`host` is the Drift window it sits in)
 //   blockAds()     should adverts be blocked in pages?
-//   listsFile()    where the advert-blocking lists are kept between runs
+//   ublockDir()    the folder the advert blocker (uBlock Origin, downloaded the first time) is kept in
 //   say(text)      show a message on screen
 //   bounds(key)    where monitor `key`'s Drift window is, to open the outside browser over it
 //   away(on)       a browser window of the PC's own is (on) or is no longer over the Surf monitor: Drift must not stay above it
@@ -98,13 +82,13 @@ module.exports = function createWeb(hooks) {
   let holder = null;         // the Drift window the pages are in
   const tabs = [];           // { id, wc, url, title, pending, full, ready, seq }: wc is the tab's page, a <webview> in that window (renderer/app.js makes it)
   let active = 0, nextId = 1;
+  const closed = [];         // the addresses of the last tabs closed, newest last: Ctrl+Shift+T opens them again
   let sid = '';              // names the stream of the tab in front: friends ask for it again when it changes
   let out = null;            // { name, id, title, stop }: the page is open in the PC's own browser, whose window (`id`, a capture source) friends see instead
   let gpu = false;           // the pages are offscreen windows of ours, drawn into the Drift windows in `viewers` (see the top)
   const viewers = new Set(); // webContents of the Drift windows drawing the page in front (they say so: viewer())
   const outside = createOutside();
   let ses = null, made = 0;
-  const asked = new Map();   // origin → the detailed Sec-CH-UA headers it asked for with Accept-CH (see sess())
   const fresh = new Map();   // pages the window has made that it hasn't yet said which tab they are for
   const run = crypto.randomBytes(4).toString('hex');
   const cur = () => tabs.find((t) => t.id === active) || null;
@@ -118,32 +102,29 @@ module.exports = function createWeb(hooks) {
     widevine();       // fetched in the background if this is the first time
     // Sites turn away browsers they don't recognise, so it says what it is, a Chromium, the way Chrome says it: no app names, and
     // only the major version (Chrome has sent "Chrome/156.0.0.0" for years; the full number is a sign of an embedded browser)
-    ses.setUserAgent(ses.getUserAgent().replace(/\s(?:Electron|Drift)\/\S+/gi, '').replace(/\bChrome\/(\d+)\.[\d.]+/, 'Chrome/$1.0.0.0'));
+    // Said twice: the session's is what a page's own frame says, but a frame from another site runs in a process of its own, which
+    // says Electron's (app.userAgentFallback: "Drift/… Electron/…"), in navigator.userAgent and in every request its scripts make,
+    // whatever the session or the page is told. Cloudflare's check always runs in such a frame: it passed, but its clearance was for
+    // the Electron user agent, so the page that came next, saying Chrome, was challenged again, forever. (Drift's own windows say
+    // Chrome too from then on, which nothing in them minds.)
+    const ua = ses.getUserAgent().replace(/\s(?:Electron|Drift)\/\S+/gi, '').replace(/\bChrome\/(\d+)\.[\d.]+/, 'Chrome/$1.0.0.0');
+    app.userAgentFallback = ua;
+    ses.setUserAgent(ua);
     ses.setPermissionRequestHandler((_wc, perm, cb) => cb(perm === 'fullscreen'));       // no camera, microphone, location, notifications…
     ses.setPermissionCheckHandler((_wc, perm) => perm === 'fullscreen');                 // ...and pages are told so up front (otherwise they read "granted")
-    // Electron never sends the Sec-CH-UA headers every Chrome sends (it has no client hints at all), while the page's own
-    // navigator.userAgentData still answers. Sites' bot checks see the mismatch and ask for captcha after captcha, so the
-    // headers are added here, saying exactly what navigator.userAgentData says (see hints()). The detailed ones (full version,
-    // platform version, architecture…) go only to a site that asked for them with Accept-CH, as Chrome does.
-    ses.webRequest.onBeforeSendHeaders((d, cb) => {
-      const h = d.requestHeaders;
-      if (/^https:|^http:\/\/(localhost|127\.0\.0\.1)[:/]/i.test(d.url)) {
-        let o = ''; try { o = new URL(d.url).origin; } catch { /* keeps the basic ones */ }
-        const has = new Set(Object.keys(h).map((k) => k.toLowerCase()));       // (a page's own fetch() already carries the basic ones)
-        for (const [k, v] of Object.entries(hints(asked.get(o)))) if (!has.has(k)) h[k] = v;
-      }
-      cb({ requestHeaders: h });
+    // Nothing here may use ses.webRequest: Electron gives a session's requests either to session.webRequest or to its
+    // extensions, never both, and the advert blocker is an extension. What Drift does to requests (the Sec-CH-UA headers
+    // every Chrome sends, which sites' bot checks look for) is an extension too: surf-net/background.js.
+    netReady().catch(() => {});
+    // uBlock Origin's scriptlets, for a page or frame that is starting (see surf-scriptlets.js). Its preload waits for them.
+    ipcMain.on('surf-scriptlets', (e, u) => {
+      if (e.sender.session !== ses || !blocking || !loading) { e.returnValue = ''; return; }
+      Promise.race([
+        loading.then((x) => (x.bg.isDestroyed() ? '' : x.bg.executeJavaScript(`self.driftScriptlets ? self.driftScriptlets(${JSON.stringify(String(u))}) : ''`))),
+        new Promise((r) => setTimeout(() => r(''), 3000)),       // (a page isn't held up for long)
+      ]).then((c) => { e.returnValue = typeof c === 'string' ? c : ''; }, () => { e.returnValue = ''; });
     });
-    // (onHeadersReceived belongs to the advert blocker: Electron allows one listener per event, but this one is free)
-    ses.webRequest.onResponseStarted({ urls: ['https://*/*', 'http://localhost/*', 'http://127.0.0.1/*'] }, (d) => {
-      if (d.resourceType !== 'mainFrame') return;       // as in Chrome: a page itself asks, for its own origin
-      const v = Object.entries(d.responseHeaders || {}).find(([k]) => k.toLowerCase() === 'accept-ch');
-      if (!v) return;
-      let o; try { o = new URL(d.url).origin; } catch { return; }
-      const want = new Set([].concat(v[1]).join(',').split(',').map((s) => s.trim().toLowerCase()).filter((s) => HIGH[s]));
-      asked.delete(o);
-      if (want.size) { asked.set(o, want); if (asked.size > 500) asked.delete(asked.keys().next().value); }
-    });
+    ses.registerPreloadScript({ type: 'frame', id: 'drift-scriptlets', filePath: path.join(__dirname, 'surf-scriptlets.js') });
     // In every page and frame: password boxes can't be turned into plain text, so nobody watching can read a password (see surf-guard.js)
     ses.registerPreloadScript({ type: 'frame', id: 'drift-password-guard', filePath: path.join(__dirname, 'surf-guard.js') });
     ses.registerPreloadScript({ type: 'frame', id: 'drift-select', filePath: path.join(__dirname, 'surf-select.js') });       // (does nothing outside offscreen pages)
@@ -177,7 +158,7 @@ module.exports = function createWeb(hooks) {
   }
   // Every Drift window may hold the browser. What a page is allowed is decided here, not by the window.
   function host(hostWc) {
-    learnIdent(hostWc);
+    learnIdent(hostWc, tellIdent);
     hostWc.on('will-attach-webview', (e, prefs, params) => {
       if (!on || params.partition !== 'persist:web') { e.preventDefault(); return; }
       delete prefs.preloadURL; delete prefs.preload;
@@ -186,7 +167,7 @@ module.exports = function createWeb(hooks) {
       params.src = 'about:blank';
     });
     hostWc.on('did-attach-webview', (_e, page) => {
-      learnIdent(hostWc);
+      learnIdent(hostWc, tellIdent);
       const id = page.id;
       fresh.set(id, { page, hostWc }); page.once('destroyed', () => fresh.delete(id));
       page.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -219,11 +200,16 @@ module.exports = function createWeb(hooks) {
     page.on('enter-html-full-screen', () => { if (mine()) t.full = true; });
     page.on('leave-html-full-screen', () => { if (mine()) t.full = false; hooks.unfull(hostWc); });
     page.on('audio-state-changed', () => { if (mine()) hooks.changed(); });       // the visuals listen to the PC's sound while a page plays some (see info().audible)
+    page.on('zoom-changed', (_e, dir) => { if (mine() && t.id === active) zoom(dir === 'in' ? 1 : -1); });       // Ctrl + the mouse wheel
+    // The browser's shortcuts. They have to be caught here: a key the page leaves alone goes on to the Drift window around it,
+    // whose menu shortcuts would reload Drift itself (Ctrl+R), close it (Ctrl+W) or zoom Drift instead of the page.
     page.on('before-input-event', (e, k) => {
       if (k.type !== 'keyDown') return;
-      if (k.key === 'Escape' && !t.full && !k.alt && !k.control) { e.preventDefault(); hooks.escape(); }       // Esc leaves the page's full screen first, then asks for Drift's controls
-      else if (k.alt && !k.control && k.key === 'ArrowLeft') { e.preventDefault(); nav(-1); }                 // Alt+Left / Alt+Right: back and forward
-      else if (k.alt && !k.control && k.key === 'ArrowRight') { e.preventDefault(); nav(1); }
+      if (k.key === 'Escape' && !t.full && !k.alt && !k.control) { e.preventDefault(); hooks.escape(); return; }       // Esc leaves the page's full screen first, then asks for Drift's controls
+      const s = mine() && surfKey(k.key, MODS.filter((n) => k[n]));
+      if (!s) return;
+      e.preventDefault();
+      if (s.do === 'url') toBar(hostWc); else act(s);
     });
     page.on('destroyed', () => {       // its tab was closed, or the monitors changed under it
       if (!mine()) return;
@@ -265,44 +251,77 @@ module.exports = function createWeb(hooks) {
     page.once('destroyed', gone);
     w.once('closed', () => { if (!page.isDestroyed()) page.removeListener('destroyed', gone); });
   }
+  // Ctrl+L: the keys go to the Surf bar's address box, in the Drift window `hostWc` the page is in
+  function toBar(hostWc) { if (!hostWc || hostWc.isDestroyed()) return; hostWc.focus(); hostWc.send('cmd', { type: 'web-url' }); }
+  // Ctrl+plus, Ctrl+minus, Ctrl+0: the page in front a step bigger, smaller, or back to its own size. As in Chrome, it sticks to
+  // the site (other tabs on it follow).
+  function zoom(dir) {
+    if (!alive()) return;
+    const wc = cur().wc, f = wc.getZoomFactor();
+    const to = !dir ? 1 : dir > 0 ? ZOOMS.find((z) => z > f + 0.01) || ZOOMS[ZOOMS.length - 1] : [...ZOOMS].reverse().find((z) => z < f - 0.01) || ZOOMS[0];
+    wc.setZoomFactor(to);
+    hooks.say(`Zoom ${Math.round(to * 100)}%`);
+  }
   function nav(dir) { if (!alive()) return; const h = cur().wc.navigationHistory; if (dir < 0) { if (h.canGoBack()) h.goBack(); } else if (h.canGoForward()) h.goForward(); }
 
-  // ---- advert blocking (@ghostery/adblocker-electron, with the lists uBlock Origin uses), in this window only ----
-  let engine = null, loading = null, blocking = false;
-  function loadEngine() {
+  // ---- Surf's extensions (in this window's session only) ----
+  const exts = () => sess().extensions || sess();       // (session.extensions came in Electron 36; before, the session itself)
+  const bgOf = (id) => webContents.getAllWebContents().find((wc) => !wc.isDestroyed() && wc.getURL().startsWith(`chrome-extension://${id}/`));
+  // The background page of extension `id`, once `test` (run there) says it has started
+  async function started(id, test) {
+    for (let i = 0; i < 300; i++) {
+      const bg = bgOf(id);
+      if (bg && await bg.executeJavaScript(test).catch(() => false)) return bg;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    throw new Error(`the extension ${id} didn't start`);
+  }
+  // Drift's own (surf-net/), which adds the Sec-CH-UA headers, saying what navigator.userAgentData says (see learnIdent())
+  let netExt = null;
+  function netReady() {
+    if (!netExt) netExt = exts().loadExtension(path.join(__dirname, 'surf-net'))
+      .then((e) => started(e.id, "typeof setIdent === 'function'"))
+      .then((bg) => { tellIdent(bg); return bg; });
+    return netExt;
+  }
+  function tellIdent(bg) {
+    if (!bg) { if (netExt) netExt.then(tellIdent, () => {}); return; }
+    if (!bg.isDestroyed()) bg.executeJavaScript(`setIdent(${JSON.stringify(ident)})`).catch(() => {});
+  }
+
+  // ---- advert blocking: uBlock Origin itself, as an extension (see surf-ublock.js) ----
+  let loading = null, blocking = false;       // loading: resolves to { id, bg } once uBO is loaded and ready to filter
+  function loadUbo() {
     if (!loading) loading = (async () => {
-      const { ElectronBlocker } = require('@ghostery/adblocker-electron');
-      const file = hooks.listsFile();
-      const fresh = async () => { const e = await ElectronBlocker.fromPrebuiltAdsAndTracking((u, o) => net.fetch(u, o)); fs.promises.writeFile(file, e.serialize()).catch(() => {}); return e; };
-      const kept = async () => ElectronBlocker.deserialize(await fs.promises.readFile(file));
-      let age = Infinity;
-      try { age = Date.now() - fs.statSync(file).mtimeMs; } catch { /* first time */ }
-      const e = await (age > 86400000 ? fresh().catch(kept) : kept().catch(fresh));       // new lists once a day; yesterday's if the download fails
-      // The library doesn't look at whether the fixes it runs in a page worked; one that fails is not worth a warning.
-      // Each fix (a uBlock Origin "scriptlet") is run in a scope of its own. The library runs them one after another straight
-      // into the page, where each one declares the same helpers again at the top level: `class JSONPath` can't be declared
-      // twice, so some never ran, and a later copy of `safeSelf` took the fetch and JSON.parse the earlier fixes had already
-      // wrapped for the real ones, so they called themselves until the stack ran out. On YouTube that broke the page's own
-      // navigation: a video clicked on the first visit didn't show until the page was reloaded.
-      const inject = e.onInjectCosmeticFilters;
-      e.onInjectCosmeticFilters = (event, u, msg) => inject({ frameId: event.frameId, processId: event.processId, sender: {
-        insertCSS: (css, o) => event.sender.insertCSS(css, o).catch(() => {}),       // (a page closing as it arrives)
-        executeJavaScript: (code, gesture) => { event.sender.executeJavaScript(`(function () {\n${code}\n})();`, gesture).catch(() => {}); },
-      } }, u, msg);
-      return e;
+      const dir = await ublock.prepare(hooks.ublockDir());
+      const e = exts().getAllExtensions().find((x) => path.resolve(x.path) === path.resolve(dir)) || await exts().loadExtension(dir);
+      return { id: e.id, bg: await started(e.id, '!!(self.µBlock && self.µBlock.readyToFilter)') };
     })().catch((e) => { loading = null; throw e; });
     return loading;
   }
   // Turns blocking on or off to match the setting. Resolves once it is in place.
+  // Once loaded, uBO stays loaded: Electron crashed closing an offscreen page after an extension had been taken out of the
+  // session and put back. Off is uBO's own off switch instead: every page a "trusted site" (TRUST_ALL), only in memory, so
+  // uBO's own settings are as they were. Nothing is blocked, hidden or run in a trusted page, and no scriptlets are handed out.
+  const TRUST_ALL = '/^(?:https?|wss?):/';
   async function block() {
     const want = !!hooks.blockAds();
-    if (want === blocking) { if (want) await loadEngine().catch(() => {}); return; }
     blocking = want;
-    if (!want) { if (engine && engine.isBlockingEnabled(sess())) engine.disableBlockingInSession(sess()); return; }
+    if (!want && !loading) return;       // never loaded: nothing to switch off
     try {
-      engine = await loadEngine();
-      if (blocking && !engine.isBlockingEnabled(sess())) engine.enableBlockingInSession(sess());
-    } catch { blocking = false; hooks.say('Adverts can\'t be blocked right now: the blocking lists couldn\'t be downloaded.'); }
+      const { bg } = await loadUbo();
+      if (blocking !== want) return;       // changed again meanwhile: that call sees to it
+      await bg.executeJavaScript(`(() => {
+        const t = self.µBlock.trustedSites, d = ${JSON.stringify(TRUST_ALL)}, rest = t.toLines().filter((x) => x !== d);
+        t.fromLines(${want} ? rest : [...rest, d]);
+        self.driftScriptletsReset();
+      })()`);
+    } catch (e) {
+      if (!want || blocking !== want) return;
+      blocking = false;
+      console.error('advert blocker:', e && e.message);
+      hooks.say('Adverts can\'t be blocked right now: the advert blocker couldn\'t be downloaded.');
+    }
   }
   // ---- copy-protected video ----
   // Drift runs on castLabs' Electron, which can play video protected with Widevine (Netflix, Disney+, Prime Video, Spotify…).
@@ -316,11 +335,12 @@ module.exports = function createWeb(hooks) {
     }
     return wv;
   }
-  // Loads what a tab is waiting to show, once its page is there, blocking is in place and Widevine is ready.
+  // Loads what a tab is waiting to show, once its page is there, the extensions and blocking are in place and Widevine is ready.
   function go(t) {
     if (!live(t) || !t.pending) return;
     const page = t.wc, my = ++t.seq;
-    Promise.race([Promise.all([block(), widevine()]), new Promise((r) => setTimeout(r, 6000))]).then(() => {       // don't wait long for either
+    const ready = Promise.all([block(), widevine(), netReady().catch(() => {})]);
+    Promise.race([ready, new Promise((r) => setTimeout(r, 15000))]).then(() => {       // (the first time, uBlock Origin is downloaded: ~6 MB)
       if (my !== t.seq || t.wc !== page || page.isDestroyed() || !t.pending) return;
       const u = t.pending; t.pending = '';
       page.loadURL(u).catch(() => {});
@@ -341,7 +361,15 @@ module.exports = function createWeb(hooks) {
   // A tab lets go of its page. An offscreen page is ours to close; a <webview> goes when the window takes it away.
   function drop(t) {
     const wc = t.wc; t.wc = null;
-    if (wc && !wc.isDestroyed() && wc.drift) { const w = BrowserWindow.fromWebContents(wc); if (w && !w.isDestroyed()) w.destroy(); }
+    if (wc && !wc.isDestroyed() && wc.drift) {
+      const w = BrowserWindow.fromWebContents(wc);
+      if (!w || w.isDestroyed()) return;
+      // The page goes first, then its window: Electron crashed destroying the window of a page still showing YouTube while
+      // uBlock Origin was in the session (an offscreen window only; a <webview> was fine).
+      const end = () => { if (!w.isDestroyed()) w.destroy(); };
+      wc.loadURL('about:blank').then(() => setTimeout(end, 200), end);
+      setTimeout(end, 2000);
+    }
   }
   // Shows the browser on monitor `k` (or where it last was). On a different monitor from now, the pages load again there.
   function show(k) {
@@ -381,6 +409,8 @@ module.exports = function createWeb(hooks) {
     if (i < 0) return;
     if (tabs.length === 1) { close(); return; }       // the last tab takes the browser with it
     const t = tabs.splice(i, 1)[0]; drop(t);
+    const u = t.url || t.pending;
+    if (isPage(u)) { closed.push(u); if (closed.length > 20) closed.shift(); }
     if (id === active) { active = tabs[Math.min(i, tabs.length - 1)].id; restream(); painting(); }
     hooks.changed();
   }
@@ -391,7 +421,8 @@ module.exports = function createWeb(hooks) {
     if (!/^[a-z][a-z0-9+.-]*:/i.test(t)) t = /^[^\s/]+\.[^\s/.]{2,}(\/\S*)?$/.test(t) || /^localhost(:\d+)?(\/\S*)?$/i.test(t) ? 'https://' + t : 'https://www.google.com/search?q=' + encodeURIComponent(t);
     try { const u = new URL(t); return isWeb(u.href) ? u.href : ''; } catch { return ''; }
   }
-  // Something done with the browser's own controls, here or (m.do only) by a friend: go, new, tab, close, back, fwd, reload, home.
+  // Something done with the browser's own controls or shortcuts, here or (m.do only) by a friend: go, new, tab, close, back, fwd,
+  // reload, home, and (from the shortcuts) reopen, hard (reload, past the cache), step (`n` tabs along), nth (the `n`th tab) and zoom.
   // `k` is the monitor to show the browser on if it isn't showing.
   function act(m, k) {
     const t = cur();
@@ -406,6 +437,11 @@ module.exports = function createWeb(hooks) {
     else if (m.do === 'back') nav(-1);
     else if (m.do === 'fwd') nav(1);
     else if (m.do === 'reload') { if (alive()) cur().wc.reload(); }
+    else if (m.do === 'hard') { if (alive()) cur().wc.reloadIgnoringCache(); }
+    else if (m.do === 'reopen') { const u = closed.pop(); if (u) { newTab(u); show(k); } }
+    else if (m.do === 'step') { const i = tabs.indexOf(cur()), n = Math.sign(+m.n || 0); if (n && i >= 0) select(tabs[(i + n + tabs.length) % tabs.length].id); }
+    else if (m.do === 'nth') { const n = +m.n | 0, x = n === 9 ? tabs[tabs.length - 1] : tabs[n - 1]; if (x) select(x.id); }
+    else if (m.do === 'zoom') zoom(Math.sign(+m.n || 0));
     return { ok: true };
   }
 
@@ -440,7 +476,8 @@ module.exports = function createWeb(hooks) {
       } else if (e.k === 'key') {
         const k = String(e.key || ''), ch = [...k].length === 1, code = KEYS[k] || (ch || /^F([1-9]|1[0-2])$/.test(k) ? k : '');
         const cmd = modifiers.includes('control') || modifiers.includes('meta');
-        if (local && e.d && modifiers.includes('alt') && !cmd && (k === 'ArrowLeft' || k === 'ArrowRight')) { nav(k === 'ArrowLeft' ? -1 : 1); return; }       // Alt+Left / Alt+Right: back and forward
+        const s = surfKey(k, modifiers);       // the browser's shortcuts, for friends too (they can use the bar's buttons anyway)
+        if (s) { if (e.d && s.do !== 'url') act(s); return; }       // (Ctrl+L is for the bar of the screen it was pressed on: the window sees to that)
         if (!code || k === 'Escape' || (!local && cmd && /^v$/i.test(k))) return;       // Esc is for Drift's controls; a friend pasting would hand over this PC's clipboard
         wc.sendInputEvent({ type: e.d ? 'keyDown' : 'keyUp', keyCode: code, modifiers });
         if (e.d && !cmd && !modifiers.includes('alt') && (ch || k === 'Enter')) wc.sendInputEvent({ type: 'char', keyCode: k === 'Enter' ? '\r' : k, modifiers });       // what the key types
@@ -509,11 +546,16 @@ module.exports = function createWeb(hooks) {
   function offscreen(t) {
     const hw = hooks.win(key);
     if (!hw || hw.isDestroyed() || live(t)) return;
-    const d = hooks.display(key) || {}, [w, h] = dips(d.scaleFactor || 1);
-    const win = new BrowserWindow({ show: false, width: w, height: h, useContentSize: true, frame: false, skipTaskbar: true,
+    const d = hooks.display(key) || {}, [w, h] = dips(d.scaleFactor || 1), at = hw.getBounds();
+    // Over the Surf monitor, and on top, though never shown: a box the page asks for (alert(), confirm(), "leave this site?") is
+    // a window of its own over this one. Otherwise it came up behind Drift's window, which stays above everything, while the page
+    // waited for it to be answered: nothing could be clicked or typed in the page again. Where the page opens a pop-up goes by
+    // where it is, too.
+    const win = new BrowserWindow({ show: false, x: at.x, y: at.y, width: w, height: h, useContentSize: true, frame: false, skipTaskbar: true,
       webPreferences: { partition: 'persist:web', offscreen: { useSharedTexture: true, deviceScaleFactor: d.scaleFactor || 1 },
         nodeIntegration: false, nodeIntegrationInSubFrames: true, contextIsolation: true, sandbox: true, backgroundThrottling: false,
         additionalArguments: ['--drift-offscreen'] } });       // (surf-select.js looks for it)
+    win.setAlwaysOnTop(true, 'screen-saver');
     win.setFullScreenable(false);       // a page going full screen fills its own picture, not a hidden window
     // Windows makes a new window as big as a whole monitor a little narrower than asked (1920 wide came out 1872), which put bars
     // beside the page on 16:9 monitors. Sized again once it exists, it takes the size asked for.

@@ -1,0 +1,8 @@
+{
+  "manifest_version": 2,
+  "name": "Drift Surf",
+  "version": "1.0",
+  "description": "Drift's own changes to Surf's requests (see web.js)",
+  "background": { "scripts": ["background.js"], "persistent": true },
+  "permissions": ["webRequest", "webRequestBlocking", "<all_urls>"]
+}

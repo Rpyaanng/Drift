@@ -263,7 +263,15 @@ front too: its picture and sound are streamed to them from your PC.
 
 - **The bar at the top.** Move the mouse to the very top edge of the screen and a floating bar drops down
   with your tabs, **+** for a new tab, back, forward, reload, home and the address. It slips away again
-  when the mouse leaves it. A link that asks for a new tab opens one; pop-ups are blocked. Up to 12 tabs.
+  when the mouse leaves it. A link that asks for a new tab opens one. A small window a page opens when you
+  click (sign in with Google, PayPal…) opens over Drift, on your PC only; pop-ups that open by themselves are
+  blocked. Up to 12 tabs.
+- **Keyboard shortcuts**, as in other browsers: `Ctrl+T` new tab, `Ctrl+W` close tab, `Ctrl+Shift+T` reopen
+  the last tab closed, `Ctrl+Tab` / `Ctrl+Shift+Tab` (or `Ctrl+PgDn` / `Ctrl+PgUp`) next and previous tab,
+  `Ctrl+1`…`Ctrl+8` a tab, `Ctrl+9` the last tab, `Ctrl+L` / `Alt+D` / `F6` the address, `Ctrl+R` / `F5`
+  reload (`Ctrl+Shift+R` / `Ctrl+F5` past the cache), `Alt+Left` / `Alt+Right` back and forward, `Alt+Home`
+  the start page, and `Ctrl` with `+`, `-`, `0` or the mouse wheel to zoom. Friends who may control the page
+  can use them too.
 - **Drift's own panel.** The page takes the mouse and keyboard while it is showing. Move the mouse to the
   very bottom edge of the screen for the panel, or press `Esc` in the page (when a video is full screen,
   the first `Esc` leaves that). With Surf selected, the panel's previous / next buttons go back and
@@ -294,10 +302,14 @@ front too: its picture and sound are streamed to them from your PC.
   Widevine from Google (a few MB) and keeps it up to date. Netflix also needs a release that castLabs has
   signed (see Building). Like other Chromium-based browsers apart from Chrome and Edge, Surf gets these
   services' lower quality, usually 720p.
-- *Block adverts in Surf* (in Settings, on by default) blocks adverts and trackers in pages, using Ghostery's adblocker library
-  with the same filter lists uBlock Origin uses. The lists are downloaded from Ghostery's servers the
-  first time and refreshed once a day. Sites fight blockers, so now and then an advert gets through, or a
-  page misbehaves: untick it and the pages reload without blocking.
+- *Block adverts in Surf* (in Settings, on by default) blocks adverts and trackers in pages with
+  uBlock Origin itself, running inside Surf as it does in Chrome: the same filter lists, element hiding,
+  and the scripts it runs in pages to take adverts out from the inside (YouTube's video adverts, for one).
+  The first time, Drift downloads one exact release of it from uBlock Origin's GitHub page (about 6 MB,
+  checked against a known fingerprint) into its own settings folder. uBlock Origin then keeps its filter
+  lists up to date by itself. Sites fight blockers, so now and then an advert gets through, or a page
+  misbehaves: untick it and the pages reload without blocking. uBlock Origin is
+  [gorhill/uBlock](https://github.com/gorhill/uBlock), GPLv3. Drift doesn't include it; it fetches it.
 - `Alt+←` / `Alt+→` (or the mouse's side buttons) go back and forward.
 
 ### Video conversion
@@ -392,7 +404,7 @@ settings (two copies on one PC can share with each other), `DRIFT_SHARE_LOCAL=1`
 `DRIFT_FAKE_HDR=0|1` pretends the screens are SDR or HDR, `DRIFT_HIDDEN=1` and `DRIFT_MUTE=1` run without
 windows or sound. `DRIFT_SHOTS=<folder>` runs the screenshot tour (add `DRIFT_ONLY=<scene,...>`,
 `DRIFT_PALETTE=<name>`, `DRIFT_PANEL=1` and `DRIFT_SHOTWAIT=<ms>` to wait longer per scene); the README images
-were made with it. Add `DRIFT_TESTSURF=1` for the picture of Surf's start page. `DRIFT_TESTMIRROR=1` with `DRIFT_FAKE_DISPLAYS=2` checks Surf's mirroring (`DRIFT_FAKE_WIDTHS=1,2` makes the fake monitors different widths; add `DRIFT_TESTGPU=1` for the graphics-card drawing, and `DRIFT_HIDDEN=1` so your own mouse can't reach the test page). The picture of a page shared in
+were made with it. Add `DRIFT_TESTSURF=1` for the picture of Surf's start page. `DRIFT_TESTMIRROR=1` with `DRIFT_FAKE_DISPLAYS=2` checks Surf's mirroring (`DRIFT_FAKE_WIDTHS=1,2` makes the fake monitors different widths; add `DRIFT_TESTGPU=1` for the graphics-card drawing, and `DRIFT_HIDDEN=1` so your own mouse can't reach the test page). `DRIFT_TESTKEYS=1` presses Surf's keyboard shortcuts in a test page (add `DRIFT_TESTGPU=1` for the offscreen page). The picture of a page shared in
 Surf comes from two copies run at once with `DRIFT_TESTWEB=host` and `=guest` (with the same `DRIFT_TESTCODE`
 file, `DRIFT_TESTURL` and `DRIFT_SHARE_LOCAL=1`); `DRIFT_TESTNAME` sets each one's name.
 To try updating, run a packaged copy with `DRIFT_FAKE_VERSION=1.0.0` (it then thinks the latest release is

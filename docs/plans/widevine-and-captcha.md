@@ -123,6 +123,10 @@ bot detection. Don't add fingerprint spoofing, stealth patches or solver service
 - **The ad blocker doesn't touch captchas.** Against the real cached lists, no Cloudflare, reCAPTCHA, hCaptcha or Arkose request is
   blocked, and the blocker's cosmetic preload only runs in top frames, so challenge iframes get no scripts or CSS.
   Phase 2 isn't needed.
+- **Cloudflare looped forever (2026-11-20, found on 4chan's post form).** Cross-site iframes run in their own process and
+  ignore `ses.setUserAgent` (and `webContents.setUserAgent`): their `navigator.userAgent` and script requests said
+  `Drift/… Electron/…` (`app.userAgentFallback`) while their page loads said Chrome. Turnstile passed, but `cf_clearance` was bound
+  to the Electron UA, so the next page load was challenged again. Fixed by setting `app.userAgentFallback` to the same reduced UA.
 
 ### Steps
 **Phase 0: measure (half a day)**
@@ -135,6 +139,9 @@ bot detection. Don't add fingerprint spoofing, stealth patches or solver service
 **Phase 1: consistent identity (most likely the biggest win)**
 - Reduce the UA: `Chrome/${major}.0.0.0`, with no app tokens.
 - Remove the hand-written `onBeforeSendHeaders` hints. Have Chromium produce hints from one source of truth instead.
+  (They now live in the `surf-net/` extension, not `ses.webRequest`. Electron sends a session's requests either to
+  `ses.webRequest` or to its extensions, never both, and the advert blocker is uBlock Origin running as an extension.
+  So any new request hook must go in `surf-net/background.js` too.)
   Try these in order:
   a. Set `app.userAgentFallback` at startup instead of `ses.setUserAgent`. If Chromium then keeps sending its own
      native client hints (check with the echo page), that's the simplest fix.

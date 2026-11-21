@@ -824,11 +824,18 @@
   $('#sbHome').addEventListener('click', () => surf('home'));
   $('#sbOut').addEventListener('click', () => { surf('outside'); surfHideSoon(300); });
   $('#sbMirror').addEventListener('click', () => api.patch({ surfMirror: !S.surfMirror }));
+  const keyMods = (e) => [e.shiftKey && 'shift', e.ctrlKey && 'control', e.altKey && 'alt', e.metaKey && 'meta'].filter(Boolean);
+  const toPage = () => { if (webEl) webEl.focus(); else if (vidEl) vidEl.focus(); else if (mirEl) mirEl.focus(); else if (gpuEl) gpuEl.focus(); };       // the keys go back to the page
+  // Ctrl+L, Alt+D or F6 (see surf-keys.js): the bar comes down with the address picked, to type over
+  function toBar() { if (webEl) webEl.blur(); surfBar.classList.add('show'); const u = $('#sbUrl'); u.focus(); u.select(); surfHideSoon(); }
   $('#sbUrl').addEventListener('focus', (e) => e.target.select());
   $('#sbUrl').addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.stopPropagation(); e.target.blur(); syncSurfBar(); toPage(); surfHideSoon(); return; }       // the address as it was, and back to the page
+    const s = surfKey(e.key, keyMods(e));       // the browser's shortcuts work here too (Ctrl+T, Ctrl+W, Ctrl+Tab…)
+    if (s && s.do !== 'url') { e.preventDefault(); surf(s.do, { n: s.n }); return; }
     if (e.key !== 'Enter') return;
     surf('go', { text: e.target.value.trim() }); e.target.blur();
-    if (webEl) webEl.focus(); else if (vidEl) vidEl.focus(); else if (mirEl) mirEl.focus(); else if (gpuEl) gpuEl.focus();       // the keys go back to the page
+    toPage();
     surfHideSoon();
   });
 
@@ -1015,6 +1022,7 @@
     const key = (d) => (e) => {
       if (e.key === 'Escape') { if (d) { v.blur(); tab = 'surf'; showPanel(true); syncUI(); } e.stopPropagation(); return; }       // Esc: our controls, and the keys come back to us
       e.preventDefault(); e.stopPropagation();
+      if ((surfKey(e.key, mods(e)) || {}).do === 'url') { if (d) toBar(); return; }       // this screen's bar (the other shortcuts are seen to where the page is: web.js)
       api.cmd({ type: 'web-input', e: { k: 'key', d, key: e.key, m: mods(e) } });
     };
     v.addEventListener('keydown', key(true)); v.addEventListener('keyup', key(false));
@@ -1060,6 +1068,7 @@
       if (e.key === 'Escape') { if (d) { v.blur(); tab = 'surf'; showPanel(true); syncUI(); } e.stopPropagation(); return; }       // Esc: our controls, and the keys come back to us
       if (!may()) return;       // Drift's own shortcuts then
       e.preventDefault(); e.stopPropagation();
+      if ((surfKey(e.key, mods(e)) || {}).do === 'url') { if (d) toBar(); return; }       // our bar (the other shortcuts are seen to on their PC: web.js)
       api.cmd({ type: 'web-input', e: { k: 'key', d, key: e.key, m: mods(e) } });
     };
     v.addEventListener('keydown', key(true)); v.addEventListener('keyup', key(false));
@@ -1576,6 +1585,7 @@
     else if (c.type === 'web-cursor') { if (gpuEl && /^[a-z-]{1,24}$/.test(c.c)) gpuEl.style.cursor = c.c; }       // the pointer the offscreen page wants
     else if (c.type === 'music-pos') musicPos = { t: +c.t || 0, d: +c.d || 0, at: performance.now() };
     else if (c.type === 'ptrs') showPtrs(Array.isArray(c.list) ? c.list : []);
+    else if (c.type === 'web-url') toBar();       // Ctrl+L in the web page
     else if (c.type === 'web-esc') { if (webEl) webEl.blur(); window.focus(); tab = 'surf'; showPanel(true); syncUI(); }       // Esc in the web page: our controls, and the keys come back to us
     else if (c.type === 'share-code') { $('#shCode').value = c.code; $('#shCode').focus(); }
   });
