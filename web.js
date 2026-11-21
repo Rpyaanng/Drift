@@ -162,7 +162,7 @@ module.exports = function createWeb(hooks) {
         else if (state === 'interrupted') hooks.say(`The download of ${path.basename(file)} failed.`);
       });
     });
-    // The start page, and its search box: drift://home/go?q=… goes on to the address (or the YouTube search) it stands for,
+    // The start page, and its search box: drift://home/go?q=… goes on to the address (or the Google search) it stands for,
     // replacing itself so Back returns to the start page.
     ses.protocol.handle('drift', async (req) => {
       const u = new URL(req.url);
@@ -384,11 +384,11 @@ module.exports = function createWeb(hooks) {
     if (id === active) { active = tabs[Math.min(i, tabs.length - 1)].id; restream(); painting(); }
     hooks.changed();
   }
-  // What was typed, as an address: an address as it is, anything else as a YouTube search.
+  // What was typed, as an address: an address as it is, anything else as a Google search.
   function address(text) {
     let t = String(text || '').trim().slice(0, 2000);
     if (!t) return HOME;
-    if (!/^[a-z][a-z0-9+.-]*:/i.test(t)) t = /^[^\s/]+\.[^\s/.]{2,}(\/\S*)?$/.test(t) || /^localhost(:\d+)?(\/\S*)?$/i.test(t) ? 'https://' + t : 'https://www.youtube.com/results?search_query=' + encodeURIComponent(t);
+    if (!/^[a-z][a-z0-9+.-]*:/i.test(t)) t = /^[^\s/]+\.[^\s/.]{2,}(\/\S*)?$/.test(t) || /^localhost(:\d+)?(\/\S*)?$/i.test(t) ? 'https://' + t : 'https://www.google.com/search?q=' + encodeURIComponent(t);
     try { const u = new URL(t); return isWeb(u.href) ? u.href : ''; } catch { return ''; }
   }
   // Something done with the browser's own controls, here or (m.do only) by a friend: go, new, tab, close, back, fwd, reload, home.

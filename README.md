@@ -101,7 +101,7 @@ or colours you pick yourself.
   sunflower spirals), Rose Curves (r = cos kθ), Chladni Plate (sand on a vibrating plate)
 
 Change scene automatically every few minutes, in order or shuffled. While it's on, each scene has a
-tick in its corner: untick the ones you'd rather skip. Add a spectrum or waveform overlay if you like.
+tick in its corner: untick the ones you'd rather skip. Add a spectrum, waveform or halo overlay if you like.
 
 </details>
 
@@ -257,7 +257,7 @@ right now, so you can see who has wandered off to Settings or is looking at the 
 ### Surf: a browser in Drift, alone or together
 
 The **Surf** tab is a small web browser. Choose it and the browser opens on that screen, in place of the
-scene, on Drift's own start page: a clock, a search box (an address, or something to search YouTube for)
+scene, on Drift's own start page: a clock, a search box (an address, or something to search Google for)
 and a few places to drift to. While you are sharing (in **Together**), friends see and hear the tab in
 front too: its picture and sound are streamed to them from your PC.
 
