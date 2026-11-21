@@ -128,12 +128,37 @@
   { const lp = filt('lowpass', 520), sw = G(0.5); chain(src(brown), lp, sw, G(1.1), N.waves); lfo(0.105, 330, lp.frequency); lfo(0.105, 0.38, sw.gain);
     const foam = G(0.035); chain(src(white), filt('highpass', 2800), foam, N.waves); lfo(0.105, 0.03, foam.gain); }
   { const bp = filt('bandpass', 520, 0.9), sw = G(0.5); chain(src(white), bp, sw, G(0.55), N.wind); lfo(0.07, 240, bp.frequency); lfo(0.19, 110, bp.frequency); lfo(0.05, 0.3, sw.gain); }
-  chain(src(brown), filt('bandpass', 380, 0.5), G(0.7), N.fire);
-  function crackle(v) {
-    const s = ctx.createBufferSource(), hp = filt('highpass', rand(1200, 4500)), g = G(Math.pow(Math.random(), 3) * 0.55 * v + 0.02 * v);
-    s.buffer = white; const t = T() + Math.random() * 0.2; s.connect(hp); hp.connect(g); g.connect(natureBus);
-    s.start(t, Math.random() * 3, rand(0.003, 0.03));
-    s.onended = () => g.disconnect();
+  // Fire: crackles and pops only. (A bed of filtered noise under them reads as wind: a hiss as trees rustling, a low one as a
+  // wind shaft.) Each crackle is a tiny resonant tick that rises in under a millisecond and dies away (a hard on/off burst of
+  // noise clicks like a glitch), placed one by one at random moments rather than in clumps, and sometimes trailing a few smaller sizzles.
+  let flare = 0.6, nextFlare = 0, crackAt = 0;
+  function crackle(t, size, low) {
+    const s = ctx.createBufferSource(), bp = filt('bandpass', low ? rand(500, 1100) : rand(1400, 5200), low ? rand(1, 2) : rand(1.5, 5));
+    const g = G(0), pan = ctx.createStereoPanner(), tau = low ? rand(0.018, 0.04) : rand(0.0025, 0.012) * (0.6 + size);
+    pan.pan.value = rand(-0.55, 0.55);
+    const peak = (low ? 1.6 : 0.9) * size;
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(peak, t + 0.0006); g.gain.setTargetAtTime(0, t + 0.0006, tau);
+    s.buffer = white; s.connect(bp); bp.connect(g); g.connect(pan); pan.connect(N.fire);
+    s.start(t, Math.random() * 3.5, tau * 9 + 0.002);
+    s.onended = () => pan.disconnect();
+  }
+  // Called every tick: lays down the fire's crackles up to a little ahead of now, on the audio clock.
+  function tickFire() {
+    const now = T(), ahead = now + 0.25;
+    if (!(S.music.nature.fire > 0.01 && S.music.playing)) { crackAt = ahead; return; }
+    if (now >= nextFlare) { flare = Math.min(1, Math.max(0.25, flare + rand(-0.35, 0.35))); nextFlare = now + rand(0.25, 0.9); }   // the flames flare and settle: busier crackling, not a louder roar
+    if (crackAt < now) crackAt = now + rand(0, 0.1);
+    while (crackAt < ahead) {
+      const r = Math.random(), size = 0.08 + 0.92 * Math.pow(Math.random(), 3.5);   // mostly small ticks, now and then a sharp one
+      if (r < 0.01) {                                            // a pop (one every 15 s or so): a knot of sap bursting, then a scatter of sparks
+        crackle(crackAt, 0.5 + Math.random() * 0.4, true);
+        for (let i = 0, k = 3 + Math.floor(rand(0, 6)); i < k; i++) crackle(crackAt + rand(0.006, 0.22), 0.06 + Math.random() * 0.25, false);
+      } else {
+        crackle(crackAt, size, false);
+        if (r < 0.25) for (let i = 0, k = 1 + Math.floor(rand(0, 4)); i < k; i++) crackle(crackAt + rand(0.01, 0.12), size * rand(0.2, 0.6), false);
+      }
+      crackAt += -Math.log(1 - Math.random()) / (2.5 + 7 * flare);   // random gaps (2.5–9.5 a second, more when the fire flares)
+    }
   }
 
   // ---------- your own files ----------
@@ -180,20 +205,56 @@
   // own sound graph, so the PC's sound is the only place the visuals can hear it. ----------
   // A page in Surf (Spotify's web player, YouTube…) plays in its own tab, so it is the same: only the PC's sound has it.
   const hearPC = () => !!(S.spotify || {}).lead || (S.video.sound && !!S.videoLeader && !S.video.paused) || !!(S.web || {}).audible;
-  let pcStream = null, pcAnalyser = null, pcBusy = false, pcFailed = false;
+  let pcStream = null, pcSrc = null, pcAnalyser = null, pcBusy = false, pcFailed = false, pcAgain = false;
+  function dropPC() {
+    if (pcSrc) { pcSrc.disconnect(); pcSrc = null; }
+    if (pcStream) { const st = pcStream; pcStream = null; st.getTracks().forEach((t) => t.stop()); }
+    pcAnalyser = null;
+  }
   async function listenToPC(on) {
-    if (!on) { pcFailed = false; if (pcStream) { pcStream.getTracks().forEach((t) => t.stop()); pcStream = null; pcAnalyser = null; } return; }
-    if (pcStream || pcBusy || pcFailed) return;
+    if (!on) { pcFailed = false; dropPC(); return; }
+    if (pcBusy) { pcAgain = true; return; }       // a restart asked for mid set-up runs once this one is done
+    if (pcStream || pcFailed) return;
     pcBusy = true;
     try {
       const st = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
       st.getVideoTracks().forEach((t) => t.stop());
       if (!st.getAudioTracks().length) throw new Error('no system audio');
-      if (!hearPC()) { st.getTracks().forEach((t) => t.stop()); }
-      else { pcStream = st; pcAnalyser = ctx.createAnalyser(); pcAnalyser.fftSize = 2048; pcAnalyser.smoothingTimeConstant = 0.75; ctx.createMediaStreamSource(st).connect(pcAnalyser); }
+      if (!hearPC() || pcAgain) { st.getTracks().forEach((t) => t.stop()); }
+      else {
+        pcStream = st; pcLastStart = Date.now(); pcAnalyser = ctx.createAnalyser(); pcAnalyser.fftSize = 2048; pcAnalyser.smoothingTimeConstant = 0.75;
+        pcSrc = ctx.createMediaStreamSource(st); pcSrc.connect(pcAnalyser);
+        // the capture ends when Windows' sound output goes away (headphones unplugged, a new default device…): start a new one
+        for (const t of st.getAudioTracks()) t.addEventListener('ended', () => { if (pcStream === st) restartPC('capture ended'); });
+      }
     } catch (e) { pcFailed = true; console.log('system audio not available: ' + e.message); }
     pcBusy = false;
+    if (pcAgain) { pcAgain = false; pcFailed = false; listenToPC(hearPC()); }
   }
+  // The PC's sound is heard from whichever output was the default when listening began. When the default changes, that
+  // capture keeps going but goes quiet (or ends), and the visuals stop moving, so listen again on the new one.
+  let pcLastStart = 0;
+  function restartPC(why) {
+    if (!hearPC()) return;
+    console.log('listening to the PC again: ' + why);
+    pcLastStart = Date.now(); pcFailed = false; dropPC(); listenToPC(true);
+  }
+  let devTimer = 0;
+  navigator.mediaDevices.addEventListener('devicechange', () => {       // they come in bursts while Windows settles on the new device
+    clearTimeout(devTimer); devTimer = setTimeout(() => restartPC('sound devices changed'), 800);
+  });
+  // backstop for a change that doesn't announce itself: a capture giving exact digital silence for a while is started again
+  // (real music is never exactly zero; a paused song is, which just costs a quiet restart now and then)
+  const pcBins = new Uint8Array(1024);
+  let pcQuietSince = 0;
+  setInterval(() => {
+    if (!pcAnalyser || pcBusy) { pcQuietSince = 0; return; }
+    pcAnalyser.getByteFrequencyData(pcBins);
+    if (pcBins.some((v) => v > 0)) { pcQuietSince = 0; return; }
+    const now = Date.now();
+    if (!pcQuietSince) pcQuietSince = now;
+    else if (now - pcQuietSince > 8000 && now - pcLastStart > 20000) { pcQuietSince = 0; restartPC('capture went silent'); }
+  }, 1000);
 
   // ---------- watch together: this PC's music goes to friends, or a friend's music plays here ----------
   // Ambient and My music are sent as one live stream (WebRTC, straight between the PCs), so everyone hears the same moment
@@ -306,7 +367,8 @@
   let bassAvg = 0, prevBass = 0, lastBeat = 0, aclock = 0, lastTick = performance.now(), wGain = 1;
   const beatTimes = [0, 0, 0, 0];
   setInterval(() => {
-    if (++n % 6 === 0) { tickMusic(); const f = S.music.nature.fire; if (f > 0.01 && S.music.playing) { const k = Math.floor(rand(0, 4) * f + 0.5); for (let i = 0; i < k; i++) crackle(f); } }
+    if (++n % 6 === 0) tickMusic();
+    if (n % 3 === 0) tickFire();
     (pcAnalyser || analyser).getByteFrequencyData(bins);
     const raw = [band(30, 250), band(250, 2000), band(2000, 9000)];
     // emphasise movement over steady level, so drones don't pin the visuals at full brightness
