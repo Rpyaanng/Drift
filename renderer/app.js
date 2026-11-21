@@ -455,12 +455,21 @@
   const clockEl = $('#clockFace'), breathEl = $('#breath'), ring = $('#breath .ring'), breathTxt = $('#breath span');
   const ease = (x) => x * x * (3 - 2 * x);
   let lastClock = '', accentAt = 0, pgAt = 0;
+  const clockHm = $('#clockFace .hm'), clockAp = $('#clockFace .ap'), clockDate = $('#clockFace .date'), clockRule = $('#clockFace .rule i');
+  const clockFmt = new Intl.DateTimeFormat([], { hour: 'numeric', minute: '2-digit' });
   function tickOverlays() {
     const showHere = S.mode !== 'span' || isCenter;
     clockEl.classList.toggle('on', S.clock && showHere);
     if (S.clock) {
       const d = new Date(), t = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-      if (t !== lastClock) clockEl.textContent = lastClock = t;
+      if (t !== lastClock) {
+        lastClock = t;
+        const parts = clockFmt.formatToParts(d), ap = parts.filter((x) => x.type === 'dayPeriod').map((x) => x.value).join('');
+        // the hours and minutes, with the colon wrapped so it can pulse; AM/PM (where the locale uses it) set small beside them
+        clockHm.innerHTML = parts.filter((x) => x.type !== 'dayPeriod').map((x) => x.type === 'literal' ? (/[:.]/.test(x.value) ? '<b>' + x.value.trim() + '</b>' : '') : x.value).join('');
+        clockAp.textContent = ap; clockDate.textContent = d.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
+      }
+      clockRule.style.transform = `scaleX(${((d.getSeconds() + d.getMilliseconds() / 1000) / 60).toFixed(4)})`;      // fills across each minute
     }
     breathEl.classList.toggle('on', S.breathing && showHere);
     if (S.breathing) {

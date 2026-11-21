@@ -12,9 +12,18 @@ canvas#vbg { position: absolute; display: none; transform: scale(1.12); }       
 #videoName { color: var(--dim); font-size: 12px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------- overlays ---------- */
-#clockFace { position: fixed; top: 6vh; left: 0; right: 0; text-align: center; font: 200 clamp(40px, 7vh, 96px)/1 "Segoe UI Variable Display", "Segoe UI Light", system-ui;
-  letter-spacing: .04em; color: rgba(255,255,255,.78); text-shadow: 0 2px 30px rgba(0,0,0,.45); opacity: 0; transition: opacity 1s; pointer-events: none; font-variant-numeric: tabular-nums; }
-#clockFace.on { opacity: 1; }
+#clockFace { position: fixed; top: 7vh; left: 0; right: 0; display: flex; flex-direction: column; align-items: center; gap: 1.6vh;
+  color: rgba(255,255,255,.86); text-shadow: 0 2px 40px rgba(0,0,0,.4); opacity: 0; transform: translateY(-1vh); transition: opacity 1.2s, transform 1.2s; pointer-events: none; }
+#clockFace.on { opacity: 1; transform: none; }
+#clockFace .time { position: relative; font: 100 clamp(56px, 11vh, 150px)/.9 "Segoe UI Variable Display", "Segoe UI Light", system-ui; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+#clockFace .hm b { font-weight: 100; display: inline-block; margin: 0 .04em; transform: translateY(-.06em); animation: clockPulse 2s ease-in-out infinite; }   /* the colon, slowly breathing */
+#clockFace .ap { position: absolute; left: 100%; top: .6em; margin-left: .5em; white-space: nowrap;   /* beside the numbers, which stay centred */
+  font: 400 clamp(11px, 1.5vh, 18px)/1 "Segoe UI Variable Text", "Segoe UI", system-ui; letter-spacing: .28em; color: rgba(255,255,255,.55); }
+#clockFace .ap:empty { display: none; }
+#clockFace .rule { position: relative; width: clamp(120px, 18vh, 240px); height: 1px; background: rgba(255,255,255,.14); overflow: visible; }
+#clockFace .rule i { position: absolute; inset: 0; background: var(--accent); transform-origin: left; transform: scaleX(0); box-shadow: 0 0 10px var(--accent), 0 0 2px var(--accent); }
+#clockFace .date { padding-left: .34em; font: 400 clamp(10px, 1.45vh, 17px)/1 "Segoe UI Variable Text", "Segoe UI", system-ui; letter-spacing: .34em; text-transform: uppercase; color: rgba(255,255,255,.6); }
+@keyframes clockPulse { 0%, 100% { opacity: .9; } 50% { opacity: .3; } }
 #breath { position: fixed; left: 50%; top: 50%; width: 34vh; height: 34vh; margin: -17vh 0 0 -17vh; display: grid; place-items: center; opacity: 0; transition: opacity 1.2s; pointer-events: none; }
 #breath.on { opacity: 1; }
 #breath .ring { position: absolute; inset: 0; border-radius: 50%; border: 1.5px solid rgba(255,255,255,.55); background: radial-gradient(circle, rgba(255,255,255,.10), rgba(255,255,255,.02) 70%);
