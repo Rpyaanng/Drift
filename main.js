@@ -1601,6 +1601,7 @@ async function runShots() {
   if (process.env.DRIFT_OVERLAY) {
     patch({ scene: 'lines', overlay: 'bars' }); await wait(2600); await snap('ov-bars');
     patch({ scene: 'aurora', overlay: 'wave', palette: 'cycle', cycleSecs: 10 }); await wait(2600); await snap('ov-wave');
+    patch({ scene: 'nebula', overlay: 'halo', palette: 'aurora' }); await wait(2600); await snap('ov-halo');
     patch({ overlay: 'none', palette: 'aurora' });
   }
   if (process.env.DRIFT_TESTWAV) {

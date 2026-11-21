@@ -89,7 +89,7 @@
         // live spectrum + waveform on unit 1
         gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, specTex);
         const sp = o.spec;
-        for (let i = 0; i < 128; i++) { const v = sp ? sp[i] : (i < 64 ? 0 : 128); specBytes[i * 4] = v; specBytes[i * 4 + 3] = 255; }
+        for (let i = 0; i < 128; i++) { const v = sp ? sp[i] : (i < 64 ? 0 : 128); specBytes[i * 4] = v; specBytes[i * 4 + 1] = i < 64 && o.peak ? o.peak[i] : 0; specBytes[i * 4 + 3] = 255; }
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 64, 2, 0, gl.RGBA, gl.UNSIGNED_BYTE, specBytes);
         gl.uniform1i(pr.u.uSpec, 1);
         gl.activeTexture(gl.TEXTURE0);
@@ -115,6 +115,15 @@
   const specTarget = new Float32Array(128).fill(0), specNow = new Float32Array(128).fill(0);
   for (let i = 64; i < 128; i++) specTarget[i] = specNow[i] = 128;
   let beats = [0, 0, 0, 0], aTime = 0, aTimeTarget = 0;
+  // the overlays' peak caps: each band's highest level lately, which hangs a moment and then falls (green channel of the spectrum row)
+  const peakNow = new Float32Array(64), peakHeld = new Float32Array(64); let peakT = 0;
+  function tickPeaks(now) {
+    const dt = Math.min(0.1, (now - (peakT || now)) / 1000); peakT = now;
+    for (let i = 0; i < 64; i++) {
+      if (specNow[i] >= peakNow[i]) { peakNow[i] = specNow[i]; peakHeld[i] = 0.4; }
+      else if ((peakHeld[i] -= dt) < 0) peakNow[i] = Math.max(specNow[i], peakNow[i] - dt * 255 * Math.min(1.6, -peakHeld[i] * 4 + 0.25));
+    }
+  }
 
   // simulation for Sorting / Life / Maze — rebuilt if the scene or the screen shape changes
   let simObj = null, simKey = '';
@@ -194,12 +203,13 @@
     for (let i = 0; i < 3; i++) audio[i] += (audioTarget[i] * S.reactivity * 1.6 - audio[i]) * 0.12;
     for (let i = 0; i < 128; i++) specNow[i] += (specTarget[i] - specNow[i]) * (i < 64 ? 0.35 : 0.5);
     aTime += (aTimeTarget - aTime) * 0.15;
+    tickPeaks(now);
     if (R && shown !== 'video') {
       const vp = viewParams(), t = sceneTime(), sm = simFor(shown, vp.aspect);
       if (sm) sm.update(t);
       const now = Date.now(), age = beats.map((b) => (b ? (now - b) / 1000 : 99));
-      R.draw(shown, { ...vp, time: t, audio, bright: S.brightness, colors: currentColors(), sim: sm, spec: specNow, react: S.reactivity * 1.6,
-        beat: Math.exp(-age[0] * 4), beatAge: age, atime: aTime, overlay: { none: 0, bars: 1, wave: 2 }[S.overlay] || 0 });
+      R.draw(shown, { ...vp, time: t, audio, bright: S.brightness, colors: currentColors(), sim: sm, spec: specNow, peak: peakNow, react: S.reactivity * 1.6,
+        beat: Math.exp(-age[0] * 4), beatAge: age, atime: aTime, overlay: { none: 0, bars: 1, wave: 2, halo: 3 }[S.overlay] || 0 });
       algoCaption(t, sm);
     } else algoCaption(0, null);
     tickOverlays();

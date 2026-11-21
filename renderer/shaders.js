@@ -111,24 +111,103 @@ float stars(vec2 p, float scale){
 `;
 
 window.SHADER_TAIL = `
+// ---- visualizer overlays: drawn over the scene, in its palette, and lighting it up a little where they glow ----
+float ovSpec(float x){ return texture2D(uSpec, vec2(clamp(x, 0.0, 1.0) * (63.0 / 64.0) + 0.5 / 64.0, 0.25)).r; }
+float ovPeak(float x){ return texture2D(uSpec, vec2(clamp(x, 0.0, 1.0) * (63.0 / 64.0) + 0.5 / 64.0, 0.25)).g; }
+float ovWaveAt(float i){ return (texture2D(uSpec, vec2((clamp(i, 0.0, 63.0) + 0.5) / 64.0, 0.75)).r - 0.5) * 2.0; }
+float ovWave(float x){                                   // the waveform through its 64 points as a smooth curve (Catmull-Rom)
+  float f = clamp(x, 0.0, 1.0) * 63.0, i = floor(f), t = f - i;
+  float a = ovWaveAt(i - 1.0), b = ovWaveAt(i), c = ovWaveAt(i + 1.0), d = ovWaveAt(i + 2.0);
+  return b + 0.5 * t * (c - a + t * (2.0 * a - 5.0 * b + 4.0 * c - d + t * (3.0 * (b - c) + d - a)));
+}
+float ovCapsule(vec2 q, float hw, float h){ return length(vec2(q.x, q.y - clamp(q.y, hw, max(h - hw, hw)))) - hw; }   // upright, from y=0 to y=h
+float ovBox(vec2 q, float hw, float h){ vec2 d = vec2(abs(q.x), abs(q.y - h * 0.5)) - vec2(hw, h * 0.5); return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0); }   // sharp, from y=0 to y=h
+float ovPill(vec2 q, float hw, float hh){ return length(vec2(max(abs(q.x) - hw + hh, 0.0), q.y)) - hh; }   // flat, centred on 0
+float ovEnergy(float a, float b){ return (ovSpec(a) + ovSpec(mix(a, b, 0.33)) + ovSpec(mix(a, b, 0.66)) + ovSpec(b)) * 0.25; }
+
+vec3 overlay(vec3 col, vec2 uv, vec2 p){
+  float px = uView.w / uRes.y;                           // one pixel, in scene units
+  float W = uAspect * 0.5, glowB = 1.0 + 0.6 * uBeat;
+  if (uOverlay < 1.5){
+    // Spectrum: rounded glass bars mirrored out from the middle (bass in the centre), peak caps that hang then fall,
+    // a rippled reflection beneath, and their light spilling up into the scene
+    float N = 40.0, base = 0.06, H = 0.27;
+    float m = abs(p.x) / W, bi = floor(m * N), fc = (bi + 0.5) / N;
+    float cellW = W / N, lx = (fract(m * N) - 0.5) * cellW, hw = cellW * 0.3;
+    float f = fc * 0.8, v = ovSpec(f), pk = ovPeak(f);
+    float h = 0.006 + v * H, ly = uv.y - base;
+    float e = ovEnergy(0.0, 0.3);
+    col *= 1.0 - 0.3 * smoothstep(0.32, 0.0, uv.y);    // a soft shade behind the bars so they read on bright scenes
+    col += pal(0.55) * exp(-uv.y * 7.0) * e * 0.35 * glowB;                       // light spill
+    vec3 bc = pal(0.35 + 0.6 * clamp(ly / H, 0.0, 1.0)) * (0.9 + 0.8 * v);
+    float d = ovBox(vec2(lx, ly), hw, h), a = smoothstep(px, -px, d);
+    col = mix(col, bc * 0.8, a * 0.55);                                              // a see-through fill
+    vec3 oc = pal(0.4 + 0.6 * clamp(ly / H, 0.0, 1.0)) * (1.3 + 0.8 * v);            // and a glowing outline round each bar
+    col = mix(col, oc, smoothstep(px * 1.6, px * 0.4, abs(d)) * 0.95);
+    col += oc * exp(-abs(d) * 220.0) * 0.35 * (0.5 + v) * glowB;
+    col += bc * exp(-max(d, 0.0) * 70.0) * 0.12 * (0.3 + v) * glowB;
+    float cy = 0.006 + pk * H + 0.007, dc = ovBox(vec2(lx, uv.y - base - cy), hw, max(px * 2.4, 0.003));
+    vec3 capC = pal(0.95) * 1.2;
+    col = mix(col, capC, smoothstep(px, -px, dc) * smoothstep(0.03, 0.1, pk) * 0.9);
+    col += capC * exp(-max(dc, 0.0) * 160.0) * 0.18 * smoothstep(0.03, 0.1, pk);
+    float ry = base - uv.y - 0.004;                      // reflection, rippling as if on water
+    if (ry > 0.0){
+      float rl = lx + sin(ry * 260.0 - uTime * 2.4) * 0.0018 * (ry / 0.06);
+      float dr = ovBox(vec2(rl, ry), hw, h * 0.55);
+      col = mix(col, bc * 0.55, smoothstep(px * 3.0, -px, dr) * exp(-ry * 28.0) * 0.5);
+    }
+  } else if (uOverlay < 2.5){
+    // Waveform: a silk ribbon of three strands across the middle, tapering into the scene at both ends,
+    // with a faint fill to the centre line and a glow that swells on the beat
+    float env = pow(sin(3.14159 * clamp(uv.x, 0.0, 1.0)), 0.7);
+    float fade = smoothstep(0.0, 0.06, uv.x) * smoothstep(1.0, 0.94, uv.x);
+    float e = ovEnergy(0.0, 0.5);
+    col += pal(0.6) * exp(-abs(uv.y - 0.5) * 9.0) * e * 0.18 * glowB;
+    for (int k = 0; k < 3; k++){
+      float fk = float(k), amp = (k == 0 ? 0.17 : (k == 1 ? -0.09 : 0.06)) * env, sh = fk * 0.012;
+      float y = 0.5 + ovWave(uv.x + sh) * amp, eps = 0.002;
+      float slope = (ovWave(uv.x + sh + eps) - ovWave(uv.x + sh - eps)) * amp / (2.0 * eps) / uAspect;
+      float d = abs(uv.y - y) / sqrt(1.0 + slope * slope);
+      vec3 lc = pal(mix(0.5, 0.95, uv.x) - fk * 0.12) * (k == 0 ? 1.25 : 0.8);
+      float w = k == 0 ? 2.0 : 0.9;
+      col += lc * fade * (smoothstep(px * (w + 1.0), px * w * 0.3, d) * (k == 0 ? 1.0 : 0.6) + exp(-d * (k == 0 ? 35.0 : 70.0)) * 0.45 * glowB);
+      if (k == 0){
+        float o = uv.y - 0.5, s = y - 0.5;
+        col += lc * fade * step(0.0, o * s) * step(abs(o), abs(s)) * (0.05 + 0.1 * abs(o) / max(abs(s), 1e-3));
+      }
+    }
+  } else {
+    // Halo: a ring of bars around the middle of the picture (bass at the bottom, treble meeting at the top), breathing with
+    // the bass, a soft light inside, and a ripple sent outward on every beat
+    float bass = ovEnergy(0.0, 0.18), r = length(p), R0 = 0.19 + 0.025 * bass;
+    float ang = atan(p.x, -p.y), m = abs(ang) / 3.14159;
+    float N = 52.0, bi = floor(m * N), fc = (bi + 0.5) / N;
+    float da = (fract(m * N) - 0.5) * 3.14159 / N, lat = r * sin(da), rad = r * cos(da) - R0;
+    float v = ovSpec(fc * 0.8), pk = ovPeak(fc * 0.8), len = 0.006 + v * 0.15, hw = 0.0032;
+    vec3 bc = pal(0.4 + 0.55 * clamp(rad / 0.15, 0.0, 1.0)) * (0.9 + 0.8 * v);
+    col *= mix(0.72, 1.0, smoothstep(R0 * 0.2, R0 * 1.4, r));                        // a darker lens inside the ring
+    col += pal(0.5) * exp(-r * r * 30.0) * (0.08 + 0.4 * bass) * glowB;                // light inside
+    col += pal(0.7) * smoothstep(px * 1.5, 0.0, abs(r - R0 + 0.012)) * 0.6;          // the inner rim
+    col += pal(0.7) * exp(-abs(r - R0 + 0.012) * 60.0) * 0.15 * glowB;
+    float d = ovCapsule(vec2(lat, rad), hw, len), a = smoothstep(px, -px, d);
+    col = mix(col, bc, a * 0.9);
+    col += bc * exp(-max(d, 0.0) * 80.0) * 0.25 * (0.3 + v) * glowB;
+    float dc = ovPill(vec2(lat, rad - (0.006 + pk * 0.15 + 0.008)), hw * 1.1, max(px * 1.2, 0.0015));
+    col = mix(col, pal(0.95) * 1.2, smoothstep(px, -px, dc) * smoothstep(0.03, 0.1, pk) * 0.85);
+    for (int i = 0; i < 4; i++){                                                     // beat ripples
+      float t = uBeatAge[i], rr = R0 + 0.02 + t * 0.32;
+      col += pal(0.85) * exp(-pow((r - rr) * 90.0, 2.0)) * exp(-t * 2.2) * step(t, 3.0) * 0.5;
+    }
+  }
+  return col;
+}
+
 void main(){
   vec2 uv = uView.xy + (gl_FragCoord.xy / uRes) * uView.zw;
   vec2 p = (uv - 0.5) * vec2(uAspect, 1.0);
   vec3 col = scene(uv, p);
   col *= uBright * (1.0 + 0.22 * uAudio.x + 0.12 * uBeat * uReact);
-  if (uOverlay > 0.5 && uOverlay < 1.5){            // spectrum bars along the bottom
-    float n = 64.0, bx = uv.x * n, bi = floor(bx), fx = fract(bx);
-    float v = texture2D(uSpec, vec2((bi + 0.5) / 64.0, 0.25)).r;
-    float h = 0.012 + v * 0.3, y = uv.y - 0.03;
-    float bar = step(0.14, fx) * step(fx, 0.86) * step(0.0, y) * step(y, h);
-    vec3 bc = pal(0.45 + 0.5 * (y / 0.32)) * (1.0 + v);
-    col = mix(col, bc, bar * 0.85);
-    col += pal(0.9) * step(0.14, fx) * step(fx, 0.86) * exp(-abs(y - h) * 90.0) * 0.5 * v;
-    float ry = -y; col = mix(col, bc * 0.3, step(0.14, fx) * step(fx, 0.86) * step(0.0, ry) * step(ry, h * 0.4) * (1.0 - ry / max(h * 0.4, 1e-3)) * 0.6);
-  } else if (uOverlay > 1.5){                       // waveform line across the middle
-    float w = wave(uv.x) * 0.16, d = abs(uv.y - 0.5 - w);
-    col += pal(0.92) * (smoothstep(0.004, 0.0, d) + 0.35 * exp(-d * 60.0));
-  }
+  if (uOverlay > 0.5) col = overlay(col, uv, p);
   col = col / (1.0 + 0.18 * col);                         // gentle roll-off, no harsh clipping
   col += (hash21(gl_FragCoord.xy + fract(uTime)) - 0.5) / 255.0; // dither: no banding in dark gradients
   gl_FragColor = vec4(max(col, 0.0), 1.0);
