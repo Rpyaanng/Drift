@@ -17,6 +17,12 @@
     { id: 'dawn', name: 'Morning Light', desc: 'Bright, airy and hopeful' },
   ];
 
+  // The cats: main.js decides which screen each one is on (they wander, get shooed, and gather); this shows the ones on this
+  // screen. catAt[k] is cat k's screen.
+  const CAT_MAX = 12;
+  const catCount = () => (S.catsUnlocked ? Math.max(1, Math.min(CAT_MAX, Math.round(+S.catCount || 3))) : 1);       // one cat, till "meow" is typed in Settings
+  let catAt = Array.isArray(init.cats) ? init.cats : [];
+
   // ---------- WebGL ----------
   function hex(h) { const n = parseInt(h.slice(1), 16); return [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255]; }
   function makeRenderer(canvas, opts) {
@@ -462,7 +468,55 @@
   // ---------- overlays ----------
   const U = me.union, cx = U.x + U.width / 2, cy = U.y + U.height / 2, b = me.bounds;
   const isCenter = cx >= b.x && cx < b.x + b.width && cy >= b.y && cy < b.y + b.height;
-  const clockEl = $('#clockFace'), breathEl = $('#breath'), ring = $('#breath .ring'), breathTxt = $('#breath span');
+  const clockEl = $('#clockFace'), breathEl = $('#breath'), coEl = $('#chatOverlay'), ring = $('#breath .ring'), breathTxt = $('#breath span');
+  // the cats: the drawing in index.html is the first, the rest are copies of it with their own ids (each keeps its own
+  // gradients, so a copy still draws when the first is on another screen). They sit in a row under the chat.
+  const catEls = (() => {
+    const first = $('#coCat'), row = document.createElement('div'), out = [first];
+    row.id = 'coCats'; first.replaceWith(row); row.append(first);
+    for (let k = 1; k < CAT_MAX; k++) {
+      const t = document.createElement('div');
+      t.innerHTML = first.outerHTML.replace(' id="coCat"', '').replace(/(id="|url\(#)(cat\w+)/g, `$1$2${k}`);
+      out.push(row.appendChild(t.firstElementChild));
+    }
+    out.forEach((c, k) => { c.classList.add('coCat'); c.style.animationDelay = `0s, ${(.7 + (k * 1.1) % 3.6).toFixed(1)}s`; });       // they breathe out of step
+    return out;
+  })();
+  let catWas = '';
+  // spread the cats on this screen at random along the edge, never overlapping (called again when the overlay moves: lift in chat.js)
+  // where along the edge the cats can sit (the panel's top while it shows, else the bottom of the screen), and a free spot on it
+  const catRoom = () => { const pan = $('#panel'); return Math.max(0, (pan.classList.contains('show') ? pan.offsetWidth - 44 : innerWidth - 56) - (catEls[0].getBoundingClientRect().width || 33)); };
+  function placeCat(c) {
+    const room = catRoom(), w = (c.getBoundingClientRect().width || 33) + 8;
+    const taken = catEls.filter((o) => o !== c && o.classList.contains('here') && !o.classList.contains('leaving')).map((o) => parseFloat(o.style.getPropertyValue('--cat-x')) || 0);
+    let best = Math.random() * room, bestGap = -1;
+    for (let i = 0; i < 24; i++) {       // the roomiest of a few random spots, so it doesn't land on another cat
+      const x = Math.random() * room, gap = Math.min(Infinity, ...taken.map((t) => Math.abs(t - x)));
+      if (gap >= w) { best = x; break; }
+      if (gap > bestGap) { best = x; bestGap = gap; }
+    }
+    c.style.setProperty('--cat-x', Math.round(best) + 'px');
+  }
+  function fadeOff(c) {       // gone to another screen: it fades away where it sat
+    c.classList.add('leaving');
+    setTimeout(() => { if (c.classList.contains('leaving')) c.classList.remove('here', 'leaving'); }, 400);
+  }
+  // Opening or closing the panel (or its bar) the cats sit on shoos them: most of them go to another screen. main.js decides
+  // which; the overlay is faded out meanwhile (lift in chat.js), and the ones that stay land somewhere new on the new edge.
+  let shooAt = 0;
+  coEl.addEventListener('catshoo', () => {
+    if (!S.cat || performance.now() < 3000 || performance.now() - shooAt < 800 || !catEls.some((c) => c.classList.contains('here'))) return;
+    shooAt = performance.now(); api.cmd({ type: 'cat-shoo', from: me.index });
+  });
+  function scatterCats() {       // the edge moved (lift in chat.js): every cat here takes a new spot on it
+    const here = catEls.filter((c) => c.classList.contains('here') && !c.classList.contains('leaving'));
+    here.forEach((c) => c.style.removeProperty('--cat-x'));
+    here.forEach((c) => { c.classList.remove('here'); });
+    here.forEach((c) => { c.classList.add('here'); placeCat(c); });
+  }
+  coEl.addEventListener('catmove', scatterCats);
+  $('#catCount').max = CAT_MAX;
+  $('#catCount').addEventListener('input', (e) => { fill(e.target); $('#o-catCount').textContent = e.target.value; P({ catCount: +e.target.value }); });
   const ease = (x) => x * x * (3 - 2 * x);
   let lastClock = '', accentAt = 0, pgAt = 0;
   const clockHm = $('#clockFace .hm'), clockAp = $('#clockFace .ap'), clockDate = $('#clockFace .date'), clockRule = $('#clockFace .rule i');
@@ -482,6 +536,16 @@
       clockRule.style.transform = `scaleX(${((d.getSeconds() + d.getMilliseconds() / 1000) / 60).toFixed(4)})`;      // fills across each minute
     }
     breathEl.classList.toggle('on', S.breathing && showHere);
+    const catsHere = catEls.map((c, k) => !!S.cat && k < catCount() && catAt[k] === me.index), catKey = catsHere.join();
+    if (catKey !== catWas) {       // one arrived or left. One that's leaving fades away; the ones arriving land in free spots
+      const was = catWas.split(','); catWas = catKey;
+      catEls.forEach((c, k) => {
+        if (catsHere[k]) { c.classList.remove('leaving'); if (!c.classList.contains('here')) { c.classList.add('here'); placeCat(c); } }
+        else if (c.classList.contains('here') && was[k] === 'true' && S.cat && k < catCount()) fadeOff(c);
+        else c.classList.remove('here', 'leaving');
+      });
+    }
+    coEl.classList.toggle('cat', catEls.some((c) => c.classList.contains('here')));       // (one fading away still counts, till it's gone)
     if (S.breathing) {
       const ph = (Date.now() / 1000) % 14; let k, label;   // 4 in · 2 hold · 6 out · 2 rest
       if (ph < 4) { k = ease(ph / 4); label = 'Breathe in'; }
@@ -644,8 +708,13 @@
     $('#o-brightness').textContent = Math.round(S.brightness * 100) + '%';
     $('#o-reactivity').textContent = S.reactivity < 0.01 ? 'Off' : Math.round(S.reactivity * 100) + '%';
     $('#o-volume').textContent = Math.round(S.music.volume * 100) + '%';
+    setVal($('#catCount'), catCount()); $('#o-catCount').textContent = catCount();
+    $('#catCountRow').hidden = !S.catsUnlocked;
+    $('#catName').textContent = S.catsUnlocked ? 'Summon the cats' : 'Summon the cat';
+    $('#catDesc').textContent = S.catsUnlocked ? 'Small glowing cats that wander between your screens. Opening or closing the panel under them shoos them off. Every 20 minutes they gather on the middle screen.'
+      : 'A small glowing cat that wanders between your screens. Opening or closing the panel under it shoos it off.';
     for (const k of ['autoCycle', 'quality', 'fps']) $('#' + k).value = String(S[k]);
-    for (const k of ['cycleShuffle', 'clock', 'breathing', 'keepAwake', 'onTop', 'autoUpdate', 'surfGpu']) $('#' + k).checked = !!S[k];
+    for (const k of ['cycleShuffle', 'clock', 'breathing', 'cat', 'keepAwake', 'onTop', 'autoUpdate', 'surfGpu']) $('#' + k).checked = !!S[k];
     syncUpdate();
     $('#shuffle').checked = !!S.music.shuffle;
     if (!(S.sleepAt > Date.now())) $('#sleep').value = '0';
@@ -1390,7 +1459,7 @@
   $('#volume').addEventListener('input', (e) => { fill(e.target); P({ music: { volume: +e.target.value } }); });
   $$('[data-nature]').forEach((x) => x.addEventListener('input', () => { fill(x); P({ music: { nature: { [x.dataset.nature]: +x.value } } }); }));
   for (const k of ['autoCycle', 'quality', 'fps']) $('#' + k).addEventListener('change', (e) => P({ [k]: +e.target.value }));
-  for (const k of ['cycleShuffle', 'clock', 'breathing', 'keepAwake', 'onTop', 'autoUpdate', 'surfGpu']) $('#' + k).addEventListener('change', (e) => P({ [k]: e.target.checked }));
+  for (const k of ['cycleShuffle', 'clock', 'breathing', 'cat', 'keepAwake', 'onTop', 'autoUpdate', 'surfGpu']) $('#' + k).addEventListener('change', (e) => P({ [k]: e.target.checked }));
   $('#shuffle').addEventListener('change', (e) => P({ music: { shuffle: e.target.checked } }));
   // Settings → Updates: what the updater is doing, and the one button that does the next thing
   function syncUpdate() {
@@ -1516,6 +1585,25 @@
   let toastTimer;
   function toast(msg, ms = 2600) { const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('on'), ms); }
 
+  let meow = '';
+  // four kitten meows, made with Web Audio: a buzzy voice through two "mouth" filters that open and close as the pitch
+  // rises and falls. [start, top, end] pitch in Hz, length in seconds, where the top comes (0 to 1)
+  const MEOWS = { m: [700, 1150, 760, 0.42, 0.35], e: [880, 1400, 1000, 0.3, 0.3], o: [600, 960, 560, 0.58, 0.45], w: [820, 1250, 620, 0.5, 0.25] };
+  let mewCtx = null;
+  function mew(ch) {
+    const [f0, f1, f2, dur, top] = MEOWS[ch], a = mewCtx || (mewCtx = new AudioContext()), t = a.currentTime + 0.01, j = 1 + (Math.random() - 0.5) * 0.06;
+    const voice = a.createOscillator(); voice.type = 'sawtooth';
+    voice.frequency.setValueAtTime(f0 * j, t); voice.frequency.exponentialRampToValueAtTime(f1 * j, t + dur * top); voice.frequency.exponentialRampToValueAtTime(f2 * j, t + dur);
+    const vib = a.createOscillator(), vibAmt = a.createGain(); vib.frequency.value = 6.5; vibAmt.gain.value = f1 * 0.012; vib.connect(vibAmt).connect(voice.frequency);
+    const out = a.createGain(); out.gain.setValueAtTime(0, t); out.gain.linearRampToValueAtTime(0.22, t + 0.05); out.gain.setValueAtTime(0.2, t + dur * 0.7); out.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    for (const [from, mid, to, q, lvl] of [[900, 1700, 750, 4, 1], [2400, 3300, 1500, 6, 0.5]]) {       // "m" opening to "ee-ah", closing to "ow"
+      const bp = a.createBiquadFilter(), g = a.createGain(); bp.type = 'bandpass'; bp.Q.value = q; g.gain.value = lvl;
+      bp.frequency.setValueAtTime(from, t); bp.frequency.linearRampToValueAtTime(mid, t + dur * top); bp.frequency.linearRampToValueAtTime(to, t + dur);
+      voice.connect(bp).connect(g).connect(out);
+    }
+    out.connect(a.destination);
+    voice.start(t); vib.start(t); voice.stop(t + dur + 0.05); vib.stop(t + dur + 0.05);
+  }
   addEventListener('keydown', (e) => {
     if (confirmEl.classList.contains('on')) {       // the question is up: only it gets keys
       e.preventDefault();
@@ -1528,6 +1616,13 @@
       return;
     }
     if (e.target.tagName === 'SELECT') return;
+    if (e.key.length === 1 && e.target.type !== 'search' && e.target.tagName !== 'TEXTAREA' && tab === 'settings' && panel.classList.contains('open')) {
+      // in Settings, M E O W each meow like a kitten; typing "meow" unlocks more cats (Summon the cats, and how many)
+      const ch = e.key.toLowerCase();
+      if (MEOWS[ch]) mew(ch);
+      meow = (meow + ch).slice(-4);
+      if (meow === 'meow' && !S.catsUnlocked) { P({ catsUnlocked: true }); toast('🐈 🐈 🐈  More cats', 2200); }
+    }
     if (e.target.type === 'search' || e.target.tagName === 'TEXTAREA') { if (e.key === 'Escape' && !e.defaultPrevented) e.target.blur(); return; }   // typing in a search box or a message
     const k = e.key;
     if (k === 'Escape') { if (panel.classList.contains('show') && panel.classList.contains('open')) { panel.classList.remove('open'); syncUI(); } else askQuit(); }
@@ -1576,6 +1671,7 @@
     else if (c.type === 'ask-quit') { if (confirmEl.classList.contains('on')) api.cmd({ type: 'quit' }); else askQuit(); }
     else if (c.type === 'rtc') onRtc(c);
     else if (c.type === 'web-cursor') { if (gpuEl && /^[a-z-]{1,24}$/.test(c.c)) gpuEl.style.cursor = c.c; }       // the pointer the offscreen page wants
+    else if (c.type === 'cats') catAt = Array.isArray(c.at) ? c.at : [];
     else if (c.type === 'music-pos') musicPos = { t: +c.t || 0, d: +c.d || 0, at: performance.now() };
     else if (c.type === 'ptrs') showPtrs(Array.isArray(c.list) ? c.list : []);
     else if (c.type === 'web-url') toBar();       // Ctrl+L in the web page

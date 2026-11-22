@@ -594,7 +594,27 @@
     coInput.value = ''; closeCompose();
   });
   coInput.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== coInput) co.classList.remove('typing'); }, 100));
-  new MutationObserver(() => co.classList.toggle('under', $('#panel').classList.contains('open'))).observe($('#panel'), { attributes: true, attributeFilter: ['class'] });
+  // The overlay (chat and the cat) always shows, sitting on the UI: on top of the panel (or its bar) while that shows,
+  // at its left end; otherwise down in the corner. Moving, it fades out and back in, and the cat lands somewhere new
+  // along that edge (the chat stays at the left). (Measured from the panel's size, not where it is drawn: it slides in.)
+  const panelEl = $('#panel');
+  let coAt = '', coMove = 0, coPanel = '';
+  const lift = () => {
+    const on = panelEl.classList.contains('show');
+    const at = on ? `${28 + panelEl.offsetHeight}px|${Math.round(innerWidth / 2 - panelEl.offsetWidth / 2 + 22)}px` : '|';
+    if (at === coAt) return;
+    coAt = at; co.classList.add('moving'); clearTimeout(coMove);
+    const pState = on + '/' + panelEl.classList.contains('open');
+    if (pState !== coPanel) { coPanel = pState; co.dispatchEvent(new Event('catshoo')); }       // the panel under the cats opened or closed, not just resized (app.js)
+    coMove = setTimeout(() => {
+      [co.style.bottom, co.style.left] = coAt.split('|');
+      co.dispatchEvent(new Event('catmove'));       // the cats land somewhere new along this edge (scatterCats in app.js)
+      co.classList.remove('moving');
+    }, 220);
+  };
+  new MutationObserver(lift).observe(panelEl, { attributes: true, attributeFilter: ['class'] });
+  new ResizeObserver(lift).observe(panelEl);
+  addEventListener('resize', lift);
 
   api.on('chat', (c) => {
     if (c.type === 'info') onInfo(c.info);

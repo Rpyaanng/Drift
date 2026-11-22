@@ -49,6 +49,9 @@ const DEFAULTS = {
   fps: 60,
   clock: false,
   breathing: false,
+  cat: false,              // cats sit in the chat overlay, each hopping to a different screen every few minutes
+  catsUnlocked: false,     // typing "meow" in Settings: Summon the cat becomes Summon the cats, and the number can be set
+  catCount: 3,             // how many, once unlocked (one before)
   keepAwake: true,
   onTop: false,
   surfMirror: false,       // the Surf page shows on every other monitor too (see "mirroring" in renderer/app.js)
@@ -708,6 +711,56 @@ function broadcast(channel, payload, includeAudio = true) {
   if (includeAudio && audioWin && !audioWin.isDestroyed()) audioWin.webContents.send(channel, payload);
 }
 function pushState() { broadcast('state', publicState()); p2p.sync(); syncLive(); }
+
+// ---- the cats (Summon the cats) --------------------------------------------------------------------
+// Where each cat is lives here, so every screen agrees. Now and then a cat wanders to another screen; opening or closing the
+// panel a cat sits on shoos it (most of the time) to another screen, or out of sight for a bit when there's no other; and every 20 minutes
+// they all come back, one by one, to the middle screen and stay there a while. Not saved: they start somewhere new each run.
+const CAT_MAX = 12, CAT_TICK = 15 * 1000, CAT_WANDER = CAT_TICK / (5 * 60 * 1000), CAT_SHOO = 0.85;
+const CAT_GATHER_EVERY = 20 * 60 * 1000, CAT_GATHER_GAP = 3500, CAT_GATHER_STAY = 3 * 60 * 1000;
+let catAt = Array(CAT_MAX).fill(-1), catAway = Array(CAT_MAX).fill(0), catGatherAt = Date.now() + CAT_GATHER_EVERY, catStayTill = 0, catGathering = [];
+const catPick = (xs) => xs[Math.floor(Math.random() * xs.length)];
+const catScreens = () => visWins.filter((v) => !v.win.isDestroyed()).map((v) => v.index);
+function catMiddle() {       // the middle screen from left to right; of two in the middle, the main one
+  const ws = visWins.filter((v) => !v.win.isDestroyed()).sort((a, b) => a.bounds.x - b.bounds.x);
+  if (!ws.length) return -1;
+  if (ws.length % 2) return ws[(ws.length - 1) / 2].index;
+  const two = ws.slice(ws.length / 2 - 1, ws.length / 2 + 1), main = allDisplays().find((d) => d.primary);
+  return (two.find((v) => main && v.index === main.index) || two[0]).index;
+}
+const catSend = () => broadcast('cmd', { type: 'cats', at: catAt }, false);
+function catGather() {
+  catGathering.forEach(clearTimeout); catGathering = [];
+  const order = [...Array(CAT_MAX).keys()].sort(() => Math.random() - 0.5), shown = state.catsUnlocked ? Math.max(1, Math.min(CAT_MAX, Math.round(+state.catCount || 3))) : 1;
+  const seen = order.filter((k) => k < shown), rest = order.filter((k) => k >= shown);       // the ones you can see come first, one at a time
+  catStayTill = Date.now() + seen.length * CAT_GATHER_GAP + CAT_GATHER_STAY;
+  seen.forEach((k, i) => catGathering.push(setTimeout(() => { const m = catMiddle(); if (m >= 0 && catAt[k] !== m) { catAt[k] = m; catAway[k] = 0; catSend(); } }, (i + 1) * CAT_GATHER_GAP)));
+  const m = catMiddle(); for (const k of rest) catAt[k] = m;
+}
+function catTick() {
+  const on = catScreens(); if (!on.length) return;
+  const now = Date.now(); let moved = false;
+  if (!state.cat) { catGatherAt = now + CAT_GATHER_EVERY; return; }       // the clock to the next gathering runs while they're out
+  for (let k = 0; k < CAT_MAX; k++) {
+    if (catAway[k]) { if (now < catAway[k]) continue; catAway[k] = 0; catAt[k] = catPick(on); moved = true; continue; }       // back from hiding
+    if (!on.includes(catAt[k])) { catAt[k] = catPick(on); moved = true; continue; }       // new, or its screen went away
+    if (now < catStayTill || on.length < 2) continue;
+    if (Math.random() < CAT_WANDER) { catAt[k] = catPick(on.filter((i) => i !== catAt[k])); moved = true; }
+  }
+  if (moved) catSend();
+  if (now >= catGatherAt) { catGatherAt = now + CAT_GATHER_EVERY; catGather(); }
+}
+function catShoo(from) {       // every cat on that screen, each most likely
+  const others = catScreens().filter((i) => i !== from); let moved = false;
+  for (let k = 0; k < CAT_MAX; k++) {
+    if (catAt[k] !== from || Math.random() > CAT_SHOO) continue;
+    if (others.length) catAt[k] = catPick(others);
+    else { catAt[k] = -1; catAway[k] = Date.now() + 20000 + Math.random() * 40000; }       // nowhere else to go: off out of sight for a bit
+    moved = true;
+  }
+  if (moved) catSend();
+}
+setInterval(catTick, CAT_TICK);
 const say = (text) => { if (text) broadcast('cmd', { type: 'toast', text: String(text) }, false); };
 
 // ---- watch together --------------------------------------------------------------------------------
@@ -1187,6 +1240,7 @@ function initFor(wc) {
     bounds: v ? v.bounds : act[0].bounds,
     union: unionOf(act),
     displays: allDisplays().map((d) => ({ index: d.index, key: d.key, width: d.bounds.width, height: d.bounds.height, primary: d.primary })),
+    cats: catAt,
     state: publicState(),
     tab: v ? tabOf[v.key] || startTab(v.key) : '', reopen: !!v && v.key === refocusKey,
     langs: subsLib.LANGS.map(([code, name]) => [code, name]),
@@ -1263,6 +1317,7 @@ function createAudioWindow() {
 }
 
 function applySideEffects(prev) {
+  if (state.cat && (!prev || !prev.cat || prev.catCount !== state.catCount || prev.catsUnlocked !== state.catsUnlocked)) catTick();       // the cats show up straight away
   // keep-awake
   if (state.keepAwake && blockerId === null) blockerId = powerSaveBlocker.start('prevent-display-sleep');
   if (!state.keepAwake && blockerId !== null) { powerSaveBlocker.stop(blockerId); blockerId = null; }
@@ -1519,6 +1574,7 @@ ipcMain.on('cmd', async (e, c) => {
   const parent = BrowserWindow.fromWebContents(e.sender);
   switch (c.type) {
     case 'quit': quitting = true; app.quit(); break;
+    case 'cat-shoo': catShoo(+c.from); break;
     case 'update-check': if (updater) updater.check(); break;
     case 'update-download': if (updater) updater.download(); break;
     case 'update-page': if (updater) shell.openExternal(updater.info().page).catch(() => {}); break;
@@ -1860,6 +1916,23 @@ async function runShots() {
     patch({ scene: 'aurora', overlay: 'wave', palette: 'cycle', cycleSecs: 10 }); await wait(2600); await snap('ov-wave');
     patch({ scene: 'nebula', overlay: 'halo', palette: 'aurora' }); await wait(2600); await snap('ov-halo');
     patch({ overlay: 'none', palette: 'aurora' });
+  }
+  if (process.env.DRIFT_CAT) {       // dev: the cat in the chat overlay, with the panel hidden, as just its bar, and open
+    const panelJs = (js) => Promise.all(visWins.map((v) => v.win.webContents.executeJavaScript(`(() => { const p = document.querySelector('#panel'); ${js} })()`).catch(() => {})));
+    patch({ scene: 'lake', cat: true }); await panelJs("p.classList.remove('show')"); await wait(1500); await snap('cat');
+    await panelJs("p.classList.remove('open'); p.classList.add('show')"); await wait(900); await snap('cat-bar');
+    await panelJs("document.querySelector('.tabs [data-tab=\"settings\"]').click(); p.classList.add('show')"); await wait(900); await panelJs("p.classList.add('show')"); await snap('cat-panel');
+    // shoo: the mouse runs at every cat on each screen, a few times; then they all gather on the middle screen
+    const count = async (tag) => log.push(`${tag} ` + JSON.stringify(await Promise.all(visWins.map((v) => v.win.webContents.executeJavaScript("document.querySelectorAll('.coCat.here').length").catch(() => -1)))));
+    await panelJs("p.classList.remove('show', 'open')"); await wait(1200); await count('cats before shoo');
+    await count('cats before unlock');
+    await panelJs("document.querySelector('.tabs [data-tab=\\\"settings\\\"]').click(); p.classList.add('show', 'open'); for (const key of 'meow') dispatchEvent(new KeyboardEvent('keydown', { key }))");
+    await wait(1500); log.push('unlocked: ' + state.catsUnlocked + ' / label: ' + await visWins[0].win.webContents.executeJavaScript("document.querySelector('#catName').textContent + ' / slider hidden: ' + document.querySelector('#catCountRow').hidden"));
+    await snap('cat-unlocked'); await panelJs("p.classList.remove('show', 'open')"); await wait(1500); await count('cats after unlock');
+    for (let i = 0; i < 3; i++) { await panelJs(`p.classList.${i % 2 ? 'remove' : 'add'}('show')`); await wait(1300); await count('cats after panel ' + (i % 2 ? 'closed' : 'opened')); }
+    await count('cats after shoo'); await snap('cat-shooed');
+    catGather(); await wait(CAT_GATHER_GAP * 3 + 1200); await count('cats gathered (middle ' + catMiddle() + ')'); await snap('cat-gather');
+    patch({ cat: false });
   }
   if (process.env.DRIFT_TESTWAV) {
     const b0 = beatCount; addTracks([process.env.DRIFT_TESTWAV]); await wait(6000); beatCount -= b0;

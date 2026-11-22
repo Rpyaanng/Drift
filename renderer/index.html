@@ -29,60 +29,96 @@
 </div>
 <div id="toast"></div>
 <div id="callBar"></div>
-<div id="chatOverlay"><div id="coList"></div><div id="coBox"><span id="coWhere"></span><input type="search" id="coInput" maxlength="4000" spellcheck="true" autocomplete="off"></div></div>
+<div id="chatOverlay"><div id="coList"></div><div id="coBox"><span id="coWhere"></span><input type="search" id="coInput" maxlength="4000" spellcheck="true" autocomplete="off"></div>
+<svg id="coCat" viewBox="150 90 1360 820" aria-hidden="true">
+<defs>
+<radialGradient id="catFur" cx="42%" cy="26%" r="82%"><stop offset="0" style="stop-color:var(--cat-hi)"/><stop offset=".3" style="stop-color:var(--cat-mid)"/><stop offset="1" style="stop-color:var(--cat-mid)"/></radialGradient>
+<radialGradient id="catPaw" cx="45%" cy="20%" r="85%"><stop offset="0" style="stop-color:var(--cat-hi)"/><stop offset=".5" style="stop-color:var(--cat-mid)"/><stop offset="1" style="stop-color:var(--cat-mid)"/></radialGradient>
+<linearGradient id="catTailFur" x1="0" y1="1" x2=".6" y2="0"><stop offset="0" style="stop-color:var(--cat-shade)"/><stop offset=".4" style="stop-color:var(--cat-shade)"/><stop offset=".4" style="stop-color:var(--cat-mid)"/><stop offset="1" style="stop-color:var(--cat-mid)"/></linearGradient>
+<linearGradient id="catRim" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--cat-rim)"/><stop offset=".6" style="stop-color:var(--cat-hi)" stop-opacity=".6"/><stop offset="1" style="stop-color:var(--cat-mid)" stop-opacity=".3"/></linearGradient>
+<linearGradient id="catEar" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--cat-dark)"/><stop offset="1" style="stop-color:var(--cat-deep)"/></linearGradient>
+<radialGradient id="catGround" cx="50%" cy="50%" r="50%"><stop offset="0" style="stop-color:var(--cat-base)" stop-opacity=".55"/><stop offset="1" style="stop-color:var(--cat-base)" stop-opacity="0"/></radialGradient>
+<mask id="catLit" maskUnits="userSpaceOnUse" x="150" y="90" width="1360" height="820"><rect x="150" y="90" width="1360" height="820" fill="#fff"/><ellipse cx="672" cy="414" rx="584" ry="392" fill="#000"/></mask>
+<filter id="catLight" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur in="SourceGraphic" stdDeviation="9" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+<clipPath id="catBodyClip"><path d="M345 355C340 250 380 150 440 125C510 105 590 160 645 225C710 205 790 205 845 225C900 160 980 105 1050 125C1110 150 1145 250 1140 355C1220 430 1260 560 1245 660C1230 760 1170 820 1080 835C900 860 600 860 420 835C320 820 250 740 240 620C235 520 270 420 345 355Z"/></clipPath>
+</defs>
+<ellipse cx="760" cy="868" rx="560" ry="40" fill="url(#catGround)"/>
+<g class="catBang" style="stroke:var(--cat-hi)" stroke-width="30" stroke-linecap="round" filter="url(#catLight)"><path d="M268 150L306 208"/><path d="M212 218L262 244"/></g>
+<g class="catTail">
+<path d="M1150 800C1300 812 1452 730 1456 590C1459 494 1400 440 1335 448C1284 455 1266 502 1284 532C1300 558 1334 582 1327 640C1319 702 1268 742 1196 762Z" fill="url(#catTailFur)" stroke="url(#catRim)" stroke-width="10" stroke-linejoin="round"/>
+</g>
+<path d="M345 355C340 250 380 150 440 125C510 105 590 160 645 225C710 205 790 205 845 225C900 160 980 105 1050 125C1110 150 1145 250 1140 355C1220 430 1260 560 1245 660C1230 760 1170 820 1080 835C900 860 600 860 420 835C320 820 250 740 240 620C235 520 270 420 345 355Z" fill="url(#catFur)" stroke="url(#catRim)" stroke-width="12" stroke-linejoin="round"/>
+<g clip-path="url(#catBodyClip)">
+<rect x="150" y="90" width="1360" height="820" style="fill:var(--cat-shade)" mask="url(#catLit)"/>
+<ellipse cx="560" cy="290" rx="165" ry="54" fill="#fff" opacity=".5" transform="rotate(-16 560 290)"/>
+<circle cx="770" cy="262" r="20" fill="#fff" opacity=".5"/>
+<path d="M408 820C400 760 450 722 512 722C576 722 620 762 618 812C616 850 560 858 510 858C450 858 412 852 408 820Z" style="fill:var(--cat-dark)" opacity=".55" transform="translate(18 -22)"/>
+<path d="M918 820C910 760 960 722 1022 722C1086 722 1130 762 1128 812C1126 850 1070 858 1020 858C960 858 922 852 918 820Z" style="fill:var(--cat-dark)" opacity=".55" transform="translate(18 -22)"/>
+</g>
+<path d="M425 335C425 262 445 205 468 198C508 194 552 224 580 258C524 274 474 300 425 335Z" fill="url(#catEar)"/>
+<path d="M1059 335C1059 262 1039 205 1016 198C976 194 932 224 904 258C960 274 1010 300 1059 335Z" fill="url(#catEar)"/>
+<g filter="url(#catLight)" fill="#f4fff4">
+<g class="catEyes"><circle cx="545" cy="530" r="64"/><circle cx="950" cy="530" r="64"/></g>
+<path d="M690 552C690 594 738 596 750 562C762 596 810 594 810 552" fill="none" stroke="#f4fff4" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<path d="M408 820C400 760 450 722 512 722C576 722 620 762 618 812C616 850 560 858 510 858C450 858 412 852 408 820Z" fill="url(#catPaw)" stroke="url(#catRim)" stroke-width="8"/>
+<path d="M918 820C910 760 960 722 1022 722C1086 722 1130 762 1128 812C1126 850 1070 858 1020 858C960 858 922 852 918 820Z" fill="url(#catPaw)" stroke="url(#catRim)" stroke-width="8"/>
+<path d="M414 826C470 842 566 840 616 816C614 850 560 858 510 858C452 858 416 852 414 826Z" style="fill:var(--cat-shade)"/>
+<path d="M924 826C980 842 1076 840 1126 816C1124 850 1070 858 1020 858C962 858 926 852 924 826Z" style="fill:var(--cat-shade)"/>
+</svg>
+</div>
 <div id="algo"></div>
 <div id="confirm"><div class="box"><b>Close Drift?</b><p id="confirmNote"></p><div class="row"><button class="btn" id="confirmNo">Stay</button><button class="btn ghost" id="confirmMon" title="Turn Drift off on this monitor only. Turn it back on in Settings.">Close this monitor</button><button class="btn danger" id="confirmYes">Close Drift</button></div></div></div>
 
 <div id="panel">
   <div id="content">
     <section data-tab="scenes">
-      <div class="row head">
-        <h3>Scene</h3>
-        <button class="btn ghost" id="modeHint" title="Change how scenes and videos fill your monitors in Settings"></button>
-      </div>
-      <div id="tiles"></div>
-      <div class="row">
-        <h3>Colour</h3>
-        <div id="palettes"></div>
-      </div>
-      <div id="customRow">
-        <label class="cc"><input type="color" data-i="0"><span>Background</span></label>
-        <label class="cc"><input type="color" data-i="1"><span>Shadows</span></label>
-        <label class="cc"><input type="color" data-i="2"><span>Main colour</span></label>
-        <label class="cc"><input type="color" data-i="3"><span>Highlights</span></label>
-        <button id="customDark" title="Pick only the main colour and let Drift choose the other three to match">Match to main colour</button>
-      </div>
-      <div class="grid3">
-        <label>React to sound <output id="o-reactivity"></output><input type="range" id="reactivity" min="0" max="1" step="0.01"></label>
-        <label>Visualizer overlay
-          <select id="overlay"><option value="none">None</option><option value="bars">Spectrum bars</option><option value="wave">Waveform</option><option value="halo">Halo</option></select>
-        </label>
-        <label>Colour cycle speed
-          <select id="cycleSecs"><option value="10">Fast — every 10 s</option><option value="30">Every 30 s</option><option value="60">Every minute</option><option value="180">Every 3 minutes</option><option value="600">Every 10 minutes</option></select>
-        </label>
-      </div>
-      <div class="grid3">
-        <label>Speed <output id="o-speed"></output><input type="range" id="speed" min="0.1" max="3" step="0.05"></label>
-        <label>Brightness <output id="o-brightness"></output><input type="range" id="brightness" min="0.2" max="1.4" step="0.02"></label>
-        <label>Change scene automatically
-          <span class="inline">
-            <select id="autoCycle"><option value="0">Off</option><option value="1">Every minute</option><option value="5">Every 5 min</option><option value="10">Every 10 min</option><option value="30">Every 30 min</option></select>
+      <div class="optCard">
+        <div class="cardHead"><h3>Scene</h3><button class="btn ghost" id="modeHint" title="Change how scenes and videos fill your monitors in Settings"></button></div>
+        <div id="tiles"></div>
+        <div class="optRow rotRow">
+          <div class="optText"><b>Change scene automatically</b><em id="rotNote"></em></div>
+          <div class="inline">
             <label class="chk"><input type="checkbox" id="cycleShuffle"><i></i>Shuffle</label>
-          </span>
-        </label>
+            <select id="autoCycle" aria-label="Change scene automatically"><option value="0">Off</option><option value="1">Every minute</option><option value="5">Every 5 min</option><option value="10">Every 10 min</option><option value="30">Every 30 min</option></select>
+          </div>
+        </div>
       </div>
-      <p class="rotnote" id="rotNote"></p>
-      <div class="row head amb">
-        <h3>Ambient sound</h3>
-        <span class="note" id="ambNote"></span>
-      </div>
-      <div id="presets"></div>
-      <div class="grid5">
-        <label>Music volume <output id="o-volume"></output><input type="range" id="volume" min="0" max="1" step="0.01"></label>
-        <label>Rain<input type="range" data-nature="rain" min="0" max="1" step="0.01"></label>
-        <label>Ocean waves<input type="range" data-nature="waves" min="0" max="1" step="0.01"></label>
-        <label>Wind<input type="range" data-nature="wind" min="0" max="1" step="0.01"></label>
-        <label>Fireplace<input type="range" data-nature="fire" min="0" max="1" step="0.01"></label>
+      <div class="cols">
+        <div>
+          <div class="optCard">
+            <h3>Colour</h3>
+            <div id="palettes"></div>
+            <div id="customRow">
+              <label class="cc"><input type="color" data-i="0"><span>Background</span></label>
+              <label class="cc"><input type="color" data-i="1"><span>Shadows</span></label>
+              <label class="cc"><input type="color" data-i="2"><span>Main colour</span></label>
+              <label class="cc"><input type="color" data-i="3"><span>Highlights</span></label>
+              <button id="customDark" title="Pick only the main colour and let Drift choose the other three to match">Match to main colour</button>
+            </div>
+            <div class="optRow"><div class="optText"><b>Colour cycle speed</b><em>Used when ↻ cycling is picked above.</em></div><select id="cycleSecs" aria-label="Colour cycle speed"><option value="10">Every 10 s</option><option value="30">Every 30 s</option><option value="60">Every minute</option><option value="180">Every 3 minutes</option><option value="600">Every 10 minutes</option></select></div>
+          </div>
+          <div class="optCard">
+            <h3>Look and motion</h3>
+            <div class="optRow slideRow"><div class="optText"><b>Speed<output id="o-speed"></output></b></div><input type="range" id="speed" min="0.1" max="3" step="0.05" aria-label="Speed"></div>
+            <div class="optRow slideRow"><div class="optText"><b>Brightness<output id="o-brightness"></output></b></div><input type="range" id="brightness" min="0.2" max="1.4" step="0.02" aria-label="Brightness"></div>
+            <div class="optRow slideRow"><div class="optText"><b>React to sound<output id="o-reactivity"></output></b><em>How much the scene moves with the music.</em></div><input type="range" id="reactivity" min="0" max="1" step="0.01" aria-label="React to sound"></div>
+            <div class="optRow"><div class="optText"><b>Visualizer overlay</b></div><select id="overlay" aria-label="Visualizer overlay"><option value="none">None</option><option value="bars">Spectrum bars</option><option value="wave">Waveform</option><option value="halo">Halo</option></select></div>
+          </div>
+        </div>
+        <div>
+          <div class="optCard">
+            <h3>Ambient sound</h3>
+            <p class="note ambNote" id="ambNote"></p>
+            <div id="presets"></div>
+            <div class="optRow slideRow"><div class="optText"><b>Music volume<output id="o-volume"></output></b></div><input type="range" id="volume" min="0" max="1" step="0.01" aria-label="Music volume"></div>
+            <h3 class="sub">Nature sounds</h3>
+            <div class="optRow slideRow"><div class="optText"><b>🌧 Rain</b></div><input type="range" data-nature="rain" min="0" max="1" step="0.01" aria-label="Rain"></div>
+            <div class="optRow slideRow"><div class="optText"><b>🌊 Ocean waves</b></div><input type="range" data-nature="waves" min="0" max="1" step="0.01" aria-label="Ocean waves"></div>
+            <div class="optRow slideRow"><div class="optText"><b>🍃 Wind</b></div><input type="range" data-nature="wind" min="0" max="1" step="0.01" aria-label="Wind"></div>
+            <div class="optRow slideRow"><div class="optText"><b>🔥 Fireplace</b></div><input type="range" data-nature="fire" min="0" max="1" step="0.01" aria-label="Fireplace"></div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -90,28 +126,34 @@
       <p class="note" id="mShare"></p>
       <div class="vlib">
         <aside>
-          <h3>Folders</h3>
-          <div id="vfolders"></div>
-          <button class="btn ghost" id="addVFolder">+ Add folder…</button>
-        </aside>
-        <div class="vmain">
-          <div class="row head">
-            <div id="vcrumb"></div>
-            <input type="search" id="vsearch" placeholder="Search this folder…" spellcheck="false">
-            <div class="row" style="margin:0">
-              <select id="videoFit" title="How the video is sized inside the screen">
-                <option value="auto">Auto fit</option>
-                <option value="contain">Fit — whole video, no cropping</option>
-                <option value="cover">Fill — crop the edges</option>
+          <div class="optCard">
+            <h3>Folders</h3>
+            <div id="vfolders"></div>
+            <button class="btn ghost wide" id="addVFolder">+ Add folder…</button>
+          </div>
+          <div class="optCard">
+            <h3>Playback</h3>
+            <label class="chk optRow"><span class="optText"><b>Video sound</b></span><input type="checkbox" id="videoSound"><i></i></label>
+            <label class="chk optRow"><span class="optText"><b>Autoplay</b><em>Play the next video in the folder when one ends.</em></span><input type="checkbox" id="videoAuto"><i></i></label>
+            <label class="chk optRow"><span class="optText"><b>Shuffle music</b></span><input type="checkbox" id="shuffle"><i></i></label>
+            <div class="optRow fitRow">
+              <div class="optText"><b>Video size</b></div>
+              <select id="videoFit" aria-label="Video size" title="How the video is sized inside the screen">
+                <option value="auto">Auto</option>
+                <option value="contain">Fit, no cropping</option>
+                <option value="cover">Fill, crop edges</option>
                 <option value="fill">Stretch</option>
               </select>
-              <label class="chk"><input type="checkbox" id="videoSound"><i></i>Sound</label>
-              <label class="chk" title="Play the next video in the folder when one finishes. Off: stop at the end."><input type="checkbox" id="videoAuto"><i></i>Autoplay</label>
-              <label class="chk" title="Play music in a random order"><input type="checkbox" id="shuffle"><i></i>Shuffle music</label>
-              <button class="btn ghost" id="pickVideo" title="Play a video or music file from anywhere on this PC">Open file…</button>
-              <button class="btn ghost" id="stopVideo">Stop video</button>
-              <button class="btn ghost" id="stopMusic" title="Stop the music and go back to the ambient sound chosen in Scenes">Stop music</button>
             </div>
+          </div>
+        </aside>
+        <div class="vmain">
+          <div class="libBar">
+            <div id="vcrumb"></div>
+            <input type="search" id="vsearch" placeholder="Search this folder…" spellcheck="false">
+            <button class="btn ghost" id="pickVideo" title="Play a video or music file from anywhere on this PC">Open file…</button>
+            <button class="btn ghost dangerBtn" id="stopVideo">■ Stop video</button>
+            <button class="btn ghost dangerBtn" id="stopMusic" title="Stop the music and go back to the ambient sound chosen in Scenes">■ Stop music</button>
           </div>
           <div id="subBox">
             <div class="row">
@@ -162,7 +204,7 @@
         <aside id="chSide">
           <div id="shBox">
             <div id="shOff">
-              <div class="row"><button class="btn" id="shStart">Share what I'm watching</button></div>
+              <button class="btn primary wide" id="shStart">Share what I'm watching</button>
               <p class="note" id="shOffNote">Everyone in the hub gets a Join button in the chat and sees your video, Surf page or music in step with you. It travels straight from your PC to theirs, encrypted.</p>
             </div>
             <div id="shHost">
@@ -179,17 +221,17 @@
           <div id="chHubs"></div>
           <div id="chStart">
             <h3 class="sub">Join friends</h3>
-            <div class="row">
+            <div class="joinRow">
               <input type="search" id="chCode" placeholder="Paste an invite code" spellcheck="false" autocomplete="off">
               <button class="btn" id="chJoin">Join</button>
             </div>
             <div id="chHostBox">
               <h3 class="sub">Or host a hub</h3>
-              <p class="note">A hub is a place for your friends: channels to chat in, and where you share what you're watching. It runs in your Drift and the messages are kept on this PC, so friends can only use it while your Drift is open. Sharing makes one for you if you have none.</p>
-              <div class="row"><button class="btn ghost" id="chHost">Host a hub</button></div>
+              <p class="note">Channels to chat in and a place to share what you're watching. It runs in your Drift and keeps messages on this PC, so friends can use it while Drift is open. Sharing makes one if you have none.</p>
+              <button class="btn ghost wide" id="chHost">Host a hub</button>
             </div>
           </div>
-          <div class="row chActs"><button class="btn ghost" id="shOptsBtn">Options</button></div>
+          <div class="sideFoot"><button class="btn ghost wide" id="shOptsBtn"><span aria-hidden="true">⚙</span> Options</button></div>
         </aside>
         <div id="chMain">
           <div id="chLives"></div>
@@ -200,53 +242,64 @@
           <textarea id="chInput" rows="1" maxlength="4000" spellcheck="true"></textarea>
         </div>
         <div id="shOpts">
-          <div class="row head"><h3>Options</h3><button class="btn ghost" id="shOptsDone">Back to the chat</button></div>
-          <div class="row chMe">
-            <span id="meFace"></span>
-            <label>Your name, as friends see it<input type="search" id="shName" maxlength="24" spellcheck="false" autocomplete="off"></label>
+          <div class="optHead"><h2>Options</h2><button class="btn ghost" id="shOptsDone">← Back to the chat</button></div>
+          <div class="optCard">
+            <h3>Profile</h3>
+            <div class="chMe">
+              <span id="meFace"></span>
+              <div class="chMeBody">
+                <label for="shName">Your name, as friends see it</label>
+                <input type="search" id="shName" maxlength="24" spellcheck="false" autocomplete="off">
+                <div class="chMeBtns">
+                  <button class="btn ghost" id="meFacePick">Choose a picture…</button>
+                  <button class="btn ghost" id="meFaceDrop">Remove picture</button>
+                  <input type="file" id="meFaceFile" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" hidden>
+                </div>
+              </div>
+            </div>
           </div>
-          <div class="row">
-            <button class="btn ghost" id="meFacePick">Choose a picture…</button>
-            <button class="btn ghost" id="meFaceDrop">Remove picture</button>
-            <input type="file" id="meFaceFile" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" hidden>
+          <div class="optCard">
+            <h3>Chat over the video</h3>
+            <div class="optRow">
+              <div class="optText"><b>Show while watching together</b><em>Press Enter while you watch to write without opening this tab. Someone talking in the call with a working, unmuted mic counts as heard.</em></div>
+              <select id="shOverlay" aria-label="Chat over the video">
+                <option value="unheard">From people who can't be heard</option>
+                <option value="all">Every message</option>
+                <option value="off">None, only in this tab</option>
+              </select>
+            </div>
           </div>
-          <label>Chat over the video while watching together
-            <select id="shOverlay">
-              <option value="unheard">Messages from people who can't be heard (no mic, or not talking)</option>
-              <option value="all">Every message</option>
-              <option value="off">None: only in this tab</option>
-            </select>
-          </label>
-          <p class="note">While you watch, press Enter to write a message without opening this tab. Someone talking in the call with a working, unmuted microphone counts as heard.</p>
-          <h3 class="sub">Calls</h3>
-          <div class="checks one">
-            <label class="chk"><input type="checkbox" id="vcDirect"><i></i>Connect directly in calls (lower delay; others in the call can see your IP address)</label>
-            <label class="chk"><input type="checkbox" id="vcPtt"><i></i>Hold a key to talk</label>
+          <div class="optCard">
+            <h3>Calls</h3>
+            <label class="chk optRow"><span class="optText"><b>Connect directly</b><em>Lower delay, but others in the call can see your IP address. Off: calls go through the hub's PC so nobody learns anyone's address.</em></span><input type="checkbox" id="vcDirect"><i></i></label>
+            <label class="chk optRow"><span class="optText"><b>Push to talk</b><em>Your mic is only on while you hold a key.</em></span><input type="checkbox" id="vcPtt"><i></i></label>
+            <div class="optRow">
+              <div class="optText"><b>Key to hold</b></div>
+              <select id="vcKey" aria-label="Key to hold">
+                <option value="backquote">` (the key under Esc)</option>
+                <option value="rctrl">Right Ctrl</option>
+                <option value="mouse4">Mouse back button</option>
+                <option value="mouse5">Mouse forward button</option>
+              </select>
+            </div>
+            <p class="note optFoot">🔒 Sound is always encrypted from your PC to theirs. Drift checks every connection and shows a lock on each one it verified (end-to-end in calls of up to 8). Changes apply from your next call.</p>
           </div>
-          <label>Key to hold
-            <select id="vcKey">
-              <option value="backquote">` (the key under Esc)</option>
-              <option value="rctrl">Right Ctrl</option>
-              <option value="mouse4">Mouse back button</option>
-              <option value="mouse5">Mouse forward button</option>
-            </select>
-          </label>
-          <p class="note">Calls go through the hub's PC by default, so nobody in a call learns anyone else's address. Either way the sound is encrypted from your PC to theirs: Drift checks every connection and shows a lock on each one it verified, end-to-end encrypted in calls of up to 8. Changes here apply from your next call.</p>
-          <div class="checks one">
-            <label class="chk"><input type="checkbox" id="shControl"><i></i>Friends can play, pause and skip, and use a web page</label>
-            <label class="chk"><input type="checkbox" id="shWait"><i></i>Pause for everyone while someone is loading</label>
-            <label class="chk"><input type="checkbox" id="shInternet"><i></i>Let friends join from outside my home network</label>
+          <div class="optCard">
+            <h3>Sharing</h3>
+            <label class="chk optRow"><span class="optText"><b>Friends can control playback</b><em>Play, pause and skip, and use a shared web page.</em></span><input type="checkbox" id="shControl"><i></i></label>
+            <label class="chk optRow"><span class="optText"><b>Wait for everyone</b><em>Pause for everyone while someone is loading.</em></span><input type="checkbox" id="shWait"><i></i></label>
+            <label class="chk optRow"><span class="optText"><b>Allow joining from outside my network</b><em>Asks your router to open a port while you share or host a hub, and closes it after.</em></span><input type="checkbox" id="shInternet"><i></i></label>
+            <div class="optRow">
+              <div class="optText"><b>Picture sent between PCs</b><em>Lower it if the video keeps stopping to load. Applies to videos you share and join. <span id="shQNote"></span></em></div>
+              <select id="shQuality" aria-label="Picture sent between PCs">
+                <option value="original">Original (fast connection)</option>
+                <option value="1080">1080p · about 6 Mbit/s</option>
+                <option value="720">720p · about 3 Mbit/s</option>
+                <option value="480">480p · about 1.2 Mbit/s</option>
+              </select>
+            </div>
+            <p class="note optFoot">Subtitles, sound conversion and HDR conversion all work for friends too, and each person picks their own subtitles.</p>
           </div>
-          <label>Picture sent between PCs
-            <select id="shQuality">
-              <option value="original">Original — best picture, needs a fast connection</option>
-              <option value="1080">1080p — about 6 Mbit/s</option>
-              <option value="720">720p — about 3 Mbit/s</option>
-              <option value="480">480p — about 1.2 Mbit/s</option>
-            </select>
-          </label>
-          <p class="note">Lower the picture if the video keeps stopping to load: the sharing PC then sends a smaller copy. It applies to videos you share and videos you join. <span id="shQNote"></span></p>
-          <p class="note">Joining from outside your home asks your router to open a port while you share or host a hub, and closes it after. Subtitles, sound conversion and HDR conversion all work for friends too, and each person picks their own subtitles.</p>
         </div>
       </div>
     </section>
@@ -254,69 +307,63 @@
     <section data-tab="settings">
       <div class="cols">
         <div>
-          <h3>Monitors</h3>
-          <div id="monitors"></div>
-          <p class="note">Turn a monitor off here to keep it free for other things.</p>
-          <div class="row head" id="modeRow">
-            <h3 class="sub">Across monitors</h3>
-            <div class="seg" id="mode">
-              <button data-v="span" title="One scene or video stretched across every monitor">Span</button>
-              <button data-v="mirror" title="The same scene or video repeated on each monitor">Mirror</button>
-              <button data-v="mix" title="A different scene or video per monitor — pick from the panel on each one">Mix</button>
+          <div class="optCard">
+            <h3>Monitors</h3>
+            <div id="monitors"></div>
+            <p class="note monNote">Turn a monitor off here to keep it free for other things.</p>
+            <div class="optRow" id="modeRow">
+              <div class="optText"><b>Across monitors</b><em id="modeNote"></em></div>
+              <div class="seg" id="mode">
+                <button data-v="span" title="One scene or video stretched across every monitor">Span</button>
+                <button data-v="mirror" title="The same scene or video repeated on each monitor">Mirror</button>
+                <button data-v="mix" title="A different scene or video per monitor — pick from the panel on each one">Mix</button>
+              </div>
+            </div>
+            <div class="optRow"><div class="optText"><b>Render quality</b><em>Lower it for 4K screens or laptops.</em></div><select id="quality" aria-label="Render quality"><option value="0.5">Light</option><option value="0.75">Balanced</option><option value="1">Full resolution</option></select></div>
+            <div class="optRow"><div class="optText"><b>Frame rate</b></div><select id="fps" aria-label="Frame rate"><option value="30">30 fps</option><option value="60">60 fps</option></select></div>
+          </div>
+          <div class="optCard">
+            <h3>Video conversion</h3>
+            <div class="optRow"><div class="optText"><b>HDR videos</b></div><select id="vHdr" aria-label="HDR videos"><option value="auto">Convert for SDR screens</option><option value="always">Always convert to SDR</option><option value="never">Never convert</option></select></div>
+            <div class="optRow"><div class="optText"><b>HDR look after converting</b></div><select id="vTone" aria-label="HDR look after converting"><option value="hable">Filmic · detail in highlights</option><option value="mobius">Mobius · closer colours</option><option value="reinhard">Reinhard · softer contrast</option></select></div>
+            <div class="optRow"><div class="optText"><b>Convert with</b><em>Automatic picks the fastest encoder that works on this PC.</em></div><select id="vEnc" aria-label="Convert with"></select></div>
+            <div class="optRow"><div class="optText"><b>Converted picture size</b></div><select id="vXq" aria-label="Converted picture size"><option value="auto">Match my screen</option><option value="2160">4K (2160p)</option><option value="1440">1440p</option><option value="1080">1080p</option><option value="720">720p · lightest</option><option value="480">480p</option></select></div>
+            <p class="note optFoot" id="xcNote"></p>
+          </div>
+          <div class="optCard">
+            <h3>Updates</h3>
+            <label class="chk optRow"><span class="optText"><b>Update Drift automatically</b><em>Downloads in the background and installs when Drift closes. Off: Drift still checks, and you choose when to download.</em></span><input type="checkbox" id="autoUpdate"><i></i></label>
+            <div class="optRow" id="updRow">
+              <div class="optText"><em id="updNote"></em></div>
+              <button class="btn" id="updBtn"><svg class="updIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5"/><path d="M5 20h14"/></svg><span>Check for updates</span></button>
             </div>
           </div>
-          <p class="note" id="modeNote"></p>
-          <div class="grid2">
-            <label>Render quality
-              <select id="quality"><option value="0.5">Light (best for 4K / laptops)</option><option value="0.75">Balanced</option><option value="1">Full resolution</option></select>
-            </label>
-            <label>Frame rate
-              <select id="fps"><option value="30">30 fps</option><option value="60">60 fps</option></select>
-            </label>
+          <div class="optCard danger">
+            <h3>Reset</h3>
+            <div class="optRow"><div class="optText"><b>Forget Surf's sign-ins and history</b><em>Clears Surf's cookies, site data, cache and history. Your normal browser isn't touched.</em></div><button class="btn ghost" id="forgetSurf">Forget</button></div>
+            <div class="optRow"><div class="optText"><b>Reset everything</b><em>Puts every setting back to how it started and stops sharing. Your playlist, folders and name stay.</em></div><button class="btn ghost dangerBtn" id="reset">Reset</button></div>
           </div>
-          <h3 class="sub">Video conversion</h3>
-          <div class="grid2">
-            <label>HDR videos
-              <select id="vHdr"><option value="auto">Convert to SDR on screens without HDR</option><option value="always">Always convert to SDR</option><option value="never">Never convert</option></select>
-            </label>
-            <label>HDR look after converting
-              <select id="vTone"><option value="hable">Filmic — keeps detail in bright areas</option><option value="mobius">Mobius — stays closer to the original colours</option><option value="reinhard">Reinhard — softer contrast</option></select>
-            </label>
-            <label>Convert with
-              <select id="vEnc" title="Which ffmpeg encoder does the converting. Automatic picks the fastest one that works on this PC."></select>
-            </label>
-            <label>Converted picture size
-              <select id="vXq"><option value="auto">Match my screen</option><option value="2160">4K (2160p)</option><option value="1440">1440p</option><option value="1080">1080p</option><option value="720">720p — lightest</option><option value="480">480p</option></select>
-            </label>
-          </div>
-          <p class="note" id="xcNote"></p>
         </div>
         <div>
-          <h3>Extras</h3>
-          <div class="checks">
-            <label class="chk"><input type="checkbox" id="clock"><i></i>Show clock</label>
-            <label class="chk"><input type="checkbox" id="breathing"><i></i>Breathing guide</label>
-            <label class="chk"><input type="checkbox" id="keepAwake"><i></i>Keep screens awake</label>
-            <label class="chk"><input type="checkbox" id="onTop"><i></i>Stay above other windows</label>
-            <label class="chk"><input type="checkbox" id="algoInfo"><i></i>Algorithm captions</label>
-            <label class="chk" title="Block adverts and trackers in Surf's web pages"><input type="checkbox" id="shAdblock"><i></i>Block adverts in Surf</label>
-            <label class="chk" title="Experimental. Surf draws its pages off screen and hands each frame to your monitors on the graphics card, so pages mirrored on other monitors stay sharp and smooth at your screen's full frame rate. Open pages load again when you change it"><input type="checkbox" id="surfGpu"><i></i>Draw Surf on the graphics card</label>
+          <div class="optCard">
+            <h3>Extras</h3>
+            <label class="chk optRow"><span class="optText"><b>Show clock</b></span><input type="checkbox" id="clock"><i></i></label>
+            <label class="chk optRow"><span class="optText"><b>Breathing guide</b></span><input type="checkbox" id="breathing"><i></i></label>
+            <label class="chk optRow"><span class="optText"><b id="catName">Summon the cat</b><em id="catDesc">A small glowing cat that wanders between your screens. Opening or closing the panel under it shoos it off.</em></span><input type="checkbox" id="cat"><i></i></label>
+            <div class="optRow slideRow" id="catCountRow" hidden><div class="optText"><b>How many cats<output id="o-catCount"></output></b></div><input type="range" id="catCount" min="1" max="12" step="1" aria-label="How many cats"></div>
+            <label class="chk optRow"><span class="optText"><b>Keep screens awake</b></span><input type="checkbox" id="keepAwake"><i></i></label>
+            <label class="chk optRow"><span class="optText"><b>Stay above other windows</b></span><input type="checkbox" id="onTop"><i></i></label>
+            <label class="chk optRow"><span class="optText"><b>Algorithm captions</b></span><input type="checkbox" id="algoInfo"><i></i></label>
+            <label class="chk optRow"><span class="optText"><b>Block adverts in Surf</b><em>Blocks adverts and trackers in web pages.</em></span><input type="checkbox" id="shAdblock"><i></i></label>
+            <label class="chk optRow"><span class="optText"><b>Draw Surf on the graphics card</b><em>Experimental. Mirrored pages stay sharp and smooth. Open pages reload when changed.</em></span><input type="checkbox" id="surfGpu"><i></i></label>
+            <div class="optRow"><div class="optText"><b>Sleep timer</b><em>Fade out and close. <output id="o-sleep"></output></em></div><select id="sleep" aria-label="Sleep timer"><option value="0">Off</option><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="45">45 minutes</option><option value="60">1 hour</option><option value="90">1.5 hours</option><option value="120">2 hours</option></select></div>
           </div>
-          <label>Sleep timer — fade out and close <output id="o-sleep"></output>
-            <select id="sleep"><option value="0">Off</option><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="45">45 minutes</option><option value="60">1 hour</option><option value="90">1.5 hours</option><option value="120">2 hours</option></select>
-          </label>
-          <p class="keys"><b>Esc</b> exit (asks first) · <b>Tab</b> controls · <b>Space</b> play/pause · <b>← →</b> previous/next · <b>↑ ↓</b> volume · <b>P</b> colour · <b>C</b> clock · <b>B</b> breathing<br>During a video: <b>S</b> subtitles on/off · <b>V</b> next subtitle track · <b>Z X</b> subtitle timing<br>Play, previous and next act on the selected tab: Scenes, or in Media whichever of your video and music is playing. In Surf, previous and next go back and forward. While Spotify plays and Drift has no video or music on, they control Spotify.</p>
-          <h3 class="sub">Updates</h3>
-          <div class="checks">
-            <label class="chk" title="Download new versions of Drift in the background and install them when Drift closes. When it's off, Drift still looks for new versions and shows them here, and you choose when to download"><input type="checkbox" id="autoUpdate"><i></i>Update Drift automatically</label>
-          </div>
-          <div class="row" id="updRow">
-            <button class="btn" id="updBtn"><svg class="updIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5"/><path d="M5 20h14"/></svg><span>Check for updates</span></button>
-            <span class="note" id="updNote" style="margin:0"></span>
-          </div>
-          <div class="row">
-            <button class="btn ghost" id="forgetSurf" title="Sign out of every site in Surf and clear its cookies, site data, cache and history. Your normal browser isn't touched.">Forget Surf's sign-ins and history</button>
-            <button class="btn ghost" id="reset">Reset everything</button>
+          <div class="optCard">
+            <h3>Keyboard shortcuts</h3>
+            <div class="keyGrid"><span><kbd>Esc</kbd>Exit (asks first)</span><span><kbd>Tab</kbd>Show controls</span><span><kbd>Space</kbd>Play / pause</span><span><kbd>← →</kbd>Previous / next</span><span><kbd>↑ ↓</kbd>Volume</span><span><kbd>P</kbd>Colour</span><span><kbd>C</kbd>Clock</span><span><kbd>B</kbd>Breathing guide</span></div>
+            <h3 class="sub">During a video</h3>
+            <div class="keyGrid"><span><kbd>S</kbd>Subtitles on / off</span><span><kbd>V</kbd>Next subtitle track</span><span><kbd>Z X</kbd>Subtitle timing</span></div>
+            <p class="note optFoot">Play, previous and next act on the selected tab: Scenes, or in Media whichever of your video and music is playing. In Surf they go back and forward. While Spotify plays and Drift has nothing on, they control Spotify.</p>
           </div>
         </div>
       </div>

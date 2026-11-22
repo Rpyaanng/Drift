@@ -349,7 +349,7 @@ input.num { width: 46px; text-align: center; padding: 6px 4px; }
 [data-tab="share"] .row { flex-wrap: nowrap; }
 [data-tab="share"] input[type=search] { user-select: text; }
 #shCode { flex: 1 1 auto; width: auto; min-width: 0; font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; }
-#shName { display: block; width: 100%; margin-top: 6px; }
+#shName { display: block; box-sizing: border-box; width: 100%; margin-top: 6px; }
 #shCodeOut { flex: 1 1 auto; min-width: 0; padding: 7px 10px; border-radius: 9px; border: 1px solid var(--line); background: rgba(255,255,255,.05); color: var(--ink);
   font: 12px/1.4 "Cascadia Mono", Consolas, ui-monospace, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: text; }
 #shHost .btn, #shOff .btn, #shGuest .btn { flex: none; white-space: nowrap; }
@@ -361,7 +361,22 @@ input.num { width: 46px; text-align: center; padding: 6px 4px; }
 .checks.one { grid-template-columns: 1fr; }
 [data-tab="settings"] h3.sub { margin-top: 6px; }
 @media (max-width: 760px) { [data-tab="share"] .row { flex-wrap: wrap; } }
-#modeRow { margin: 14px 0 0; } #modeRow h3.sub { margin: 0; }
+#modeRow { margin-top: 4px; }
+#modeRow .seg { flex: none; }
+.monNote { margin: 8px 0 10px; }
+[data-tab="settings"] .cols { align-items: start; grid-template-columns: 1fr 1fr; gap: 14px; }
+[data-tab="settings"] .optRow select { width: min(240px, 50%); }
+[data-tab="settings"] .chk.optRow { display: flex; white-space: normal; margin: 0; font-size: inherit; }
+[data-tab="settings"] .optCard > h3.sub { margin: 4px 0 8px; }
+#xcNote:empty { display: none; }
+#o-sleep { float: none; color: var(--accent); }
+.keyGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; margin-bottom: 12px; font-size: 12px; color: var(--dim); }
+.keyGrid span { display: flex; align-items: center; gap: 8px; }
+.keyGrid kbd { flex: none; min-width: 22px; box-sizing: border-box; text-align: center; padding: 2px 7px; border-radius: 6px; border: 1px solid rgba(255,255,255,.14); border-bottom-width: 2px;
+  background: rgba(255,255,255,.07); color: var(--ink); font: 600 11px/1.4 "Segoe UI", system-ui; }
+.optCard.danger { border-color: rgba(255,110,70,.22); }
+.btn.ghost.dangerBtn:hover { color: #ffb6a3; border-color: rgba(255,110,70,.6); background: rgba(255,90,90,.12); }
+@media (max-width: 760px) { .keyGrid { grid-template-columns: 1fr; } }
 
 /* ---- Chat tab ---- */
 #chat { display: grid; grid-template-columns: 230px 1fr; gap: 18px; height: min(54vh, 520px); }
@@ -448,7 +463,36 @@ input.num { width: 46px; text-align: center; padding: 6px 4px; }
 #shOpts { display: none; overflow-y: auto; min-width: 0; }
 #chat.opts #shOpts { display: block; }
 #chat.opts #chMain { display: none; }
-#shOpts label { display: block; margin-bottom: 12px; }
+#shOpts { padding: 2px 6px 8px 2px; }
+#shOpts::-webkit-scrollbar { width: 6px; }
+#shOpts::-webkit-scrollbar-thumb { background: rgba(255,255,255,.14); border-radius: 3px; }
+.optHead { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 2px 0 12px; }
+.optHead h2 { margin: 0; font: 600 17px/1.2 "Segoe UI Variable Display", "Segoe UI", system-ui; color: var(--ink); }
+.optCard { padding: 14px 16px 4px; margin-bottom: 12px; border-radius: 12px; border: 1px solid var(--line); background: rgba(255,255,255,.035); }
+.optCard > h3 { margin: 0 0 12px; }
+.optRow { display: flex; align-items: center; gap: 16px; padding: 10px 0; border-top: 1px solid var(--line); }
+.optCard > h3 + .optRow { border-top: 0; padding-top: 0; }
+.optText { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.optText b { font-weight: 600; font-size: 13px; color: var(--ink); }
+.optText em { font-style: normal; font-size: 11.5px; line-height: 1.45; color: var(--dim); }
+.optText em:empty { display: none; }
+.optRow select { flex: none; width: 230px; margin: 0; }
+#shOpts .chk.optRow { display: flex; white-space: normal; margin: 0; font-size: inherit; }
+.optFoot { margin: 0; padding: 10px 0 12px; border-top: 1px solid var(--line); font-size: 11.5px; line-height: 1.45; }
+#chSide #shStart, .btn.wide { box-sizing: border-box; width: 100%; text-align: center; }
+.btn.primary { background: var(--accent); color: #0b0d13; font-weight: 600; }
+.btn.primary:hover { background: color-mix(in srgb, var(--accent), white 18%); }
+#shOff .note { margin: 8px 2px 4px; line-height: 1.45; }
+.joinRow { display: flex; gap: 6px; margin-bottom: 6px; }
+#chSide .joinRow input[type=search] { flex: 1; width: auto; min-width: 0; }
+.joinRow .btn { flex: none; }
+#chStart { padding: 0 4px; }
+#chStart .note { line-height: 1.45; margin: 0 0 10px; }
+#chSide { display: flex; flex-direction: column; }
+#chSide > * { flex: none; }
+.sideFoot { margin-top: auto; padding: 10px 4px 4px; }
+#chat.opts #shOptsBtn { color: var(--ink); border-color: var(--accent); }
+@media (max-width: 760px) { .optRow { flex-wrap: wrap; } .optRow:has(> select, > .seg) .optText { flex-basis: 100%; } #content [data-tab] .optRow select { width: 100%; } }
 #chat.carded #shHost .row, #chat.carded #shGuest .row, #chat.carded #shPeople { display: none; }
 /* faces: a picture, or an initial on the person's own colour */
 .face { --hue: 200; display: inline-grid; place-items: center; flex: none; width: 30px; height: 30px; border-radius: 50%; overflow: hidden; box-sizing: border-box;
@@ -464,8 +508,10 @@ input.num { width: 46px; text-align: center; padding: 6px 4px; }
 .chMsg { padding-left: 48px; }
 .chMsg .msgFace { position: absolute; left: 8px; top: 3px; }
 .chRe { margin-left: 0; }
-.chMe { align-items: flex-end; gap: 14px; }
-.chMe label { flex: 1; margin: 0; }
+.chMe { display: flex; align-items: flex-start; gap: 16px; padding-bottom: 12px; }
+.chMeBody { flex: 1; min-width: 0; }
+.chMeBody label { margin: 0; }
+.chMeBtns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 /* voice: the call in the side, locks, safety numbers, and the bar over the scenes */
 .vcWho { display: flex; align-items: center; gap: 7px; padding: 3px 8px; font-size: 12px; color: var(--ink); }
 .vcWho .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -500,8 +546,11 @@ input.num { width: 46px; text-align: center; padding: 6px 4px; }
 .cbBtn.off { background: rgba(255,90,90,.35); }
 .cbBtn.leave:hover { background: rgba(255,90,90,.5); }
 /* chat over the video */
-#chatOverlay { position: fixed; left: 28px; bottom: 150px; width: min(440px, 40vw); z-index: 30; pointer-events: none; display: flex; flex-direction: column; gap: 6px; }
-#chatOverlay.under { opacity: 0; }
+#chatOverlay { position: fixed; left: 28px; bottom: 18px; width: min(440px, 40vw); z-index: 30; pointer-events: none; display: flex; flex-direction: column; gap: 6px; transition: opacity .22s ease; }
+#chatOverlay.moving { opacity: 0; }
+#chatOverlay:not(.cat) { padding-bottom: 10px; }
+#chatOverlay.cat { bottom: 0; }       /* nothing under them (no panel): the cats sit on the bottom edge of the screen. On the panel, lift in chat.js sets bottom itself */
+#catCountRow[hidden] { display: none; }       /* without the cat, a little air above the panel */       /* fading out to move to the other spot (see lift in chat.js) */
 #coList { display: flex; flex-direction: column; gap: 5px; }
 .coMsg { display: flex; align-items: flex-start; gap: 8px; padding: 6px 10px 6px 6px; border-radius: 14px; background: rgba(10,12,18,.58); backdrop-filter: blur(14px);
   color: var(--ink); font-size: 13px; line-height: 1.4; text-shadow: 0 1px 2px rgba(0,0,0,.5); transition: opacity .8s; width: fit-content; max-width: 100%; animation: coIn .25s ease-out; }
@@ -518,4 +567,77 @@ input.num { width: 46px; text-align: center; padding: 6px 4px; }
 #coWhere { color: var(--dim); font-size: 12px; white-space: nowrap; }
 #coInput { flex: 1; width: auto; border: 0; background: transparent; padding: 4px 2px; }
 #coInput::-webkit-search-cancel-button { display: none; }
+/* the cats (Summon the cats): a drawing in index.html. It sits on the panel (see lift in chat.js), under the chat, so messages stack up above it; it pops in,
+   breathes, glows, blinks and swishes its tail */
+/* the cats sit along one line, each at its own spot (--cat-x, placeCat in app.js); the line is as tall as a cat, so chat stacks up above them */
+#coCats { --cat-w: clamp(23px, 2vw, 37px); position: relative; height: calc(var(--cat-w) * .565); margin-top: 2px; }
+#chatOverlay:not(.cat) #coCats { display: none; }
+.coCat { position: absolute; left: var(--cat-x, 0px); bottom: calc(var(--cat-w) * -.038); display: none; width: var(--cat-w); aspect-ratio: 1360 / 820;
+  /* the paws end 6.3% above the drawing's bottom: they rest exactly on the edge it sits on, and nothing below them (the
+     glow under it, the halo) is drawn, so none of it lies over the panel. --cat-x: where along it (lift in chat.js) */
+  clip-path: inset(-60px -60px 6.3% -60px);
+  overflow: visible; transform-origin: 50% 100%;
+  /* its colours are mixed from the theme's accent (the palette in use), so it changes with it */
+  --cat-base: var(--accent); --cat-mid: color-mix(in oklab, var(--accent), white 22%); --cat-hi: color-mix(in oklab, var(--accent), white 62%);
+  --cat-rim: color-mix(in oklab, var(--accent), white 80%); --cat-lo: color-mix(in oklab, var(--accent), black 12%); --cat-shade: color-mix(in oklab, var(--accent), black 48%);
+  --cat-deep: color-mix(in oklab, var(--accent), black 50%); --cat-dark: color-mix(in oklab, var(--accent), black 72%);
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--cat-hi) 80%, transparent)) drop-shadow(0 0 16px color-mix(in srgb, var(--accent) 55%, transparent)); }
+.coCat.here { display: block; animation: catIn .7s cubic-bezier(.3, 1.6, .5, 1), catBreathe 3.6s ease-in-out .7s infinite; }
+.coCat.leaving { animation: catOut .35s ease-out forwards !important; }
+.coCat .catEyes { transform-box: fill-box; transform-origin: center; animation: catBlink 5.2s infinite; }
+.coCat .catTail { transform-box: fill-box; transform-origin: 13% 91%; animation: catTail 2.8s ease-in-out infinite; }
+.coCat .catBang { animation: catBang 4.4s ease-in-out infinite; }
+@keyframes catIn { from { opacity: 0; transform: translateY(14px) scale(.8); } }
+@keyframes catOut { to { opacity: 0; } }
+@keyframes catBreathe { 50% { transform: scale(1.035, .97); } }
+@keyframes catBlink { 0%, 92%, 100% { transform: none; } 95% { transform: scaleY(.08); } }
+@keyframes catTail { 0%, 100% { transform: rotate(-4deg); } 50% { transform: rotate(6deg); } }
+@keyframes catBang { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .coCat, .coCat * { animation: none !important; } }
 @keyframes coIn { from { opacity: 0; transform: translateY(6px); } }
+/* Scenes tab, in the same cards as Settings */
+[data-tab="scenes"] .cols { grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
+.cardHead { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; min-height: 26px; }
+.cardHead h3 { margin: 0; }
+.cardHead .btn { padding: 4px 10px; font-size: 11.5px; }
+[data-tab="scenes"] #tiles { margin-bottom: 4px; }
+[data-tab="scenes"] #tiles h3.sub { margin: 16px 0 10px; }
+[data-tab="scenes"] .optRow select { width: min(200px, 50%); }
+[data-tab="scenes"] .optCard > h3 { margin: 0 0 12px; }
+[data-tab="scenes"] .optCard > h3.sub { margin: 12px 0 4px; }
+[data-tab="scenes"] .optCard > h3.sub + .optRow { border-top: 0; }
+.rotRow { margin-top: 10px; }
+.rotRow .inline { flex: none; margin: 0; }
+.rotRow .chk { margin: 0; line-height: 17px; }
+.rotRow .inline select { width: 160px; }
+#palettes { margin-bottom: 12px; }
+#palettes .sw { width: 46px; height: 28px; }
+[data-tab="scenes"] #customRow { margin: 0 0 12px; }
+.slideRow { padding: 8px 0; }
+.slideRow b output { float: none; margin-left: 8px; color: var(--dim); font-weight: 400; font-variant-numeric: tabular-nums; }
+.slideRow input[type=range] { flex: none; width: 50%; margin: 0; }
+.ambNote { margin: -6px 0 10px; }
+.ambNote:empty { display: none; }
+[data-tab="scenes"] #presets { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; margin-bottom: 8px; }
+[data-tab="scenes"] .preset { padding: 10px 12px; }
+@media (max-width: 760px) { [data-tab="scenes"] .cols { grid-template-columns: 1fr; } }
+/* Media tab, in the same cards as Settings */
+[data-tab="media"] .vlib { grid-template-columns: 236px 1fr; gap: 14px; align-items: start; }
+[data-tab="media"] .vlib aside .optCard > h3 { margin: 0 0 10px; }
+[data-tab="media"] #vfolders { margin-bottom: 10px; gap: 2px; }
+[data-tab="media"] .vlib aside .optCard:first-child { padding-bottom: 14px; }
+[data-tab="media"] .vlib aside .optRow { gap: 10px; }
+[data-tab="media"] .chk.optRow { display: flex; white-space: normal; margin: 0; font-size: inherit; }
+.fitRow select { flex: none; width: 128px; margin: 0; }
+.vmain { padding: 14px 16px 6px; border-radius: 12px; border: 1px solid var(--line); background: rgba(255,255,255,.035); }
+.libBar { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.libBar #vcrumb { flex: 1 1 auto; min-width: 0; }
+.libBar #vcrumb .icon { width: 26px; height: 26px; border: 1px solid var(--line); }
+.libBar #vsearch { flex: 0 3 180px; min-width: 80px; }
+.libBar #vcrumb b { flex: 0 0 auto; max-width: 220px; }
+.libBar #vcrumb .note { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.libBar .btn { flex: none; white-space: nowrap; }
+[data-tab="media"] #subBox { padding: 12px 14px 2px; background: rgba(255,255,255,.03); }
+[data-tab="media"] #subBox h3 { margin-right: 4px; }
+#mShare { margin: 0 0 12px; padding: 10px 14px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--ink); }
+@media (max-width: 760px) { [data-tab="media"] .vlib { grid-template-columns: 1fr; } .libBar { flex-wrap: wrap; } }
