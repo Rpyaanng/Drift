@@ -362,3 +362,72 @@ input.num { width: 46px; text-align: center; padding: 6px 4px; }
 [data-tab="settings"] h3.sub { margin-top: 6px; }
 @media (max-width: 760px) { [data-tab="share"] .row { flex-wrap: wrap; } }
 #modeRow { margin: 14px 0 0; } #modeRow h3.sub { margin: 0; }
+
+/* ---- Chat tab ---- */
+#chat { display: grid; grid-template-columns: 230px 1fr; gap: 18px; height: min(54vh, 520px); }
+#chSide { overflow-y: auto; padding-right: 6px; border-right: 1px solid var(--line); }
+#chSide::-webkit-scrollbar, #chList::-webkit-scrollbar { width: 6px; }
+#chSide::-webkit-scrollbar-thumb, #chList::-webkit-scrollbar-thumb { background: rgba(255,255,255,.14); border-radius: 3px; }
+#chSide input[type=search] { width: 130px; }
+#chStart .note { margin-top: 0; }
+.chHub, .chChan { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 7px; width: 100%; padding: 6px 8px; border-radius: 8px; cursor: pointer; color: var(--dim); font-size: 12.5px; }
+.chHub { color: var(--ink); margin-top: 4px; }
+.chHub b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chHub em, .chWho em { font-style: normal; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+.chHub:hover, .chChan:hover { background: rgba(255,255,255,.06); color: var(--ink); }
+.chHub.on { background: rgba(255,255,255,.08); }
+.chChan { padding-left: 22px; }
+.chChan.on { background: rgba(255,255,255,.1); color: var(--ink); }
+.chChan.new { color: var(--ink); font-weight: 600; }
+.chChan.add { opacity: .7; }
+.chNote { padding: 0 8px; }
+.badge { margin-left: auto; min-width: 16px; height: 16px; padding: 0 5px; border-radius: 999px; box-sizing: border-box; display: inline-grid; place-items: center; background: var(--accent); color: #0b0d13; font: 700 10px/1 "Segoe UI", system-ui; }
+.dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: rgba(255,255,255,.25); }
+.dot.connected, .chWho.on .dot { background: #1ed760; box-shadow: 0 0 6px #1ed760; }
+.dot.connecting { background: #e6b43c; }
+.dot.gone { background: #ff6b6b; }
+.chWho { display: flex; align-items: center; gap: 7px; padding: 3px 8px; font-size: 12px; color: var(--dim); }
+.chWho.on { color: var(--ink); }
+.chWho .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chWho .mini { margin-left: auto; opacity: 0; }
+.chWho .mini + .mini { margin-left: 0; }
+.chWho:hover .mini { opacity: 1; }
+.chActs { margin: 10px 8px 4px; gap: 6px; }
+.chActs .btn { padding: 5px 10px; font-size: 12px; }
+.chNew { margin: 4px 8px; }
+.mini { all: unset; cursor: pointer; font-size: 11px; padding: 2px 7px; border-radius: 6px; color: var(--dim); background: rgba(255,255,255,.07); }
+.mini:hover { color: var(--ink); background: rgba(255,255,255,.14); }
+.mini.danger:hover { background: rgba(255,90,90,.45); }
+#chMain { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+#chHead { display: flex; align-items: baseline; gap: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+#chHead b { font-size: 14px; }
+#chSub { color: var(--dim); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#chList { flex: 1; overflow-y: auto; padding: 8px 4px 4px 0; user-select: text; }
+.chMore { display: block; margin: 0 auto 8px; font-size: 11.5px; }
+.chMsg { position: relative; padding: 1px 8px 1px 8px; border-radius: 6px; font-size: 13px; line-height: 1.45; }
+.chMsg.head { margin-top: 9px; }
+.chMsg:hover { background: rgba(255,255,255,.04); }
+.chBy { display: flex; align-items: baseline; gap: 8px; }
+.chBy b { font-size: 12.5px; }
+.chMsg.mine .chBy b { color: var(--accent); }
+.chBy time { color: var(--dim); font-size: 10.5px; }
+.chText { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); }
+.chText code, .chText pre { font: 12px/1.4 Consolas, "Cascadia Mono", monospace; background: rgba(0,0,0,.35); border-radius: 4px; padding: 1px 4px; }
+.chText pre { display: block; margin: 4px 0; padding: 6px 9px; white-space: pre-wrap; }
+.chText blockquote { display: block; margin: 2px 0; padding-left: 9px; border-left: 3px solid rgba(255,255,255,.25); color: var(--dim); }
+.chText a { color: var(--accent); cursor: pointer; }
+.chText .spoiler { background: rgba(255,255,255,.85); color: transparent; border-radius: 3px; cursor: pointer; }
+.chText .spoiler.shown { background: rgba(255,255,255,.12); color: inherit; }
+.chEd { color: var(--dim); font-size: 10.5px; }
+.chRe { color: var(--dim); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chTools { position: absolute; right: 6px; top: -9px; display: none; gap: 4px; padding: 3px; border-radius: 8px; background: rgba(18,20,28,.95); border: 1px solid var(--line); }
+.chMsg:hover .chTools { display: flex; }
+#chTyping { height: 16px; color: var(--dim); font-size: 11px; padding: 2px 8px; }
+#chBar { display: none; align-items: center; gap: 8px; padding: 4px 10px; font-size: 11.5px; color: var(--dim); background: rgba(255,255,255,.05); border-radius: 8px 8px 0 0; }
+#chBar.on { display: flex; }
+#chBar .icon { margin-left: auto; }
+#chInput { resize: none; box-sizing: border-box; width: 100%; min-height: 36px; max-height: 140px; padding: 8px 11px; border-radius: 9px; background: rgba(255,255,255,.07); border: 1px solid var(--line); color: var(--ink); font: 13px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui; outline: none; user-select: text; }
+#chInput:focus { border-color: var(--accent); }
+#chInput:disabled { opacity: .45; }
+.tabs button.unread::after { content: ""; display: inline-block; width: 6px; height: 6px; margin: 0 0 2px 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+@media (max-width: 760px) { #chat { grid-template-columns: 1fr; height: auto; } #chSide { border-right: 0; max-height: 30vh; } #chMain { height: 50vh; } }

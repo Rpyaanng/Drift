@@ -545,7 +545,7 @@
   let hideTimer = null, overPanel = false;
   // After the monitors change, the windows are made again: carry on with the tab this screen was on. Surf if the browser is here;
   // Surf's tab without its browser (that monitor went off and the browser moved) falls back to Scenes.
-  const TAB_IDS = ['scenes', 'media', 'surf', 'share', 'settings'];
+  const TAB_IDS = ['scenes', 'media', 'surf', 'share', 'chat', 'settings'];
   const webHere = () => { const w = S.web || {}; return !!w.open && w.key === me.key; };
   let tab = webHere() ? 'surf' : TAB_IDS.includes(init.tab) && init.tab !== 'surf' ? init.tab : 'scenes';
   const tileHtml = (s) => { const i = SCENES.indexOf(s); return `<button class="tile" data-id="${s.id}"><i class="rot" role="checkbox" aria-checked="true" title="Include in automatic scene changes"></i><kbd>${i < 9 ? i + 1 : ''}</kbd><span>${s.name}</span></button>`; };
@@ -570,7 +570,7 @@
   function hidePanel() { panel.classList.remove('show'); document.body.classList.add('idle'); }
   function armHide() {
     clearTimeout(hideTimer);
-    hideTimer = setTimeout(() => { if (overPanel || document.activeElement?.tagName === 'SELECT') armHide(); else hidePanel(); }, 3500);
+    hideTimer = setTimeout(() => { if (overPanel || document.activeElement?.tagName === 'SELECT' || document.activeElement?.tagName === 'TEXTAREA') armHide(); else hidePanel(); }, 3500);       // (not while choosing from a list or typing a message)
   }
   function setTab(t, toggle) {
     const same = t === tab && panel.classList.contains('open');
@@ -581,7 +581,7 @@
   // Friends watching together see how many people are on each tab.
   const tellTab = () => api.cmd({ type: 'tab-focus', tab });
   // The browser belongs to the Surf tab. Choosing Surf shows it on this screen, opening a first tab on Drift's start page if there is
-  // none yet. Choosing Scenes or Media on its screen puts it away (its tabs are kept) so they can be seen. Together and Settings leave it be.
+  // none yet. Choosing Scenes or Media on its screen puts it away (its tabs are kept) so they can be seen. Together, Chat and Settings leave it be.
   function surfFor(t) {
     const w = S.web || {}, p = S.p2p || {};
     if (t === 'surf') {
@@ -589,8 +589,8 @@
       else if (p.role === 'guest') toast(`When ${p.host || 'your friend'} opens a web page, you see it here`, 3200);
       else surf('new');
     }
-    else if (t !== 'settings' && t !== 'share' && w.open && w.key === me.key) surf('hide');
-    else if (t !== 'settings' && t !== 'share' && (mirEl || (gpuEl && !gpuEl.own))) api.patch({ surfMirror: false });       // on a monitor mirroring the page: Scenes or Media is what was asked for here
+    else if (t !== 'settings' && t !== 'share' && t !== 'chat' && w.open && w.key === me.key) surf('hide');
+    else if (t !== 'settings' && t !== 'share' && t !== 'chat' && (mirEl || (gpuEl && !gpuEl.own))) api.patch({ surfMirror: false });       // on a monitor mirroring the page: Scenes or Media is what was asked for here
   }
   panel.addEventListener('mouseenter', () => { overPanel = true; });
   panel.addEventListener('mouseleave', () => { overPanel = false; armHide(); });
@@ -1535,7 +1535,7 @@
       return;
     }
     if (e.target.tagName === 'SELECT') return;
-    if (e.target.type === 'search') { if (e.key === 'Escape') e.target.blur(); return; }   // typing in a search box
+    if (e.target.type === 'search' || e.target.tagName === 'TEXTAREA') { if (e.key === 'Escape' && !e.defaultPrevented) e.target.blur(); return; }   // typing in a search box or a message
     const k = e.key;
     if (k === 'Escape') { if (panel.classList.contains('show') && panel.classList.contains('open')) { panel.classList.remove('open'); syncUI(); } else askQuit(); }
     else if (k === 'Tab' || k === 'h' || k === 'H') { e.preventDefault(); if (panel.classList.contains('show') && panel.classList.contains('open')) hidePanel(), panel.classList.remove('open'); else { showPanel(true); syncUI(); } }

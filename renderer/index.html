@@ -205,6 +205,33 @@
       </div>
     </section>
 
+    <section data-tab="chat">
+      <div id="chat">
+        <aside id="chSide">
+          <div id="chHubs"></div>
+          <div id="chStart">
+            <h3 class="sub">Join a hub</h3>
+            <div class="row">
+              <input type="search" id="chCode" placeholder="Paste an invite code" spellcheck="false" autocomplete="off">
+              <button class="btn" id="chJoin">Join</button>
+            </div>
+            <div id="chHostBox">
+              <h3 class="sub">Or host one</h3>
+              <p class="note">A hub is a place for your friends' channels. It runs in your Drift, and the messages are kept on this PC, so friends can only chat while your Drift is open.</p>
+              <div class="row"><button class="btn ghost" id="chHost">Host a hub</button></div>
+            </div>
+          </div>
+        </aside>
+        <div id="chMain">
+          <div id="chHead"><b id="chTitle"></b><span id="chSub"></span></div>
+          <div id="chList"></div>
+          <div id="chTyping"></div>
+          <div id="chBar"><span id="chBarText"></span><button class="icon" id="chBarX" title="Cancel (Esc)">✕</button></div>
+          <textarea id="chInput" rows="1" maxlength="4000" spellcheck="true"></textarea>
+        </div>
+      </div>
+    </section>
+
     <section data-tab="settings">
       <div class="cols">
         <div>
@@ -288,6 +315,7 @@
       <button data-tab="media" title="Your videos and music">Media</button>
       <button data-tab="surf" title="Browse the web on this screen, in tabs">Surf</button>
       <button data-tab="share" title="Watch a video with friends, in step">Together</button>
+      <button data-tab="chat" title="Channels to chat in with friends">Chat</button>
       <button data-tab="settings">Settings<svg class="updIcon" id="updTabIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5"/><path d="M5 20h14"/></svg></button>
     </div>
     <div class="quick">
@@ -310,5 +338,6 @@
 <script src="sims.js"></script>
 <script src="surf-keys.js"></script>
 <script src="app.js"></script>
+<script src="chat.js"></script>
 </body>
 </html>

@@ -13,8 +13,9 @@ contextBridge.exposeInMainWorld('drift', {
   subSearch: (q) => ipcRenderer.invoke('sub-search', q),
   subDownload: (item) => ipcRenderer.invoke('sub-download', item),
   on: (channel, fn) => {
-    if (['state', 'levels', 'now', 'cmd'].includes(channel)) ipcRenderer.on(channel, (_e, data) => fn(data));
+    if (['state', 'levels', 'now', 'cmd', 'chat'].includes(channel)) ipcRenderer.on(channel, (_e, data) => fn(data));
   },
+  chat: (op, ...args) => ipcRenderer.invoke('chat', op, ...args),       // chat.js, through main.js (see CHAT_OPS there)
 });
 
 // A Surf page drawn offscreen (web.js, "Draw Surf on the graphics card") arrives here frame by frame as a texture on the graphics

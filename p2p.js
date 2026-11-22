@@ -127,12 +127,12 @@ async function upnpMap(port) {
 }
 
 // ---- newline-separated JSON over a socket ----
-function wire(sock, head, onMsg, onClose) {
+function wire(sock, head, onMsg, onClose, max = 2e6) {       // max: the longest line accepted, in characters
   let buf = '', closed = false;
   const end = () => { if (closed) return; closed = true; try { sock.destroy(); } catch { /* gone */ } onClose(); };
   const feed = (d) => {
     buf += d;
-    if (buf.length > 2e6) { end(); return; }
+    if (buf.length > max) { end(); return; }
     for (let i; (i = buf.indexOf('\n')) >= 0;) { const line = buf.slice(0, i); buf = buf.slice(i + 1); if (line) { let m = null; try { m = JSON.parse(line); } catch { /* skip */ } if (m && typeof m === 'object') onMsg(m); } }
   };
   sock.setNoDelay(true); sock.setTimeout(0);
@@ -167,7 +167,7 @@ module.exports = function createP2P(hooks) {
   const cleanName = (n) => String(n || '').replace(/[\x00-\x1f<>]/g, '').trim().slice(0, 24);
   const who = () => [...peers.values()].map((p) => ({ name: p.name, ready: p.ready }));
   // How many people (this PC included) are looking at each of Drift's panel tabs. The sharing PC counts and tells everyone.
-  const TABS = ['scenes', 'media', 'surf', 'share', 'settings'];
+  const TABS = ['scenes', 'media', 'surf', 'share', 'chat', 'settings'];
   const cleanTab = (t) => (TABS.includes(t) ? t : '');
   function tabCounts() {
     const out = {};
@@ -466,6 +466,11 @@ module.exports = function createP2P(hooks) {
 module.exports.encodeCode = encodeCode;
 module.exports.decodeCode = decodeCode;
 module.exports.isPublic = isPublic;
+module.exports.wire = wire;
+module.exports.upnpMap = upnpMap;
+module.exports.localAddrs = localAddrs;
+module.exports.ipBytes = ipBytes;
+module.exports.ipText = ipText;
 module.exports.findGateways = findGateways;
 module.exports.gatewayService = gatewayService;
 module.exports.externalIp = externalIp;

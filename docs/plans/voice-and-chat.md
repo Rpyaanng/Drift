@@ -1,7 +1,7 @@
 # Plan: voice and chat in Drift (Discord-style)
 
-Status: design settled (§11), 2026-11-21, branch `voip`. The four spikes are done and measured (§10.0); nothing of
-Drift itself is implemented yet. Phase 1 is next.
+Status: design settled (§11), 2026-11-21, branch `voip`. The four spikes are done and measured (§10.0). Phase 1 (hub
+and text chat) is built and tested (§10, "Phase 1 as built"); attachments and voice come next.
 
 The goal is a Discord-like space for a group of friends inside Drift:
 - **Text channels** with history, replies, edits, reactions, mentions and **attachments** (images, video, files).
@@ -131,16 +131,17 @@ No accounts and no passwords.
 
 ## 6. Moderation and safety features
 
-- **Roles**: owner (holds the hub key), moderators and members. Permissions are set for each channel (read, send, attach, speak, share screen).
-- **Tools**: kick, **ban by key** (so a new name doesn't get them back in), timeout (can't send or speak for N
-  minutes), delete any message, purge a member's recent messages, slow mode, lock a channel, and revoke all invites.
-- **Audit log**: every moderator action with who, what and when, visible to moderators.
+**Settled 2026-11-21 (§11.6): no roles.** Hubs are for a group of friends, so everyone is equal: anyone can invite,
+make channels and post. The **host** (the person whose Drift runs the hub) is the only exception, and has just enough
+to deal with a falling-out:
+- **Remove someone**, which is a **ban by key**, so a new name doesn't get them back in, and their sessions end at
+  once. **Delete any message.** **Withdraw all invites** at once.
+- Everything below (block, rate limits, no directory) still applies. Moderators, per-channel permissions, timeouts,
+  slow mode, purges and the audit log are dropped. They can come back if a hub ever grows past friends.
+
 - **Block (for each user, on your side)**: you don't see their messages or hear their voice, and they can't DM you.
   The other person isn't told.
 - **DMs**: only from people who share a hub with you, with a setting for "only from people I've accepted".
-- **Report to moderators**: sends the message (and attachment) to the hub's moderators. If DMs are ever end-to-end
-  encrypted (see §8), the reporter's client sends the plaintext, because the hub can't read it.
-- **New members**: an optional "wait N minutes before posting links or attachments" rule reduces spam and raids.
 - **Age**: Discord's minimum age is 13. Drift's README should say who it's for. Private, invite-only hubs keep
   strangers out by design: there is **no public directory and no search for hubs or people**, and there shouldn't be.
 
@@ -253,7 +254,34 @@ option C isn't recommended. Drift's licence text should also say the software is
         sit in the middle without its own certificate, and it can't sign that as a member.
       - ICE candidates don't need signing. A hub that changes them can only stop the call, not listen to it.
 1. **Hub and text**: identity, invites, a hub inside Drift, text channels, history, edits and deletion, rate limits,
-   safe rendering, roles, kick and ban, block, audit log.
+   safe rendering, the host's remove and delete, block.
+   **Phase 1 as built (2026-11-21):**
+   - `hub.js` is the server: SQLite (`node:sqlite`) in `userData/chat/hub/hub.db`, TLS 1.3, newline-JSON lines capped at
+     16 KB. Members, channels, messages (stored as `body` + `v`), invites. Anyone can invite, make channels and post. A
+     channel can be deleted by the host or whoever made it. The host can remove (ban by key), delete any message and
+     withdraw all invites. Each member gets 10 messages and 10 other actions per 10 s. Messages are up to 4,000 characters.
+   - **The hub's certificate is ECDSA P-256, not Ed25519.** Electron's BoringSSL ends the handshake with an Ed25519
+     certificate (alert 40), though Node's OpenSSL accepts one. Node can't make certificates, so `hub.js` writes the
+     X.509 by hand (about 15 lines of DER). Members' identity keys are still Ed25519. The login is a challenge signed with
+     that key and bound to the hub's certificate pin.
+   - Invites are `drift:` codes with version byte 2 (Together's are 1): port, the certificate's SHA-256 pin, a 16-byte
+     token and the addresses. They expire after 7 days or 25 uses. The hub keeps its port (47900 first) across
+     restarts so codes keep working, and it sends members its current addresses each time they log in.
+   - `chat.js` is this PC's side: the identity key (sealed with `safeStorage`), the saved hubs, reconnecting with
+     backoff, hosting (with UPnP when "Let friends join from outside my home network" is on), and blocking, which is
+     local only. The chat name is the Together tab's name.
+   - **No local message cache yet.** Each window asks the hub for the latest 50 messages when it opens a channel and
+     after every reconnect, then pages back with "Show older messages". That also makes deletion simple.
+   - `renderer/chat.js` is the Chat tab: hubs, channels, people (block, and remove for the host), invite, leave or
+     stop hosting, messages with reply, edit (↑ edits your last one), delete, typing, unread badges, and a toast
+     for new messages on the focused screen. The Markdown subset is built element by element with `textContent`.
+     Links open in Surf after a confirmation that names the real host.
+   - Checks: `node scripts/test-chat.js` (also under Electron's Node: `ELECTRON_RUN_AS_NODE=1 electron
+     scripts/test-chat.js`), 34 checks in all. Also two copies of Drift pressing the real buttons:
+     `DRIFT_TESTCHAT=host|guest` with `DRIFT_USERDATA`, `DRIFT_SHOTS`, `DRIFT_ONLY=aurora` and `DRIFT_TESTCODE` as
+     for `DRIFT_TESTSHARE`.
+   - Not yet: DMs, mentions, the per-channel retention setting, safety numbers in the UI, an encrypted local cache,
+     moving `p2p.js`'s reachability into `reach.js` (for now `p2p.js` exports `wire`, `upnpMap` and the address helpers).
 2. **Attachments**: chunked upload, re-encoding images and stripping EXIF, sandboxed viewing, Mark of the Web, the
    warning for files that run, quotas.
 3. **Voice**: mesh and relay, signed fingerprints, push-to-talk, per-person volume, moderator mute, the speaking ring, the voice bar.
@@ -277,9 +305,12 @@ option C isn't recommended. Drift's licence text should also say the software is
    end-to-end encrypted" in a way that rules that out. Say "end-to-end encrypted in calls of up to 8".
 5. **25 MB per file by default**, changeable by the hub owner, with a total quota for each hub. Later: offer to
    shrink an oversized video with Drift's ffmpeg before sending it.
+6. **No roles: everyone is equal except the host** (§6). The host can remove (ban) a member, delete any message and
+   withdraw invites. Everyone else can invite, make channels, post, and edit or delete their own messages.
 
 ## 12. For the next session
 
 Start here: read this plan (the decisions in §11 are settled), then `p2p.js` (the connection, the invite codes and `wire()`), then
 `renderer/app.js` around line 844 (WebRTC signalling over the p2p channel), then `main.js`'s `runShots` (how the
-`DRIFT_TEST*` checks work). The spikes in §10.0 are done, so begin Phase 1.
+`DRIFT_TEST*` checks work). The spikes and Phase 1 are done; read `hub.js` and `chat.js`, then begin Phase 2
+(attachments) or Phase 3 (voice, starting from `spikes/voice/turn.js` and the signing in `spikes/voice/main.js`).

@@ -1,5 +1,5 @@
 // Drift — main process: one fullscreen window per monitor, shared state, hidden audio engine window.
-const { app, BrowserWindow, ipcMain, screen, dialog, powerSaveBlocker, shell, session, desktopCapturer, net, clipboard, webContents, protocol } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, dialog, powerSaveBlocker, shell, session, desktopCapturer, net, clipboard, webContents, protocol, safeStorage } = require('electron');
 const { pathToFileURL } = require('url');
 const http = require('http');
 const os = require('os');
@@ -10,6 +10,7 @@ const fs = require('fs');
 const subsLib = require('./subtitles');
 const createXcoder = require('./xcode');
 const createP2P = require('./p2p');
+const createChat = require('./chat');
 const createWeb = require('./web');
 const createUpdater = require('./updater');
 
@@ -921,9 +922,62 @@ const p2p = createP2P({
     else if (heldFor) { heldFor = null; setPaused(false); pushState(); }
   },
   remote: onRemote,
-  publicIp: async () => { const r = await net.fetch('https://api.ipify.org', { signal: AbortSignal.timeout(5000) }); const ip = (await r.text()).trim(); return /^\d{1,3}(\.\d{1,3}){3}$/.test(ip) ? ip : ''; },
+  publicIp,
   say,
   changed: () => pushState(),
+});
+
+async function publicIp() { const r = await net.fetch('https://api.ipify.org', { signal: AbortSignal.timeout(5000) }); const ip = (await r.text()).trim(); return /^\d{1,3}(\.\d{1,3}){3}$/.test(ip) ? ip : ''; }
+
+// ---- chat ------------------------------------------------------------------------------------------
+// chat.js holds this PC's identity, its hubs and (when hosting) a hub of its own; this passes what it says to the windows.
+// Every window's panel has a Chat tab, so all of them hear about changes. A new message pops up on one screen only.
+let chat = null, chatPub = '';
+function startChat() {
+  const enc = safeStorage.isEncryptionAvailable();
+  chat = createChat({
+    dir: path.join(app.getPath('userData'), 'chat'),
+    seal: (b) => (enc ? safeStorage.encryptString(b.toString('latin1')) : b),
+    unseal: (b) => (enc ? Buffer.from(safeStorage.decryptString(Buffer.from(b)), 'latin1') : b),
+    addrs: () => [...(createP2P.isPublic(chatPub) ? [chatPub] : []), ...createP2P.localAddrs()],
+    upnp: async (port) => { const m = await createP2P.upnpMap(port); if (createP2P.isPublic(m.ip)) chatPub = m.ip; return m; },
+    changed: () => broadcast('chat', { type: 'info', info: chat.info() }, false),
+    event: (hub, m) => {
+      broadcast('chat', { type: 'event', hub, m }, false);
+      if (m.t === 'msg' && m.msg && m.msg.from !== chat.myId() && !m.msg.edited) {       // a new message from someone else: one screen shows it
+        const f = BrowserWindow.getFocusedWindow(), v = visWins.find((x) => x.win === f) || visWins[0];
+        if (v && !v.win.isDestroyed()) v.win.webContents.send('chat', { type: 'notify', hub, msg: m.msg });
+      }
+    },
+    log: (t) => console.log(t),
+  });
+  chat.setName(shareName());
+  if (!SHOT_DIR || process.env.DRIFT_TESTCHAT) chat.start().catch((e) => console.log('chat: ' + e.message));
+  publicIp().then((ip) => { chatPub = ip; }).catch(() => {});
+}
+// What the panel may ask of chat. Each argument is checked here; chat.js and the hub check them again.
+const CHAT_OPS = {
+  info: () => chat.info(),
+  join: (code) => chat.join(String(code || '').slice(0, 400)),
+  leave: (hub) => chat.leave(String(hub)),
+  host: (name) => chat.host({ name: String(name || ''), internet: state.share.internet !== false }),
+  unhost: () => chat.unhost(),
+  history: (hub, ch, o) => chat.history(String(hub), +ch, { before: +(o && o.before) || undefined, after: +(o && o.after) || undefined, limit: +(o && o.limit) || undefined }),
+  send: (hub, ch, text, reply) => chat.send(String(hub), +ch, String(text || ''), +reply || undefined),
+  edit: (hub, id, text) => chat.edit(String(hub), +id, String(text || '')),
+  delete: (hub, id) => chat.remove(String(hub), +id),
+  typing: (hub, ch) => chat.typing(String(hub), +ch),
+  channel: (hub, name) => chat.channel(String(hub), String(name || '')),
+  dropChannel: (hub, ch) => chat.dropChannel(String(hub), +ch),
+  invite: async (hub) => { const r = await chat.invite(String(hub)); if (r.code) clipboard.writeText(r.code); return r; },
+  withdrawInvites: (hub) => chat.withdrawInvites(String(hub)),
+  removeMember: (hub, member) => chat.removeMember(String(hub), String(member || '')),
+  block: (member, on) => chat.block(String(member || ''), !!on),
+  paste: () => clipboard.readText().slice(0, 400),
+};
+ipcMain.handle('chat', async (_e, op, ...args) => {
+  if (!chat || !Object.hasOwn(CHAT_OPS, op)) return { error: 'Chat isn\'t ready.' };
+  try { return (await CHAT_OPS[op](...args)) ?? {}; } catch (e) { return { error: String(e && e.message || e) }; }
 });
 
 function initFor(wc) {
@@ -1089,7 +1143,7 @@ function patch(p) {
       if (!/^[a-z0-9_]{1,24}$/.test(v.enc)) v.enc = 'auto';
       if (!['auto', '2160', '1440', '1080', '720', '480'].includes(String(v.xq))) v.xq = 'auto';
     }
-    else if (k === 'share') { state.share = cleanShare({ ...state.share, ...(p.share || {}) }); p2p.setOptions({ wait: state.share.wait, name: shareName() }); web.blockChanged(); }
+    else if (k === 'share') { state.share = cleanShare({ ...state.share, ...(p.share || {}) }); p2p.setOptions({ wait: state.share.wait, name: shareName() }); if (chat && p.share && p.share.name !== undefined) chat.setName(shareName()); web.blockChanged(); }
     else if (k === 'music') {
       state.music = { ...state.music, ...p.music };
       if (p.music.nature) state.music.nature = { ...prev.music.nature, ...p.music.nature };
@@ -1513,6 +1567,7 @@ else {
       state.video.foldersInit = true;
     }
     startLocalServer();
+    startChat();
     // lets the audio engine listen to what the PC is playing (e.g. Spotify) so visuals can react to it; nothing is recorded
     // and lets the window holding a shared web page capture that page's picture and sound, to send to friends
     session.defaultSession.setDisplayMediaRequestHandler((req, cb) => {
@@ -1559,9 +1614,9 @@ else {
   app.on('window-all-closed', () => app.quit());
   app.on('before-quit', (e) => {
     quitting = true;
-    if (p2p.role() !== 'off' && !goodbye) {       // tell friends, and close the door on the router, before going
+    if ((p2p.role() !== 'off' || chat) && !goodbye) {       // tell friends, and close the door on the router, before going
       goodbye = true; e.preventDefault();
-      p2p.stop().catch(() => {}).finally(() => app.quit());
+      Promise.all([p2p.stop().catch(() => {}), chat ? chat.stop().catch(() => {}) : null]).finally(() => app.quit());
       return;
     }
     if (updater) updater.install(false);       // a downloaded update goes in once Drift has closed
@@ -1742,6 +1797,36 @@ async function runShots() {
         if (i === 17) { log.push('guest leaves'); cmd({ type: 'share-stop' }); }
       }
       log.push('guest end: ' + info() + ' scene=' + state.scene);
+    }
+  }
+  if (process.env.DRIFT_TESTCHAT) {     // chat between two copies of Drift on one PC (DRIFT_USERDATA apart), pressing the real buttons: =host or =guest, DRIFT_TESTCODE = a file both can reach
+    const role = process.env.DRIFT_TESTCHAT, codeFile = process.env.DRIFT_TESTCODE, wc = visWins[0].win.webContents, js = (c) => wc.executeJavaScript(c);
+    const hubs = () => chat.info().hubs, until = async (f, ms = 20000) => { for (let t = 0; t < ms && !f(); t += 250) await wait(250); return f(); };
+    const dom = () => js(`JSON.stringify({ title: document.querySelector('#chTitle').textContent, sub: document.querySelector('#chSub').textContent, side: document.querySelector('#chHubs').innerText.replace(/\\n+/g, ' | '),
+      msgs: [...document.querySelectorAll('#chList .chMsg')].map((m) => m.innerText.replace(/\\n+/g, ' ')), imgs: document.querySelectorAll('#chList img').length, bold: document.querySelectorAll('#chList .chText b').length,
+      links: [...document.querySelectorAll('#chList a')].map((a) => a.textContent), typing: document.querySelector('#chTyping').textContent, tabUnread: document.querySelector('.tabs button[data-tab=chat]').classList.contains('unread') })`);
+    patch({ music: { source: 'off' }, share: { internet: false, name: role === 'host' ? 'Hosty' : 'Guesty' } });
+    wc.send('cmd', { type: 'show-panel', tab: 'chat' }); await wait(800);
+    if (role === 'host') {
+      await js("document.querySelector('#chHost').click()");
+      log.push('host: hub up ' + await until(() => hubs().some((h) => h.mine && h.status === 'connected')));
+      const h = hubs().find((x) => x.mine), inv = await chat.invite(h.id);
+      fs.writeFileSync(codeFile, inv.code || ''); log.push('host: invite ' + (inv.code ? inv.code.length + ' chars' : inv.error));
+      log.push('host: guest arrived ' + await until(() => (hubs().find((x) => x.mine) || { members: [] }).members.some((m) => m.name === 'Guesty' && m.online), 40000));
+      await wait(1000);
+      await js("window.chatTest.send('Hi **Guesty**! Try https://example.com <img src=x onerror=alert(1)>')");
+      await until(() => false, 6000);       // the guest answers
+      log.push('host sees: ' + await dom()); await snap('chat-host');
+    } else {
+      for (let i = 0; i < 80 && !(fs.existsSync(codeFile) && fs.readFileSync(codeFile, 'utf8')); i++) await wait(500);
+      await js(`document.querySelector('#chCode').value = ${JSON.stringify(fs.readFileSync(codeFile, 'utf8'))}; document.querySelector('#chJoin').click()`);
+      log.push('guest: joined ' + await until(() => hubs().some((h) => h.status === 'connected')));
+      await wait(400); log.push('guest, before: ' + await dom());
+      await until(() => false, 3000);
+      log.push('guest sees: ' + await dom());
+      await js("window.chatTest.send('> quoted\\nhello back, `code` and ||secret||')");
+      await wait(2500); log.push('guest after sending: ' + await dom()); await snap('chat-guest');
+      await wait(3000);
     }
   }
   if (process.env.DRIFT_TESTWEB) {     // exercise watching a web page together, the same way: =host or =guest, DRIFT_TESTCODE as above, DRIFT_TESTURL = the page. The host's page is streamed to the guest, whose mouse and keys go back
