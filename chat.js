@@ -5,17 +5,68 @@
 // hooks (from main.js; plain functions so this also runs under plain Node for tests):
 //   seal(buf) / unseal(buf)   encrypt what is kept on disk (Electron's safeStorage), or pass it through
 //   addrs()                   this PC's addresses for invites, LAN and public
-//   upnp(port)                promise of { ip, remove() }: open the hub's port on the router (p2p.upnpMap), or reject
+//   upnp(port, proto)         promise of { ip, remove() }: open the hub's port (TCP) or voice relay (UDP) on the router (p2p.upnpMap), or reject
 //   changed()                 the list of hubs, or one hub's state, changed
-//   event(hubId, m)           something arrived from a hub: msg, gone, typing, members, channels, lives, removed
+//   event(hubId, m)           something arrived from a hub: msg, gone, typing, members, channels, lives, removed,
+//                             and for calls: voice-sdp, voice-candidate, voice-refused, voice-told, voice-verdict, voice-left, voice-ended
 //   log(text)
+//
+// Calls (docs/plans/voice-and-chat.md §5): the hub only passes setup messages along, and it may be hostile. So every
+// SDP this PC sends is signed here with its identity key, over the call, who it's from and for, a fresh nonce and its
+// a=fingerprint lines (voiceText below), and every SDP that arrives is checked here against the sender's key before
+// the voice window sees it. The window only ever gets SDPs that passed, and verdicts; never a key.
 const tls = require('tls');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const createHub = require('./hub');
-const { wire } = require('./p2p');
+const { wire, isPublic } = require('./p2p');
 const { decodeInvite, pinOfPeer, memberId, rawKey, loginText, cleanAvatar, avatarId, LIMITS } = createHub;
+
+// ---- checking what the hub says about people ----
+const keyFromRaw = (raw) => crypto.createPublicKey({ key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), raw]), format: 'der', type: 'spki' });
+const rawOf = (k) => { try { const b = Buffer.from(String(k || ''), 'base64url'); return b.length === 32 ? b : null; } catch { return null; } };
+// A member list from the hub: an entry counts only if its public key really hashes to its member id. Anything else is
+// the hub (or a fault) making someone up, and is set aside with the name it claimed, so the panel can say so.
+function checkMembers(list) {
+  const good = [], bad = [];
+  for (const x of Array.isArray(list) ? list : []) {
+    if (!x || typeof x.id !== 'string') continue;
+    const raw = rawOf(x.key);
+    if (raw && memberId(raw) === x.id) good.push({ ...x, raw }); else bad.push({ id: x.id, name: String(x.name || '').slice(0, LIMITS.name) });
+  }
+  return { good, bad };
+}
+// A safety number: 12 digits that two people get the same of, made from both their public keys, to compare in person
+// (or on the phone). If they match, nobody (not even the hub) has put a key of its own between them. It goes through
+// scrypt so that finding another key with the same 12 digits takes far too long to be worth trying.
+function safetyNumber(a, b) {
+  const [x, y] = [Buffer.from(a), Buffer.from(b)].sort(Buffer.compare);
+  return new Promise((resolve, reject) => crypto.scrypt(Buffer.concat([x, y]), 'drift-safety-v1', 16, { N: 16384, r: 8, p: 1 }, (e, out) => {
+    if (e) { reject(e); return; }
+    const n = (out.readBigUInt64BE(0) % 10n ** 12n).toString().padStart(12, '0');
+    resolve(n.match(/..../g).join(' '));
+  }));
+}
+// ---- signed setup messages for calls ----
+// What gets signed: who and what the SDP is for, and its DTLS certificate fingerprints. A hub that swaps a fingerprint
+// (to sit in the middle), strips the signature, hands one person's SDP to another, or replays one into another call
+// (a different call id) or into the same one (a nonce already seen, or not the one the offer asked for) is refused.
+const fingerprints = (sdp) => (String(sdp || '').match(/^a=fingerprint:[^\r\n]*/gm) || []).map((l) => l.trim().replace(/\s+/g, ' ').toLowerCase()).sort();
+const TOKEN = /^[A-Za-z0-9_-]{8,64}$/;
+function voiceText({ pin, call, from, to, nonce, sdp }) {
+  const p = fingerprints(sdp);
+  if (!p.length || ![pin, call, from, to, nonce].every((v) => TOKEN.test(String(v)))) return null;
+  return Buffer.from(['drift-voice-v1', pin, call, from, to, nonce, ...p].join('\n'));
+}
+function signSdp(key, f) { const t = voiceText(f); return t ? crypto.sign(null, t, key).toString('base64url') : null; }
+function verifySdp(raw, f, sig) {
+  try {
+    const t = voiceText(f);
+    return !!t && !!raw && raw.length === 32 && memberId(raw) === f.from && typeof sig === 'string' && crypto.verify(null, t, keyFromRaw(raw), Buffer.from(sig, 'base64url'));
+  } catch { return false; }
+}
+const nonce = () => crypto.randomBytes(16).toString('base64url');
 
 module.exports = function createChat(opts) {       // (module.exports.decodeInvite: is this a hub's invite?)
   const dir = opts.dir, log = opts.log || (() => {});
@@ -44,8 +95,39 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
   const conns = new Map();        // hub id -> live state
   const save = () => writeJson('hubs.json', saved);
 
+  // ---- who we've met: trust on first use, per hub ----
+  // trust[hub][member id] = { name (the first name seen with that id), key, at, verified (safety number compared) }.
+  // If a name we know turns up under a different id, the panel warns: it may be a new PC, or the hub pretending.
+  const trust = readJson('trust.json', {});
+  const saveTrust = () => writeJson('trust.json', trust);
+  function meet(c) {
+    const t = trust[c.h.id] || (trust[c.h.id] = {});
+    let added = false;
+    for (const m of c.members) if (m.id !== myId && !t[m.id]) { t[m.id] = { name: m.name, key: m.key, at: Date.now() }; added = true; }
+    if (added) saveTrust();
+  }
+  // Members whose name matches someone we met earlier under another id, and who haven't been checked with a safety number.
+  function lookalikes(c) {
+    const t = trust[c.h.id] || {}, out = [];
+    for (const m of c.members) {
+      if (m.id === myId || (t[m.id] && t[m.id].verified)) continue;
+      const since = t[m.id] ? t[m.id].at : Infinity;
+      const was = Object.entries(t).find(([id, r]) => id !== m.id && r.at <= since && r.name.toLowerCase() === m.name.toLowerCase());
+      if (was) out.push({ id: m.id, name: m.name, was: was[0] });
+    }
+    return out;
+  }
+  function setMembers(c, list) {
+    const { good, bad } = checkMembers(list);
+    c.keys = new Map(good.map((m) => [m.id, m.raw]));
+    c.members = good.map(({ raw, ...m }) => m);
+    for (const b of bad) if (!c.suspect.has(b.id)) log(`chat: ${c.h.name || c.h.id} sent a key for "${b.name}" that doesn't match their id; ignoring it`);
+    c.suspect = new Map(bad.map((b) => [b.id, b.name]));
+    meet(c);
+  }
+
   // ---- hosting: this PC runs a hub of its own ----
-  let hosting = readJson('hosting.json', null), hub = null, mapping = null, hostNote = '';
+  let hosting = readJson('hosting.json', null), hub = null, mappings = [], hostNote = '';
   async function startHub() {
     hub = createHub({ dir: file('hub'), owner: pub, name: hosting.name, port: hosting.port, seal, unseal, addrs: () => opts.addrs ? opts.addrs() : ['127.0.0.1'], log });
     const port = await hub.start();
@@ -55,7 +137,17 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
     Object.assign(h, { port, addrs: ['127.0.0.1', '::1'], mine: true, gone: '' }); save();       // the host reaches its own hub here
     hostNote = '';
     if (hosting.internet && opts.upnp) {
-      opts.upnp(port).then((m) => { if (hub) { mapping = m; } else m.remove(); }, () => { hostNote = `Friends on your own network can join. For friends elsewhere, TCP port ${port} has to be forwarded to this PC in the router's settings.`; opts.changed && opts.changed(); });
+      // The hub's TCP port, and the voice relay's UDP port beside it (the same number when it was free).
+      const udp = hub.voicePort(), mine = hub;
+      const ports = [[port, 'TCP'], ...(udp ? [[udp, 'UDP']] : [])];
+      Promise.allSettled(ports.map(([p, proto]) => opts.upnp(p, proto))).then((rs) => {
+        const ok = rs.filter((r) => r.status === 'fulfilled').map((r) => r.value);
+        if (hub === mine) mappings.push(...ok); else for (const m of ok) m.remove();
+        if (ok.length < ports.length) {
+          const need = udp ? (udp === port ? `port ${port} (TCP and UDP)` : `TCP port ${port} and UDP port ${udp}`) : `TCP port ${port}`;
+          hostNote = `Friends on your own network can join. For friends elsewhere, ${need} has to be forwarded to this PC in the router's settings.`; opts.changed && opts.changed();
+        }
+      });
     }
     open(h);
   }
@@ -74,7 +166,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
     const id = h.pin.toString('base64url');
     close(id);
     await h.stop();
-    if (mapping) { mapping.remove(); mapping = null; }
+    for (const m of mappings.splice(0)) m.remove();
     hosting = null; try { fs.unlinkSync(file('hosting.json')); } catch { /* gone */ }
     changed();
   }
@@ -92,7 +184,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
         sock.once('secureConnect', () => {
           const got = pinOfPeer(sock);
           if (won || !got || !got.equals(pin)) { fail(); return; }       // not our hub: someone else answering at that address
-          won = true; sock.setTimeout(0); resolve(sock);
+          won = true; sock.setTimeout(0); sock.driftAddr = addr; resolve(sock);       // (the address that worked: calls reach the hub's relay there too)
         });
         sock.once('timeout', fail); sock.once('error', fail);
       }
@@ -100,7 +192,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
   }
   function open(h) {
     if (conns.has(h.id)) return conns.get(h.id);
-    const c = { h, status: 'connecting', note: '', wire: null, me: null, host: false, members: [], channels: [], lives: [], typing: new Map(), pending: new Map(), seq: 0, retry: null, tries: 0, pinger: null, seen: 0, closed: false };
+    const c = { h, status: 'connecting', note: '', wire: null, me: null, host: false, members: [], keys: new Map(), suspect: new Map(), voice: [], addr: '', channels: [], lives: [], typing: new Map(), pending: new Map(), seq: 0, retry: null, tries: 0, pinger: null, seen: 0, closed: false };
     conns.set(h.id, c);
     connect(c);
     return c;
@@ -112,9 +204,11 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
     if (c.closed) { if (sock) sock.destroy(); return; }
     if (!sock) { again(c, c.h.joined ? 'Can\'t reach this hub right now. Drift keeps trying.' : 'Couldn\'t reach that hub. Check that the host\'s Drift is open.'); return; }
     sock.on('error', (e) => log(`chat: ${c.h.name || c.h.id}: ${e.message}`));
+    c.addr = sock.driftAddr || '';
     c.wire = wire(sock, null, (m) => onMessage(c, m), () => {
       log(`chat: the connection to ${c.h.name || c.h.id} closed`);
-      clearInterval(c.pinger); c.wire = null;
+      clearInterval(c.pinger); c.wire = null; c.voice = [];
+      if (call && call.hub === c.h.id) endCall('The connection to the hub dropped, so you left the call.');
       for (const p of c.pending.values()) p({ error: 'The connection to the hub dropped.' });
       c.pending.clear();
       if (!c.closed && !c.h.gone) again(c, 'Reconnecting...');
@@ -143,7 +237,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
         changed(); return;
       }
       c.status = 'connected'; c.note = ''; c.tries = 0;
-      c.me = m.me; c.host = !!m.host; c.members = m.members || []; c.channels = m.channels || []; c.lives = Array.isArray(m.lives) ? m.lives : [];
+      c.me = m.me; c.host = !!m.host; setMembers(c, m.members); c.channels = m.channels || []; c.lives = Array.isArray(m.lives) ? m.lives : []; c.voice = Array.isArray(m.voice) ? m.voice : [];
       if (myLive && myLive.hub === c.h.id) sendLive(c, myLive.live);       // still sharing: tell the hub again after a reconnect
       const mine = c.members.find((x) => x.id === myId), want = avatarId(me.avatar || '');
       if (mine && (mine.av || '') !== want) c.wire.send({ t: 'avatar', re: 'av', data: me.avatar || '' });       // a picture chosen (or removed) while away
@@ -158,7 +252,10 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
     if (m.re !== undefined && c.pending.has(m.re)) { const p = c.pending.get(m.re); c.pending.delete(m.re); p(m.t === 'err' ? { error: String(m.error || 'The hub said no.') } : m); return; }
     switch (m.t) {
       case 'pong': return;
-      case 'members': c.members = Array.isArray(m.list) ? m.list : []; changed(); break;
+      case 'members': setMembers(c, m.list); changed(); break;
+      case 'voice': c.voice = Array.isArray(m.list) ? m.list : []; onRoster(c); changed(); return;
+      case 'voice-signal': onSignal(c, m); return;
+      case 'voice-ended': if (call && call.hub === c.h.id) endCall(String(m.why || 'The call ended.').slice(0, 200)); return;
       case 'channels': c.channels = Array.isArray(m.list) ? m.list : []; changed(); break;
       case 'lives': c.lives = Array.isArray(m.list) ? m.list : []; changed(); break;
       case 'msg': if (m.msg && blocked.has(m.msg.from)) return; break;
@@ -198,6 +295,145 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
     myLive = id && live ? { hub: id, live } : null;
     if (was && (!myLive || was.hub !== id)) sendLive(conns.get(was.hub), null);
     if (myLive) sendLive(conns.get(id), live);
+  }
+
+  // ---- calls ----
+  // One call at a time, in one hub. call = { hub, id (the call id, signed into every setup message), peers (who else is
+  // in it, as the hub says), offered (peer -> the nonce of our offer that their answer must carry), toAnswer (peer ->
+  // the nonce of their offer, for our answer), seen (nonces already accepted), prints (peer -> the fingerprints we
+  // checked for them), refused (peer -> why), verdict (peer -> 'verified' | 'mismatch'), told (peers who refused us) }
+  let call = null;
+  const emit = (hub, m) => opts.event && opts.event(hub, m);
+  const nameIn = (c, id) => { const m = c && c.members.find((x) => x.id === id); return m ? m.name : (c && c.suspect.get(id)) || 'someone'; };
+  // Where to reach the hub's relay: the address this PC reached the hub at, unless that was this PC itself (Chromium
+  // won't relay through 127.0.0.1) or IPv6 (the relay is IPv4); then the hub's own addresses, nearest first.
+  function relayServer(c, r) {
+    if (!r.relay || !(r.relay.port > 0)) return null;
+    const v4 = /^\d+\.\d+\.\d+\.\d+$/, loop = /^(127\.|::1$|::ffff:127\.)/;
+    const hosts = (Array.isArray(r.hosts) ? r.hosts : []).filter((x) => v4.test(x) && !loop.test(x));
+    const pub = hosts.filter(isPublic), near = hosts.filter((x) => !isPublic(x));
+    const host = v4.test(c.addr) && !loop.test(c.addr) ? c.addr : (loop.test(c.addr) || !c.addr.includes(':') ? [...near, ...pub] : [...pub, ...near])[0];
+    return host ? { urls: `turn:${host}:${r.relay.port}?transport=udp`, username: String(r.relay.username), credential: String(r.relay.credential) } : null;
+  }
+  async function voiceJoin(id, o = {}) {
+    const c = conns.get(id);
+    if (!c || c.status !== 'connected') return { error: 'Not connected to that hub right now.' };
+    if (call) await voiceLeave();
+    const r = await ask(id, { t: 'voice-join', call: nonce(), muted: !!o.muted, deaf: !!o.deaf });
+    if (r.error) return r;
+    if (!TOKEN.test(String(r.call))) return { error: 'The hub answered with a call that doesn\'t make sense.' };
+    const server = relayServer(c, r);
+    call = { hub: id, id: String(r.call), peers: new Set((r.peers || []).filter((p) => typeof p === 'string' && p !== myId)), offered: new Map(), toAnswer: new Map(), seen: new Set(), prints: new Map(), refused: new Map(), verdict: new Map(), told: new Set() };
+    log(`chat: joined the call in ${c.h.name}, with ${call.peers.size} other(s)${server ? ', relayed through ' + server.urls : ', with no relay'}`);
+    changed();
+    return { hub: id, me: myId, peers: [...call.peers], iceServers: server ? [server] : [] };
+  }
+  async function voiceLeave() {
+    if (!call) return {};
+    const id = call.hub;
+    call = null; changed();
+    await ask(id, { t: 'voice-leave' }, 4000);
+    return {};
+  }
+  function endCall(why) {
+    if (!call) return;
+    const id = call.hub;
+    call = null;
+    emit(id, { t: 'voice-ended', why });
+    changed();
+  }
+  function voiceState(s) {
+    const c = call && conns.get(call.hub);
+    if (c && c.wire) c.wire.send({ t: 'voice-state', muted: !!s.muted, deaf: !!s.deaf, mic: !!s.mic });
+  }
+  // The hub's list of who is in the call changed: anyone who left starts afresh if they come back.
+  function onRoster(c) {
+    if (!call || call.hub !== c.h.id) return;
+    const now = new Set(c.voice.map((v) => v.id).filter((x) => typeof x === 'string' && x !== myId));
+    for (const id of call.peers) {
+      if (now.has(id)) continue;
+      for (const k of ['offered', 'toAnswer', 'prints', 'refused', 'verdict']) call[k].delete(id);
+      call.told.delete(id);
+      emit(c.h.id, { t: 'voice-left', id });
+    }
+    call.peers = now;
+  }
+  // From the voice window: a setup message for `peer`. SDPs are signed here; ICE candidates go as they are (a hub that
+  // changes them can only stop the call, not listen to it).
+  function voiceSignal(peer, d) {
+    const c = call && conns.get(call.hub);
+    if (!c || !c.wire || !d || !call.peers.has(peer) || call.refused.has(peer)) return;
+    if (d.c && typeof d.c === 'object') { c.wire.send({ t: 'voice-signal', to: peer, d: { c: d.c } }); return; }
+    const type = d.sdp && d.sdp.type, sdp = d.sdp && String(d.sdp.sdp || '');
+    if (!sdp || (type !== 'offer' && type !== 'answer')) return;
+    let n = '';
+    if (type === 'offer') { n = nonce(); call.offered.set(peer, n); }       // fresh for each offer: their answer must carry it back
+    else { n = call.toAnswer.get(peer) || ''; call.toAnswer.delete(peer); }
+    const sig = n && signSdp(key, { pin: call.hub, call: call.id, from: myId, to: peer, nonce: n, sdp });
+    if (!sig) { log('chat: a call setup message could not be signed, so it was not sent'); return; }
+    c.wire.send({ t: 'voice-signal', to: peer, d: { sdp: { type, sdp }, nonce: n, sig } });
+  }
+  function onSignal(c, m) {
+    if (!call || call.hub !== c.h.id) return;
+    const from = String(m.from || ''), d = m.d && typeof m.d === 'object' ? m.d : {};
+    if (!call.peers.has(from) || call.refused.has(from)) return;
+    if (d.refused) {       // they couldn't verify us
+      if (!call.told.has(from)) { call.told.add(from); emit(c.h.id, { t: 'voice-told', from, name: nameIn(c, from) }); changed(); }
+      return;
+    }
+    if (d.c) { emit(c.h.id, { t: 'voice-candidate', from, c: d.c }); return; }
+    if (!d.sdp) return;
+    const type = d.sdp.type, sdp = String(d.sdp.sdp || ''), n = String(d.nonce || '');
+    const why = checkIncoming(c, from, type, sdp, n, d.sig);
+    if (why) { refuse(c, from, why); return; }
+    call.seen.add(n);
+    if (type === 'offer') call.toAnswer.set(from, n); else call.offered.delete(from);
+    call.prints.set(from, fingerprints(sdp));
+    call.verdict.delete(from);
+    emit(c.h.id, { t: 'voice-sdp', from, sdp: { type, sdp } });       // exactly what was checked
+  }
+  function checkIncoming(c, from, type, sdp, n, sig) {
+    if (type !== 'offer' && type !== 'answer') return 'it wasn\'t an offer or an answer';
+    const raw = c.keys.get(from);
+    if (!raw) return 'the hub has no key for them that matches their id';
+    if (!sig) return 'it wasn\'t signed';
+    if (call.seen.has(n)) return 'it was a copy of one already used';
+    if (type === 'answer' && call.offered.get(from) !== n) return 'it answered an offer this PC never made';
+    if (!verifySdp(raw, { pin: call.hub, call: call.id, from, to: myId, nonce: n, sdp }, sig)) return 'its signature doesn\'t match (wrong fingerprint, sender, recipient or call)';
+    return '';
+  }
+  function refuse(c, from, why) {
+    log(`chat: refused a call setup message from ${nameIn(c, from)}: ${why}`);
+    call.refused.set(from, why);
+    emit(c.h.id, { t: 'voice-refused', from, name: nameIn(c, from), why });
+    if (c.wire) c.wire.send({ t: 'voice-signal', to: from, d: { refused: true } });       // so their side can say so too
+    changed();
+  }
+  // From the voice window, once connected: the certificate the other side really used (getStats). It must be one of the
+  // fingerprints their signed SDP promised, or the connection is closed.
+  function voiceCert(peer, alg, fp) {
+    if (!call || !call.prints.has(peer)) return { ok: false };
+    const line = `a=fingerprint:${String(alg)} ${String(fp)}`.replace(/\s+/g, ' ').toLowerCase();
+    const ok = call.prints.get(peer).includes(line);
+    call.verdict.set(peer, ok ? 'verified' : 'mismatch');
+    if (!ok) log(`chat: the certificate ${nameIn(conns.get(call.hub), peer)} used doesn't match their signed one; closing that connection`);
+    emit(call.hub, { t: 'voice-verdict', id: peer, ok });
+    changed();
+    return { ok };
+  }
+  // A safety number with someone, and marking them checked (kept on this PC only).
+  async function safety(id, member) {
+    const c = conns.get(id), raw = c && c.keys.get(member);
+    if (!raw) return { error: 'There\'s no key for them to compare.' };
+    return { code: await safetyNumber(pub, raw) };
+  }
+  function setVerified(id, member, on) {
+    const c = conns.get(id), m = c && c.members.find((x) => x.id === member);
+    if (!m) return { error: 'No such member.' };
+    const t = trust[id] || (trust[id] = {});
+    t[member] = { ...(t[member] || { name: m.name, key: m.key, at: Date.now() }), verified: on ? Date.now() : 0 };
+    saveTrust(); changed();
+    return {};
   }
 
   // ---- what main.js calls ----
@@ -263,10 +499,12 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
       hosting: hub ? { id: hub.pin.toString('base64url'), name: hub.name(), port: hub.port(), note: hostNote, internet: !!(hosting && hosting.internet) } : null,
       blocked: [...blocked],
       hubs: saved.map((h) => {
-        const c = conns.get(h.id);
+        const c = conns.get(h.id), t = trust[h.id] || {}, up = !!c && c.status === 'connected';
         return { id: h.id, name: h.name, mine: !!h.mine, status: h.gone ? 'gone' : c ? c.status : 'offline', note: h.gone || (c && c.note) || '',
-          host: !!(c && c.host), members: c ? c.members : [], channels: c ? c.channels : [], lives: c && c.status === 'connected' ? c.lives : [] };
+          host: !!(c && c.host), members: c ? c.members.map(({ key: _k, ...m }) => ({ ...m, verified: !!(t[m.id] && t[m.id].verified) })) : [], channels: c ? c.channels : [], lives: up ? c.lives : [],
+          voice: up ? c.voice : [], suspect: c ? [...c.suspect].map(([id, name]) => ({ id, name })) : [], lookalikes: c ? lookalikes(c) : [] };
       }),
+      call: call ? { hub: call.hub, id: call.id, peers: [...call.peers], verdict: Object.fromEntries(call.verdict), refused: Object.fromEntries(call.refused), told: [...call.told] } : null,
     };
   }
   let changeTimer = null;
@@ -281,11 +519,13 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
   async function stop() {
     for (const id of [...conns.keys()]) close(id);
     if (hub) { const h = hub; hub = null; await h.stop(); }
-    if (mapping) { await Promise.race([mapping.remove(), new Promise((r) => setTimeout(r, 1500))]); mapping = null; }
+    if (mappings.length) await Promise.race([Promise.all(mappings.splice(0).map((m) => m.remove())), new Promise((r) => setTimeout(r, 1500))]);
   }
 
   return {
     start, stop, info, join, leave, host, unhost, setName, block, announce, setAvatar, avatar, setMic,
+    voiceJoin, voiceLeave, voiceState, voiceSignal, voiceCert, safety, setVerified, inCall: () => (call ? call.hub : ''),
+    hostVoicePort: () => (hub ? hub.voicePort() : 0), relayStats: () => (hub ? hub.relayStats() : null),
     history: (id, ch, o = {}) => ask(id, { t: 'history', ch, before: o.before, after: o.after, limit: o.limit }).then(filterMsgs),
     send: (id, ch, text, reply) => ask(id, { t: 'send', ch, text, reply, cid: cid() }),
     edit: (id, msg, text) => ask(id, { t: 'edit', id: msg, text }),
@@ -297,6 +537,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
     withdrawInvites: (id) => ask(id, { t: 'withdraw-invites' }),
     removeMember: (id, member) => ask(id, { t: 'remove', member }),
     myId: () => myId,
+    _fromHub: (id, m) => { const c = conns.get(id); if (c) onMessage(c, m); },       // (tests only: as if hub `id` had sent m)
   };
 };
-module.exports.decodeInvite = decodeInvite;
+Object.assign(module.exports, { decodeInvite, checkMembers, safetyNumber, fingerprints, voiceText, signSdp, verifySdp });

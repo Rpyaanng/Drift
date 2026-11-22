@@ -4,6 +4,12 @@
 // delete any message and withdraw every invite. It also passes on who is sharing a video or page right now (Together):
 // a member's Drift announces its watch-together code here, and everyone else gets a Join button in the chat.
 //
+// Voice: one call per hub, up to 8 people, a mesh. The hub keeps who is in the call, passes setup messages between
+// them and relays the media through its TURN server (turn.js) on one UDP port. It is never trusted with the call
+// itself: every setup message carries the sender's signature over their DTLS fingerprint, made and checked by the
+// members' own Drift (chat.js), so a hub that swaps fingerprints, drops signatures or replays old ones is caught.
+// Member lists carry each member's public key for that check; chat.js makes sure each key hashes to its member id.
+//
 // The connection is TLS 1.3 with the hub's own self-signed certificate (ECDSA P-256: Electron's BoringSSL refuses an
 // Ed25519 one in the handshake, though members' Ed25519 signatures inside the connection are fine). Invite codes carry the certificate's
 // fingerprint, so members pin it and nobody holding a code can pretend to be the hub. Inside, the hub sends a random
@@ -14,10 +20,12 @@ const tls = require('tls');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { wire, ipBytes, ipText } = require('./p2p');
+const { wire, ipBytes, ipText, localAddrs } = require('./p2p');
+const createTurn = require('./turn');
 
 const VERSION = 1;
-const LIMITS = { line: 16 * 1024, text: 4000, name: 24, channel: 32, channels: 50, page: 100, actions: 10, perSecs: 10, connections: 64, avatar: 14000 };
+const LIMITS = { line: 16 * 1024, text: 4000, name: 24, channel: 32, channels: 50, page: 100, actions: 10, perSecs: 10, connections: 64, avatar: 14000, voice: 8, signals: 200 };
+const TURN_SECS = 24 * 3600;       // how long a call's relay credentials last (the relay also stops as soon as someone leaves the call)
 const INVITE_DAYS = 7;
 
 // ---- the hub's certificate: X.509 for a P-256 key, written by hand (Node can read certificates but not make them) ----
@@ -131,7 +139,7 @@ module.exports = function createHub(opts) {
   const S = {
     member: q('SELECT * FROM members WHERE id = ?'), addMember: q('INSERT INTO members (id, key, name, joined) VALUES (?, ?, ?, ?)'),
     rename: q('UPDATE members SET name = ? WHERE id = ?'), ban: q('UPDATE members SET banned = 1 WHERE id = ?'),
-    members: q('SELECT id, name, joined, av FROM members WHERE banned = 0 ORDER BY joined'),
+    members: q('SELECT id, key, name, joined, av FROM members WHERE banned = 0 ORDER BY joined'),
     setAvatar: q('UPDATE members SET avatar = ?, av = ? WHERE id = ?'), avatar: q('SELECT avatar FROM members WHERE id = ? AND banned = 0'),
     channels: q('SELECT id, name FROM channels ORDER BY id'), channel: q('SELECT * FROM channels WHERE id = ?'),
     addChannel: q('INSERT INTO channels (name, made_by, at) VALUES (?, ?, ?)'), dropChannel: q('DELETE FROM channels WHERE id = ?'),
@@ -154,7 +162,9 @@ module.exports = function createHub(opts) {
   const sessions = new Set();
   let server = null, port = 0;
   const everyone = (m, but) => { const line = JSON.stringify(m); for (const s of sessions) if (s.id && s !== but) s.wire.send(line); };
-  const memberList = () => S.members.all().map((m) => ({ id: m.id, name: m.name, host: m.id === ownerId, online: online.has(m.id), av: m.av || '', mic: online.has(m.id) && mics.has(m.id) ? mics.get(m.id) : null }));
+  // key: the member's raw Ed25519 public key, so members can check each other's call signatures (and that it hashes to the id)
+  const memberList = () => S.members.all().map((m) => ({ id: m.id, key: Buffer.from(m.key).toString('base64url'), name: m.name, host: m.id === ownerId, online: online.has(m.id), av: m.av || '', mic: online.has(m.id) && mics.has(m.id) ? mics.get(m.id) : null }));
+  const membersNews = (but) => { const list = memberList(); for (const s of sessions) if (s.id && s !== but) s.wire.send({ t: 'members', list: bent.list(s, list) }); };
   const channelList = () => S.channels.all().map((c) => ({ id: c.id, name: c.name }));
 
   function invite({ by, days = INVITE_DAYS, uses = 25 }) {
@@ -166,7 +176,7 @@ module.exports = function createHub(opts) {
 
   function onConnection(sock) {
     if (sessions.size >= LIMITS.connections) { sock.destroy(); return; }
-    const s = { id: null, nonce: crypto.randomBytes(24).toString('base64url'), wire: null, acts: { msg: [], other: [], live: [] }, typed: 0 };
+    const s = { id: null, nonce: crypto.randomBytes(24).toString('base64url'), wire: null, acts: { msg: [], other: [], live: [], sig: [] }, typed: 0 };
     sessions.add(s);
     const login = setTimeout(() => { if (!s.id) s.wire.close(); }, 15000);
     s.wire = wire(sock, null, (m) => { try { onMessage(s, m); } catch (e) { reply(s, m, { error: 'Something went wrong on the hub.' }); if (opts.log) opts.log('hub: ' + (e && e.stack || e)); } }, () => {
@@ -174,18 +184,19 @@ module.exports = function createHub(opts) {
       if (opts.log) opts.log(`hub: ${s.id || 'someone not signed in'} disconnected`);
       if (s.id && online.has(s.id)) {
         const set = online.get(s.id); set.delete(s);
-        if (!set.size) { online.delete(s.id); mics.delete(s.id); everyone({ t: 'members', list: memberList() }); if (lives.delete(s.id)) everyone({ t: 'lives', list: liveList() }); }
+        if (!set.size) { online.delete(s.id); mics.delete(s.id); membersNews(); if (lives.delete(s.id)) everyone({ t: 'lives', list: liveList() }); }
       }
+      if (s.id && voice.get(s.id) && voice.get(s.id).s === s) leaveCall(s.id);
     }, LIMITS.line);
     s.wire.send({ t: 'hello', v: VERSION, nonce: s.nonce, name: hubName });
   }
   const reply = (s, m, out) => s.wire.send({ t: out.error ? 'err' : 'ok', re: m && m.re, ...out });
   // Ten of each kind of action every ten seconds for each member (messages and edits; everything else), so one person
   // (or a stuck script) can't flood everyone, and a burst of messages doesn't stop them making an invite.
-  function slow(s, kind = 'msg') {
+  function slow(s, kind = 'msg', most = LIMITS.actions) {
     const now = Date.now();
     s.acts[kind] = s.acts[kind].filter((t) => now - t < LIMITS.perSecs * 1000);
-    if (s.acts[kind].length >= LIMITS.actions) return true;
+    if (s.acts[kind].length >= most) return true;
     s.acts[kind].push(now); return false;
   }
 
@@ -208,8 +219,8 @@ module.exports = function createHub(opts) {
       s.id = id;
       if (!online.has(id)) online.set(id, new Set());
       online.get(id).add(s);
-      reply(s, m, { me: id, host: id === ownerId, hub: hubName, addrs: opts.addrs ? opts.addrs() : [], members: memberList(), channels: channelList(), lives: liveList() });       // addrs: so members can still find the hub when its addresses change
-      everyone({ t: 'members', list: memberList() }, s);
+      reply(s, m, { me: id, host: id === ownerId, hub: hubName, addrs: opts.addrs ? opts.addrs() : [], members: bent.list(s, memberList()), channels: channelList(), lives: liveList(), voice: voiceList() });       // addrs: so members can still find the hub when its addresses change
+      membersNews(s);
       return;
     }
     const isHost = s.id === ownerId;
@@ -282,7 +293,7 @@ module.exports = function createHub(opts) {
         const name = cleanName(m.name);
         if (!name) return reply(s, m, { error: 'Pick a name.' });
         S.rename.run(name, s.id);
-        everyone({ t: 'members', list: memberList() });
+        membersNews();
         return reply(s, m, {});
       }
       case 'invite': {       // anyone can invite
@@ -305,7 +316,7 @@ module.exports = function createHub(opts) {
         if (data === null) return reply(s, m, { error: 'That picture can\'t be used. Pictures are small WebP, JPEG or PNG images.' });
         if (slow(s, 'other')) return reply(s, m, { error: 'Slow down a little.' });
         S.setAvatar.run(data || null, avatarId(data) || null, s.id);
-        everyone({ t: 'members', list: memberList() });
+        membersNews();
         return reply(s, m, { av: avatarId(data) });
       }
       case 'avatar-get': {
@@ -316,7 +327,7 @@ module.exports = function createHub(opts) {
         const on = !!m.on;
         if (mics.get(s.id) === on) return;
         mics.set(s.id, on);
-        everyone({ t: 'members', list: memberList() });
+        membersNews();
         return;
       }
       case 'withdraw-invites': {
@@ -331,13 +342,99 @@ module.exports = function createHub(opts) {
         S.ban.run(who.id);
         for (const x of online.get(who.id) || []) { x.wire.send({ t: 'removed' }); setTimeout(() => x.wire.close(), 100); }
         online.delete(who.id);
-        everyone({ t: 'members', list: memberList() });
+        if (voice.has(who.id)) leaveCall(who.id);
+        membersNews();
         if (lives.delete(who.id)) everyone({ t: 'lives', list: liveList() });
         return reply(s, m, {});
+      }
+      case 'voice-join': return joinCall(s, m);
+      case 'voice-leave': { if (voice.get(s.id) && voice.get(s.id).s === s) leaveCall(s.id); return reply(s, m, {}); }
+      case 'voice-state': {       // muted, deafened, and whether their microphone really opened: shown to everyone in the hub
+        const v = voice.get(s.id);
+        if (!v || v.s !== s) return;
+        Object.assign(v, { muted: !!m.muted, deaf: !!m.deaf, mic: !!m.mic });
+        everyone({ t: 'voice', list: voiceList() });
+        return;
+      }
+      case 'voice-signal': {       // a setup message for one other person in the call, passed on as it is: the signature inside is theirs, not the hub's
+        const v = voice.get(s.id), to = String(m.to || '');
+        if (!v || v.s !== s || !voice.has(to) || to === s.id || !m.d || typeof m.d !== 'object') return;
+        if (slow(s, 'sig', LIMITS.signals)) return;
+        for (const [dest, d] of bent.signal(s.id, to, m.d)) { const x = voice.get(dest); if (x) x.s.wire.send({ t: 'voice-signal', from: s.id, d }); }
+        return;
       }
       default: return reply(s, m, { error: 'The hub doesn\'t know how to do that.' });
     }
   }
+
+  // ---- the call: one per hub, up to 8 people ----
+  const voice = new Map();       // member id -> { s (their session), muted, deaf, mic, since }. Kept in memory only.
+  let callId = '';               // made by whoever starts the call; members sign it into every setup message
+  let turn = null, relayHost = '';
+  const voiceList = () => [...voice].map(([id, v]) => ({ id, muted: v.muted, deaf: v.deaf, mic: v.mic, since: v.since }));
+  function joinCall(s, m) {
+    const was = voice.get(s.id);
+    if (!was && voice.size >= LIMITS.voice) return reply(s, m, { error: `The call is full: up to ${LIMITS.voice} people can be in it at once.` });
+    if (slow(s, 'other')) return reply(s, m, { error: 'Slow down a little.' });
+    if (was && was.s !== s) was.s.wire.send({ t: 'voice-ended', why: 'You joined the call from another PC.' });       // the same person on two PCs: the newer one wins
+    if (!voice.size) callId = /^[A-Za-z0-9_-]{22,43}$/.test(String(m.call || '')) ? String(m.call) : crypto.randomBytes(16).toString('base64url');
+    voice.set(s.id, { s, muted: !!m.muted, deaf: !!m.deaf, mic: false, since: Date.now() });
+    if (turn) turn.drop(s.id);       // anything left from an earlier time in the call
+    const relay = turn ? { port: turn.port(), ...turn.credentials(s.id, TURN_SECS) } : null;
+    const hosts = [...new Set([...(opts.addrs ? opts.addrs() : []), relayHost])].filter((a) => /^\d+\.\d+\.\d+\.\d+$/.test(a));       // where members can reach the relay (IPv4 only)
+    reply(s, m, { call: callId, peers: [...voice.keys()].filter((id) => id !== s.id), relay, hosts });
+    everyone({ t: 'voice', list: voiceList() });
+  }
+  function leaveCall(id) {
+    voice.delete(id);
+    if (turn) turn.drop(id);
+    if (!voice.size) { callId = ''; bent.reset(); }
+    everyone({ t: 'voice', list: voiceList() });
+  }
+  // The voice relay listens on UDP, on the same port number as the hub when it can (one number to forward on the
+  // router). Its relay addresses only exist inside this process, so any of this PC's IPv4 addresses will do to name
+  // them; a real one, because Chromium won't relay through 127.0.0.1.
+  async function startRelay() {
+    relayHost = localAddrs().find((a) => /^\d+\.\d+\.\d+\.\d+$/.test(a)) || '127.0.0.1';
+    for (const p of [port, 0]) {
+      const t = createTurn({ secret: crypto.randomBytes(32), relayHost, allowed: (id) => voice.has(id), log: (x) => opts.log && opts.log('hub relay: ' + x) });
+      try { await t.listen(p, opts.relayBind || '0.0.0.0'); turn = t; return; } catch { try { t.close(); } catch { /* never opened */ } }
+    }
+    if (opts.log) opts.log('hub: the voice relay could not start');
+  }
+
+  // ---- a hub that misbehaves on purpose (tests only): DRIFT_HUB_TAMPER=fingerprint|unsigned|replay|swapkey ----
+  // It interferes with what one member sends another (DRIFT_HUB_TAMPER_PAIR="From>To", by name), the way a hostile hub
+  // could, so the tests can check that the members' Drift refuses it and that the rest of the call still connects.
+  const bent = (() => {
+    const how = opts.tamper !== undefined ? opts.tamper : process.env.DRIFT_HUB_TAMPER || '';
+    const [fromName, toName] = String(opts.tamperPair !== undefined ? opts.tamperPair : process.env.DRIFT_HUB_TAMPER_PAIR || '').split('>');
+    const named = (id, n) => { const r = n && S.member.get(id); return !!r && r.name === n; };
+    let sent = null, held = '';       // replay: the last thing From sent anyone else; who is waiting for one to be swapped in
+    return {
+      list(s, list) {       // swapkey: To is told a different key for From (From's id stays the same)
+        if (how !== 'swapkey' || !named(s.id, toName)) return list;
+        return list.map((x) => (named(x.id, fromName) ? { ...x, key: crypto.randomBytes(32).toString('base64url') } : x));
+      },
+      signal(from, to, d) {
+        if (!how || !d.sdp || !named(from, fromName)) return [[to, d]];
+        if (!named(to, toName)) {
+          if (how !== 'replay') return [[to, d]];
+          sent = d;
+          if (held) { const w = held; held = ''; return [[to, d], [w, d]]; }       // To gets what From just sent someone else
+          return [[to, d]];
+        }
+        if (how === 'fingerprint') {       // swap in another certificate's fingerprint, the way a hub listening in would
+          const fake = crypto.randomBytes(32).toString('hex').toUpperCase().match(/../g).join(':');
+          return [[to, { ...d, sdp: { ...d.sdp, sdp: String(d.sdp.sdp).replace(/^(a=fingerprint:\S+ )\S+/gm, `$1${fake}`) } }]];
+        }
+        if (how === 'unsigned') { const { sig, ...rest } = d; return [[to, rest]]; }
+        if (how === 'replay') { if (sent) return [[to, sent]]; held = to; return []; }
+        return [[to, d]];
+      },
+      reset() { sent = null; held = ''; },
+    };
+  })();
 
   return {
     pin, ownerId,
@@ -350,17 +447,20 @@ module.exports = function createHub(opts) {
         const [p, h] = tries.shift() || [];
         if (h === undefined) { reject(new Error('no port')); return; }
         server.once('error', next);
-        server.listen(p, h, () => { server.removeListener('error', next); server.on('error', () => {}); port = server.address().port; resolve(port); });
+        server.listen(p, h, () => { server.removeListener('error', next); server.on('error', () => {}); port = server.address().port; startRelay().finally(() => resolve(port)); });
       };
       next();
     }),
     port: () => port,
+    voicePort: () => (turn ? turn.port() : 0),
+    relayStats: () => (turn ? turn.stats() : null),
     name: () => hubName,
     invite: (o = {}) => invite({ by: ownerId, ...o }),
     stats: () => ({ online: online.size, sessions: sessions.size, members: S.members.all().length }),
     stop: () => new Promise((resolve) => {
       if (opts.log) opts.log('hub: stopping');
       for (const s of sessions) { s.wire.send({ t: 'bye' }); s.wire.close(); }
+      if (turn) { try { turn.close(); } catch { /* closed */ } turn = null; }
       if (!server) { db.close(); resolve(); return; }
       server.close(() => { db.close(); resolve(); });
       server = null;

@@ -109,12 +109,12 @@ async function gateway() {
   throw new Error('no gateway');
 }
 const externalIp = async (svc) => (/<NewExternalIPAddress>\s*([^<\s]*)/i.exec(await soap(svc, 'GetExternalIPAddress', {})) || [])[1] || '';
-// Opens `port` (TCP) on the router and points it at this PC. Resolves { ip, remove() } or throws.
-async function upnpMap(port) {
+// Opens `port` (TCP, or UDP for a hub's voice relay) on the router and points it at this PC. Resolves { ip, remove() } or throws.
+async function upnpMap(port, proto = 'TCP') {
   const svc = await gateway();
-  const map = (lease) => soap(svc, 'AddPortMapping', { NewRemoteHost: '', NewExternalPort: port, NewProtocol: 'TCP', NewInternalPort: port, NewInternalClient: svc.local,
+  const map = (lease) => soap(svc, 'AddPortMapping', { NewRemoteHost: '', NewExternalPort: port, NewProtocol: proto, NewInternalPort: port, NewInternalClient: svc.local,
     NewEnabled: 1, NewPortMappingDescription: 'Drift', NewLeaseDuration: lease });
-  const unmap = () => soap(svc, 'DeletePortMapping', { NewRemoteHost: '', NewExternalPort: port, NewProtocol: 'TCP' });
+  const unmap = () => soap(svc, 'DeletePortMapping', { NewRemoteHost: '', NewExternalPort: port, NewProtocol: proto });
   let lease = 7200;
   try { await map(lease); } catch (e) {
     if (e.code === 725) lease = 0;                         // this router only does mappings that never expire
