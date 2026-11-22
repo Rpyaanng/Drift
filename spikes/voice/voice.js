@@ -44,10 +44,12 @@ const dtx = (sdp) => q.get("nodtx") ? sdp :  sdp.replace(/(a=fmtp:\d+ [^\r\n]*us
 function pcFor(id) {
   let pc = pcs.get(id);
   if (pc) return pc;
-  pc = new RTCPeerConnection({ iceServers: [] });
+  pc = new RTCPeerConnection(q.get('ice') ? JSON.parse(q.get('ice')) : { iceServers: [] });
   pcs.set(id, pc);
   for (const t of local.getTracks()) pc.addTrack(t, local);
   pc.onicecandidate = (e) => { if (e.candidate) api.signal(id, { c: e.candidate.toJSON() }); };
+  pc.onicecandidateerror = (e) => log(`window ${id}: ICE server ${e.url}: ${e.errorCode} ${e.errorText}`);
+  pc.onicegatheringstatechange = () => log(`window ${id}: gathering ${pc.iceGatheringState}`);
   pc.ontrack = (e) => hear(id, e.streams[0] || new MediaStream([e.track]));
   pc.onconnectionstatechange = () => { if (pc.connectionState === 'failed') log(`window ${id}: connection failed`); };
   return pc;
@@ -88,6 +90,7 @@ async function hear(id, stream) {
 }
 
 // ---- called by main.js ----
+window.peersUp = () => [...pcs].filter(([, pc]) => pc.connectionState === 'connected').map(([id]) => id);
 window.connected = () => [...pcs.values()].filter((pc) => pc.connectionState === 'connected').length;
 window.setPtt = (down) => { if (!PTT) return; talking = down; applyTalk(); };
 window.tone = (on) => { gain.gain.setValueAtTime(on ? 0.5 : 0, ctx.currentTime); };
@@ -108,7 +111,16 @@ window.report = async () => {
           packetsReceived: s.packetsReceived, packetsLost: s.packetsLost, concealedPct: +((100 * s.concealedSamples) / Math.max(1, s.totalSamplesReceived)).toFixed(2) });
         const c = all.get(s.codecId); if (c) r.codec = `${c.mimeType} ${c.sdpFmtpLine || ''}`;
       }
-      if (s.type === 'candidate-pair' && s.nominated && s.state === 'succeeded') r.rttMs = +((s.currentRoundTripTime || 0) * 1000).toFixed(1);
+      if (s.type === 'candidate-pair' && s.nominated && s.state === 'succeeded') {
+        r.rttMs = +((s.currentRoundTripTime || 0) * 1000).toFixed(1);
+        const l = all.get(s.localCandidateId), rc = all.get(s.remoteCandidateId);
+        r.path = `${l && l.candidateType} ${l && l.address}:${l && l.port} -> ${rc && rc.candidateType} ${rc && rc.address}:${rc && rc.port}`;
+      }
+      if (s.type === 'transport') {       // the certificate the other side really used, against the one its SDP promised
+        const c = all.get(s.remoteCertificateId);
+        if (c) r.dtlsFingerprint = `${c.fingerprintAlgorithm} ${c.fingerprint}`.toLowerCase();
+        r.signedFingerprint = (pcs.get(id).remoteDescription.sdp.match(/^a=fingerprint:(\S+ \S+)/m) || [])[1]?.toLowerCase();
+      }
     }
     out.from[id] = r;
   }

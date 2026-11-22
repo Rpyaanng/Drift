@@ -1,7 +1,7 @@
 # Plan: voice and chat in Drift (Discord-style)
 
-Status: design settled (§11), 2026-11-21, branch `voip`. Nothing is implemented yet. Spikes come first: a few of the
-choices below depend on facts that can only be found by measuring a real build.
+Status: design settled (§11), 2026-11-21, branch `voip`. The four spikes are done and measured (§10.0); nothing of
+Drift itself is implemented yet. Phase 1 is next.
 
 The goal is a Discord-like space for a group of friends inside Drift:
 - **Text channels** with history, replies, edits, reactions, mentions and **attachments** (images, video, files).
@@ -116,14 +116,18 @@ No accounts and no passwords.
   - A setting "Connect directly in calls (lower delay; others in the call can see your IP address)" for groups of
     people who trust each other.
   - Push-to-talk uses a key-state helper, not `globalShortcut` (which never reports releases; spike 1).
-  - This needs a small TURN server inside `hub.js` (UDP Allocate, Permission, ChannelBind and Send/Data, about 500
-    lines). Building it is spike 3. If it's too much, a standalone hub can run coturn beside it instead.
+  - This needs a small TURN server inside `hub.js`. Spike 3 built one (`spikes/voice/turn.js`, about 250 lines) and
+    Chromium uses it. It **only relays between its own allocations**: in a relayed call both ends are relay addresses
+    on the same hub, so packets are handed across in memory. Only the hub's one UDP port needs forwarding on the
+    router, and the hub can't be used to send UDP to anywhere else (an open relay is a known way to attack other hosts).
   - The STUN server (Google's today) also sees your IP. With relay on, STUN isn't needed.
 - **Per-person controls**: volume, local mute (only you stop hearing them), and moderator server-mute/deafen. A
   "speaking" ring is driven by the audio level of each incoming track.
-- **Watch together plus voice**: echo cancellation should remove the video's sound that Drift itself plays (Chromium's
-  echo canceller uses Chromium's own audio output as its reference). This must be measured in spike 2, because Drift
-  plays some audio outside Chromium (ffmpeg conversions).
+- **Watch together plus voice**: Chromium's echo canceller removes the video's sound that Drift plays, from any of
+  Drift's windows and including ffmpeg's converted sound, **as long as it plays on Windows' default output** (spike
+  2). So voice and video must both use the default device. Sending either to another device (`setSinkId`, for
+  example a future "voice output" picker) lets the video leak into the call. Sound from other programs (the Spotify
+  app) isn't Chromium's, so it won't be removed. Not tested, but follows from the same result.
 
 ## 6. Moderation and safety features
 
@@ -203,9 +207,51 @@ option C isn't recommended. Drift's licence text should also say the software is
         the call, delayed).
    2. Echo: play a video in Drift while in a call, with speakers. Does the other side hear it? Check both Chromium
       playback and ffmpeg-converted audio.
+      **Done 2026-11-21** (`spikes/voice/echo.js`; `ECHO_DEFAULT=1 ECHO_OUT=Realtek ECHO_MIC=Snowball electron
+      spikes/voice/echo.js` plays about a minute of noise through the speakers). It plays speech-like noise in the call's
+      own window, in another window (a separate renderer, as Drift's scene windows are), and as ffmpeg's MP3 stream
+      over a local port (as Drift's `/a` route does), and measures the microphone with echo cancelling off and on:
+      - **On the default output, the echo is removed in all three cases.** The loudest case, the ffmpeg MP3 from
+        another window, was 16 dB above the room's own noise with cancelling off (−61 dBFS against −77) and back at
+        the room's level with it on (−73 to −79 against −80). The others were quieter but went the same way.
+      - **On a device that isn't the default, it isn't removed.** With headphones as the default and the sound sent to
+        the speakers through `setSinkId`, the microphone still heard it 15–23 dB above the room with cancelling on.
+      - Caveat: this PC's speakers are quiet next to its microphone, so the margins are small and one trial in each run
+        was spoiled by a noise in the room. A by-ear check with loud speakers is still worth doing. The run switches
+        Windows' default output to the speakers with `default-output.ps1` and puts it back afterwards.
    3. A minimal TURN server inside Node. Does Chromium accept it with `iceTransportPolicy: 'relay'`? What does it cost
       the hub's processor for 8 people?
+      **Done 2026-11-21** (`spikes/voice/turn.js`; `VOICE_RELAY=1 VOICE_AUTO=out.json electron spikes/voice/main.js`,
+      and `node spikes/voice/turn-load.js 8 10` for the load test):
+      - **Chromium accepts it.** It does Allocate with the long-term credential challenge, CreatePermission and
+        ChannelBind, then sends media as ChannelData. Credentials are the "TURN REST" kind (`expiry:member` and an
+        HMAC of it), so the hub hands out short-lived ones and stores nothing. Every pair ends up `relay -> relay`.
+      - **It needs a real network address, not 127.0.0.1.** Chromium sends from sockets on the real network
+        interfaces, and Windows won't route those to loopback, so a hub inside Drift has to advertise its LAN address
+        to members on the same network.
+      - **Chromium makes one allocation for each connection**, so an 8-person mesh is 56 allocations. Hence
+        relaying in memory (§5): with a socket for each, the hub would need 56 router ports.
+      - **No measurable delay on one PC**: median 53–58 ms relayed against 52–58 ms direct (2 and 8 people), jitter
+        buffer still 20 ms, nothing lost. DTX's silent stream grows from 1.1 to 1.7 kb/s (TURN keeps the allocations
+        and permissions alive).
+      - **Processor**: in the Electron run (8 people, one talking) the main process, which holds the server, used
+        3.7% of a core. In the load test with **all 8 talking at once** (2,743 packets/s in and out, 2.9 Mb/s each
+        way) it was **6.6% of a core**, including the fake members in the same process. 16 people all talking: 24%.
+      - The load test also checks that a wrong password and expired credentials are refused, and that relaying to an
+        address outside the hub is dropped.
    4. Signed DTLS fingerprints: sign `a=fingerprint` with Ed25519 and check it before `setRemoteDescription`.
+      **Done 2026-11-21** (in `spikes/voice/main.js`; `VOICE_TAMPER=fingerprint|unsigned|replay VOICE_PEERS=3
+      VOICE_AUTO=out.json electron spikes/voice/main.js`). The sender's main process signs
+      `drift-voice-v1, call id, from, to, the sorted a=fingerprint lines` with its identity key. The receiver's main
+      process checks it before the SDP reaches the renderer. The renderer never handles keys, which suits `chat.js`.
+      - Checking takes about 0.1 ms, and an 8-person call checks 56.
+      - A hub that **swaps the fingerprint**, **drops the signature** or **replays** one member's offer to another member
+        is refused every time, and only that pair fails. The rest of the call connects.
+      - **Chromium enforces the fingerprint itself.** With the check turned off (`VOICE_NOVERIFY=1`), a swapped
+        fingerprint makes that pair's connection fail. With honest signalling, the certificate the other side really
+        used (`getStats`, `remoteCertificateId`) equals the signed one. So signing the fingerprint is enough: a hub can't
+        sit in the middle without its own certificate, and it can't sign that as a member.
+      - ICE candidates don't need signing. A hub that changes them can only stop the call, not listen to it.
 1. **Hub and text**: identity, invites, a hub inside Drift, text channels, history, edits and deletion, rate limits,
    safe rendering, roles, kick and ban, block, audit log.
 2. **Attachments**: chunked upload, re-encoding images and stripping EXIF, sandboxed viewing, Mark of the Web, the
@@ -236,4 +282,4 @@ option C isn't recommended. Drift's licence text should also say the software is
 
 Start here: read this plan (the decisions in §11 are settled), then `p2p.js` (the connection, the invite codes and `wire()`), then
 `renderer/app.js` around line 844 (WebRTC signalling over the p2p channel), then `main.js`'s `runShots` (how the
-`DRIFT_TEST*` checks work). Begin with the spikes in §10.0, in order.
+`DRIFT_TEST*` checks work). The spikes in §10.0 are done, so begin Phase 1.
