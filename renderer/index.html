@@ -156,35 +156,49 @@
     </section>
 
     <section data-tab="share">
-      <div class="cols">
-        <div>
-          <h3>Watch together</h3>
-          <div id="shOff">
-            <p class="note">Play a video, then share it. Friends who paste your invite code into their Drift see the same video, in step with you: play, pause and skipping stay together. They also see a page you open in Surf, and hear your Ambient music or My music. It all travels straight from your PC to theirs, encrypted, with no server in between.</p>
-            <div class="row"><button class="btn" id="shStart">Share what I'm watching</button></div>
-            <h3 class="sub">Join a friend</h3>
+      <div id="chat">
+        <aside id="chSide">
+          <div id="shBox">
+            <div id="shOff">
+              <div class="row"><button class="btn" id="shStart">Share what I'm watching</button></div>
+              <p class="note" id="shOffNote">Everyone in the hub gets a Join button in the chat and sees your video, Surf page or music in step with you. It travels straight from your PC to theirs, encrypted.</p>
+            </div>
+            <div id="shHost">
+              <div class="spnow"><span class="spdot"></span><div><b id="shTitle"></b><span id="shSub"></span></div></div>
+              <div class="row"><button class="btn ghost" id="shStop">Stop sharing</button></div>
+            </div>
+            <div id="shGuest">
+              <div class="spnow"><span class="spdot"></span><div><b id="shGTitle"></b><span id="shGSub"></span></div></div>
+              <div class="row"><button class="btn ghost" id="shLeave">Leave</button></div>
+            </div>
+            <p class="note" id="shNote"></p>
+            <div id="shPeople"></div>
+          </div>
+          <div id="chHubs"></div>
+          <div id="chStart">
+            <h3 class="sub">Join friends</h3>
             <div class="row">
-              <input type="search" id="shCode" placeholder="Paste their invite code" spellcheck="false" autocomplete="off">
-              <button class="btn ghost" id="shPaste" title="Paste from the clipboard">Paste</button>
-              <button class="btn" id="shJoin">Join</button>
+              <input type="search" id="chCode" placeholder="Paste an invite code" spellcheck="false" autocomplete="off">
+              <button class="btn" id="chJoin">Join</button>
+            </div>
+            <div id="chHostBox">
+              <h3 class="sub">Or host a hub</h3>
+              <p class="note">A hub is a place for your friends: channels to chat in, and where you share what you're watching. It runs in your Drift and the messages are kept on this PC, so friends can only use it while your Drift is open. Sharing makes one for you if you have none.</p>
+              <div class="row"><button class="btn ghost" id="chHost">Host a hub</button></div>
             </div>
           </div>
-          <div id="shHost">
-            <div class="spnow"><span class="spdot"></span><div><b id="shTitle"></b><span id="shSub"></span></div></div>
-            <div class="row">
-              <code id="shCodeOut" title="Your invite code"></code>
-              <button class="btn" id="shCopy">Copy invite code</button>
-              <button class="btn ghost" id="shStop">Stop sharing</button>
-            </div>
-          </div>
-          <div id="shGuest">
-            <div class="spnow"><span class="spdot"></span><div><b id="shGTitle"></b><span id="shGSub"></span></div></div>
-            <div class="row"><button class="btn ghost" id="shLeave">Leave</button></div>
-          </div>
-          <p class="note" id="shNote"></p>
-          <div id="shPeople"></div>
+          <div class="row chActs"><button class="btn ghost" id="shOptsBtn">Options</button></div>
+        </aside>
+        <div id="chMain">
+          <div id="chLives"></div>
+          <div id="chHead"><b id="chTitle"></b><span id="chSub"></span></div>
+          <div id="chList"></div>
+          <div id="chTyping"></div>
+          <div id="chBar"><span id="chBarText"></span><button class="icon" id="chBarX" title="Cancel (Esc)">✕</button></div>
+          <textarea id="chInput" rows="1" maxlength="4000" spellcheck="true"></textarea>
         </div>
-        <div>
+        <div id="shOpts">
+          <div class="row head"><h3>Options</h3><button class="btn ghost" id="shOptsDone">Back to the chat</button></div>
           <label>Your name, as friends see it<input type="search" id="shName" maxlength="24" spellcheck="false" autocomplete="off"></label>
           <div class="checks one">
             <label class="chk"><input type="checkbox" id="shControl"><i></i>Friends can play, pause and skip, and use a web page</label>
@@ -200,34 +214,7 @@
             </select>
           </label>
           <p class="note">Lower the picture if the video keeps stopping to load: the sharing PC then sends a smaller copy. It applies to videos you share and videos you join. <span id="shQNote"></span></p>
-          <p class="note">Joining from outside your home asks your router to open one port while you share, and closes it when you stop. Subtitles, sound conversion and HDR conversion all work for friends too, and each person picks their own subtitles.</p>
-        </div>
-      </div>
-    </section>
-
-    <section data-tab="chat">
-      <div id="chat">
-        <aside id="chSide">
-          <div id="chHubs"></div>
-          <div id="chStart">
-            <h3 class="sub">Join a hub</h3>
-            <div class="row">
-              <input type="search" id="chCode" placeholder="Paste an invite code" spellcheck="false" autocomplete="off">
-              <button class="btn" id="chJoin">Join</button>
-            </div>
-            <div id="chHostBox">
-              <h3 class="sub">Or host one</h3>
-              <p class="note">A hub is a place for your friends' channels. It runs in your Drift, and the messages are kept on this PC, so friends can only chat while your Drift is open.</p>
-              <div class="row"><button class="btn ghost" id="chHost">Host a hub</button></div>
-            </div>
-          </div>
-        </aside>
-        <div id="chMain">
-          <div id="chHead"><b id="chTitle"></b><span id="chSub"></span></div>
-          <div id="chList"></div>
-          <div id="chTyping"></div>
-          <div id="chBar"><span id="chBarText"></span><button class="icon" id="chBarX" title="Cancel (Esc)">✕</button></div>
-          <textarea id="chInput" rows="1" maxlength="4000" spellcheck="true"></textarea>
+          <p class="note">Joining from outside your home asks your router to open a port while you share or host a hub, and closes it after. Subtitles, sound conversion and HDR conversion all work for friends too, and each person picks their own subtitles.</p>
         </div>
       </div>
     </section>
@@ -314,8 +301,7 @@
       <button data-tab="scenes">Scenes</button>
       <button data-tab="media" title="Your videos and music">Media</button>
       <button data-tab="surf" title="Browse the web on this screen, in tabs">Surf</button>
-      <button data-tab="share" title="Watch a video with friends, in step">Together</button>
-      <button data-tab="chat" title="Channels to chat in with friends">Chat</button>
+      <button data-tab="share" title="Chat with friends, and watch a video with them in step">Together</button>
       <button data-tab="settings">Settings<svg class="updIcon" id="updTabIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5"/><path d="M5 20h14"/></svg></button>
     </div>
     <div class="quick">

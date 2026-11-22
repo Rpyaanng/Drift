@@ -393,7 +393,7 @@ input.num { width: 46px; text-align: center; padding: 6px 4px; }
 .chWho .mini + .mini { margin-left: 0; }
 .chWho:hover .mini { opacity: 1; }
 .chActs { margin: 10px 8px 4px; gap: 6px; }
-.chActs .btn { padding: 5px 10px; font-size: 12px; }
+.chActs .btn { padding: 5px 9px; font-size: 12px; white-space: nowrap; }
 .chNew { margin: 4px 8px; }
 .mini { all: unset; cursor: pointer; font-size: 11px; padding: 2px 7px; border-radius: 6px; color: var(--dim); background: rgba(255,255,255,.07); }
 .mini:hover { color: var(--ink); background: rgba(255,255,255,.14); }
@@ -431,3 +431,22 @@ input.num { width: 46px; text-align: center; padding: 6px 4px; }
 #chInput:disabled { opacity: .45; }
 .tabs button.unread::after { content: ""; display: inline-block; width: 6px; height: 6px; margin: 0 0 2px 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
 @media (max-width: 760px) { #chat { grid-template-columns: 1fr; height: auto; } #chSide { border-right: 0; max-height: 30vh; } #chMain { height: 50vh; } }
+/* Together: who is sharing, and the options in place of the chat */
+#shBox { padding: 0 4px 6px; border-bottom: 1px solid var(--line); margin-bottom: 6px; }
+#shBox .note { margin: 4px 0 6px; }
+#shBox .row { margin-bottom: 6px; }
+#chLives:empty { display: none; }
+#chLives { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.liveCard { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; background: rgba(255,255,255,.06); border: 1px solid var(--line); }
+.liveCard.on { border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
+.liveCard > div { flex: 1; min-width: 0; }
+.liveCard b { display: block; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.liveCard b span { font-weight: 400; color: var(--dim); }
+.liveCard > div > span { font-size: 11px; color: var(--dim); }
+.liveCard .spdot { background: #1ed760; box-shadow: 0 0 8px #1ed760; }
+.liveTag { color: #1ed760; font-size: 10px; }
+#shOpts { display: none; overflow-y: auto; min-width: 0; }
+#chat.opts #shOpts { display: block; }
+#chat.opts #chMain { display: none; }
+#shOpts label { display: block; margin-bottom: 12px; }
+#chat.carded #shHost .row, #chat.carded #shGuest .row, #chat.carded #shPeople { display: none; }

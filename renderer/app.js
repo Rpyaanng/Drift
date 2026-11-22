@@ -545,7 +545,7 @@
   let hideTimer = null, overPanel = false;
   // After the monitors change, the windows are made again: carry on with the tab this screen was on. Surf if the browser is here;
   // Surf's tab without its browser (that monitor went off and the browser moved) falls back to Scenes.
-  const TAB_IDS = ['scenes', 'media', 'surf', 'share', 'chat', 'settings'];
+  const TAB_IDS = ['scenes', 'media', 'surf', 'share', 'settings'];
   const webHere = () => { const w = S.web || {}; return !!w.open && w.key === me.key; };
   let tab = webHere() ? 'surf' : TAB_IDS.includes(init.tab) && init.tab !== 'surf' ? init.tab : 'scenes';
   const tileHtml = (s) => { const i = SCENES.indexOf(s); return `<button class="tile" data-id="${s.id}"><i class="rot" role="checkbox" aria-checked="true" title="Include in automatic scene changes"></i><kbd>${i < 9 ? i + 1 : ''}</kbd><span>${s.name}</span></button>`; };
@@ -581,7 +581,7 @@
   // Friends watching together see how many people are on each tab.
   const tellTab = () => api.cmd({ type: 'tab-focus', tab });
   // The browser belongs to the Surf tab. Choosing Surf shows it on this screen, opening a first tab on Drift's start page if there is
-  // none yet. Choosing Scenes or Media on its screen puts it away (its tabs are kept) so they can be seen. Together, Chat and Settings leave it be.
+  // none yet. Choosing Scenes or Media on its screen puts it away (its tabs are kept) so they can be seen. Together and Settings leave it be.
   function surfFor(t) {
     const w = S.web || {}, p = S.p2p || {};
     if (t === 'surf') {
@@ -589,8 +589,8 @@
       else if (p.role === 'guest') toast(`When ${p.host || 'your friend'} opens a web page, you see it here`, 3200);
       else surf('new');
     }
-    else if (t !== 'settings' && t !== 'share' && t !== 'chat' && w.open && w.key === me.key) surf('hide');
-    else if (t !== 'settings' && t !== 'share' && t !== 'chat' && (mirEl || (gpuEl && !gpuEl.own))) api.patch({ surfMirror: false });       // on a monitor mirroring the page: Scenes or Media is what was asked for here
+    else if (t !== 'settings' && t !== 'share' && w.open && w.key === me.key) surf('hide');
+    else if (t !== 'settings' && t !== 'share' && (mirEl || (gpuEl && !gpuEl.own))) api.patch({ surfMirror: false });       // on a monitor mirroring the page: Scenes or Media is what was asked for here
   }
   panel.addEventListener('mouseenter', () => { overPanel = true; });
   panel.addEventListener('mouseleave', () => { overPanel = false; armHide(); });
@@ -1089,12 +1089,8 @@
       $('#shHost .spnow').classList.toggle('live', p.status === 'ready');
       $('#shTitle').textContent = p.status !== 'ready' ? 'Starting…' : wait.length ? `Paused while ${wait.join(' and ')} ${wait.length > 1 ? 'load' : 'loads'}…`
         : n ? `Sharing with ${n === 1 ? peers[0].name : n + ' friends'}` : 'Sharing — waiting for friends to join';
-      $('#shSub').textContent = p.settling ? 'Getting your invite code ready…' : (p.reach === 'internet' ? 'Friends anywhere can join with this code.' : 'Friends on your network can join with this code.')
+      $('#shSub').textContent = p.settling ? 'Getting ready…' : (p.reach === 'internet' ? 'Everyone in the hub can join from the chat.' : 'Everyone in the hub on your network can join from the chat.')
         + (videoOn() ? '' : ' Play a video, open a page in Surf or put music on, and they get it too.');
-      const shown = p.settling ? '' : p.code || '';
-      if ($('#shCodeOut').textContent !== shown) $('#shCodeOut').textContent = shown;
-      $('#shCopy').style.opacity = p.settling ? 0.4 : 1; $('#shCopy').style.pointerEvents = p.settling ? 'none' : '';
-      $('#shCopy').textContent = p.settling ? 'Preparing…' : 'Copy invite code';
     } else if (p.role === 'guest') {
       const live = p.status === 'connected';
       $('#shGuest .spnow').classList.toggle('live', live);
@@ -1420,14 +1416,9 @@
   $('#sleep').addEventListener('change', (e) => P({ sleepAt: +e.target.value ? Date.now() + +e.target.value * 60000 : 0 }));
   $('#pickVideo').addEventListener('click', () => api.cmd({ type: 'pick-video', key: me.key }));
   for (const [id, k] of [['#vHdr', 'hdr'], ['#vTone', 'tone'], ['#vEnc', 'enc'], ['#vXq', 'xq']]) $(id).addEventListener('change', (e) => P({ video: { [k]: e.target.value } }));
-  $('#shStart').addEventListener('click', () => api.cmd({ type: 'share-start' }));
+  $('#shStart').addEventListener('click', () => api.cmd({ type: 'share-start', hub: window.chatUI ? window.chatUI.hub() : '' }));       // into the hub open in the chat
   $('#shStop').addEventListener('click', () => api.cmd({ type: 'share-stop' }));
   $('#shLeave').addEventListener('click', () => api.cmd({ type: 'share-stop' }));
-  $('#shCopy').addEventListener('click', () => api.cmd({ type: 'share-copy' }));
-  $('#shPaste').addEventListener('click', () => api.cmd({ type: 'share-paste' }));
-  const joinNow = () => { const code = $('#shCode').value.trim(); if (!code) { toast('Paste your friend\'s invite code first', 2400); return; } api.cmd({ type: 'share-join', code }); $('#shCode').value = ''; };
-  $('#shJoin').addEventListener('click', joinNow);
-  $('#shCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') joinNow(); });
   $('#shName').addEventListener('change', (e) => P({ share: { name: e.target.value.trim() } }));
   $('#shName').addEventListener('keydown', (e) => { if (e.key === 'Enter') e.target.blur(); });
   for (const [id, k] of [['#shControl', 'control'], ['#shWait', 'wait'], ['#shInternet', 'internet'], ['#shAdblock', 'adblock']]) $(id).addEventListener('change', (e) => P({ share: { [k]: e.target.checked } }));
@@ -1587,7 +1578,7 @@
     else if (c.type === 'ptrs') showPtrs(Array.isArray(c.list) ? c.list : []);
     else if (c.type === 'web-url') toBar();       // Ctrl+L in the web page
     else if (c.type === 'web-esc') { if (webEl) webEl.blur(); window.focus(); tab = 'surf'; showPanel(true); syncUI(); }       // Esc in the web page: our controls, and the keys come back to us
-    else if (c.type === 'share-code') { $('#shCode').value = c.code; $('#shCode').focus(); }
+    else if (c.type === 'share-code') { $('#chCode').value = c.code; $('#chCode').focus(); }
   });
   hdrQuery.addEventListener('change', () => { tellHdr(); syncUI(); });
   tellHdr();

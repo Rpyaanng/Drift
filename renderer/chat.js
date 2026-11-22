@@ -1,4 +1,5 @@
-/* Drift — the panel's Chat tab: hubs, their channels and messages. Everything a person typed is put on the page as text
+/* Drift — the panel's Together tab: hubs, their channels and messages, and who in them is sharing something to watch
+   (watch together itself is app.js's #sh… controls; this draws the Join cards). Everything a person typed is put on the page as text
    (textContent), never as HTML: a small set of Markdown (bold, italic, code, spoilers, quotes, links) is turned into
    elements here, one by one. chat.js in the main process does the talking; this only asks it, through window.drift.chat. */
 (() => {
@@ -27,7 +28,8 @@
   const hubNow = () => info.hubs.find((x) => x.id === sel.hub);
   const chanNow = () => { const x = hubNow(); return x && x.channels.find((c) => c.id === sel.ch); };
   const nameOf = (x, id) => { const m = x && x.members.find((y) => y.id === id); return m ? m.name : 'Someone who left'; };
-  const looking = () => $('#panel').classList.contains('open') && $('section[data-tab="chat"]').classList.contains('active');
+  const looking = () => $('#panel').classList.contains('open') && $('section[data-tab="share"]').classList.contains('active') && !$('#chat').classList.contains('opts');
+  let p2p = { role: 'off' }, joined = '';       // watch together as main.js reports it; joined: the code of the share we joined from a card
 
   // ---- text to elements: the Markdown Drift understands ----
   const INLINE = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(\|\|[^|\n]+\|\|)|(\*[^*\s][^*\n]*\*|_[^_\s][^_\n]*_)|(https?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]])/g;
@@ -86,7 +88,8 @@
     for (const x of info.hubs) {
       const open = x.id === sel.hub, n = x.channels.reduce((a, c) => a + (unread.get(keyOf(x.id, c.id)) || 0), 0);
       box.append(h('button.chHub' + (open ? '.on' : ''), { title: x.note || '', onclick: () => pick(x.id, open ? sel.ch : (x.channels[0] || {}).id || 0) },
-        h('span.dot.' + x.status), h('b', {}, x.name || 'Hub'), x.mine ? h('em', {}, 'yours') : null, !open && n ? h('span.badge', {}, n > 99 ? '99+' : n) : null));
+        h('span.dot.' + x.status), h('b', {}, x.name || 'Hub'), x.mine ? h('em', {}, 'yours') : null, (x.lives || []).length ? h('span.liveTag', { title: 'Someone here is sharing something to watch' }, '▶') : null,
+        !open && n ? h('span.badge', {}, n > 99 ? '99+' : n) : null));
       if (!open) continue;
       if (x.status === 'gone' || (x.status !== 'connected' && x.note)) box.append(h('p.note.chNote', {}, x.note));
       for (const c of x.channels) {
@@ -111,10 +114,10 @@
       }
       box.append(h('div.row.chActs', {}, x.mine
         ? h('button.btn.ghost', { onclick: () => { if (confirm('Stop hosting this hub? Friends can\'t chat until you host it again. The messages stay on this PC.')) call('unhost'); } }, 'Stop hosting')
-        : h('button.btn.ghost', { onclick: () => { if (confirm(`Leave ${x.name}? You'll need a new invite to come back.`)) call('leave', x.id).then(() => { sel = { hub: '', ch: 0 }; keep(); }); } }, 'Leave')));
+        : h('button.btn.ghost', { onclick: () => { if (confirm(`Leave ${x.name}? You'll need a new invite to come back.`)) call('leave', x.id).then(() => { sel = { hub: '', ch: 0 }; keep(); }); } }, 'Leave hub')));
     }
     $('#chHostBox').style.display = info.hosting ? 'none' : '';
-    const tabBtn = document.querySelector('.tabs button[data-tab="chat"]'), any = [...unread.values()].some((n) => n);
+    const tabBtn = document.querySelector('.tabs button[data-tab="share"]'), any = [...unread.values()].some((n) => n);
     if (tabBtn) tabBtn.classList.toggle('unread', any);
   }
 
@@ -161,7 +164,29 @@
     const who = t ? [...t].filter(([, until]) => until > now).map(([id]) => nameOf(x, id)) : [];
     $('#chTyping').textContent = !who.length ? '' : who.length === 1 ? `${who[0]} is typing…` : who.length === 2 ? `${who[0]} and ${who[1]} are typing…` : 'Several people are typing…';
   }
-  function drawAll(stick) { drawSide(); drawHead(); drawList(stick); drawTyping(); drawMode(); }
+  // ---- who is sharing in this hub: a card each, with Join ----
+  function drawLives() {
+    const box = $('#chLives'), x = hubNow(), lives = (x && x.lives) || [];
+    box.replaceChildren();
+    // When this PC's own session has a card here, the card's button and watcher list stand in for the ones in the side.
+    $('#chat').classList.toggle('carded', lives.some((l) => (l.from === info.me.id && p2p.role === 'host') || (p2p.role === 'guest' && joined === l.code)));
+    for (const l of lives) {
+      const mine = l.from === info.me.id, watching = !mine && p2p.role === 'guest' && joined === l.code;
+      const who = mine ? 'You\'re sharing' : `${nameOf(x, l.from)} is sharing`;
+      const sub = l.watching.length ? `Watching: ${l.watching.join(', ')}` : mine ? 'Nobody has joined yet' : 'Nobody is watching yet';
+      box.append(h('div.liveCard' + (watching || mine ? '.on' : ''), {},
+        h('span.spdot'), h('div', {}, h('b', {}, who, l.title ? h('span', {}, ' · ' + l.title) : null), h('span', {}, sub)),
+        mine ? h('button.btn.ghost', { onclick: () => api.cmd({ type: 'share-stop' }) }, 'Stop sharing')
+          : watching ? h('button.btn.ghost', { onclick: () => api.cmd({ type: 'share-stop' }) }, 'Leave')
+          : h('button.btn', { onclick: () => joinLive(x, l) }, 'Join')));
+    }
+  }
+  function joinLive(x, l) {
+    if (p2p.role === 'host' && !confirm(`Stop sharing and join ${nameOf(x, l.from)}?`)) return;
+    joined = l.code;
+    api.cmd({ type: 'share-join', code: l.code });
+  }
+  function drawAll(stick) { drawSide(); drawLives(); drawHead(); drawList(stick); drawTyping(); drawMode(); }
 
   // ---- loading and keeping up ----
   async function load(hub, ch) {
@@ -201,7 +226,7 @@
     if (!hubNow() && info.hubs.length) sel = { hub: info.hubs[0].id, ch: 0 };
     const x = hubNow();
     if (x && !x.channels.some((c) => c.id === sel.ch)) sel.ch = (x.channels[0] || {}).id || 0;
-    keep(); drawSide(); drawHead(); drawTyping();
+    keep(); drawSide(); drawLives(); drawHead(); drawTyping();
     if (x && sel.ch && !cache.has(keyOf(x.id, sel.ch)) && x.status === 'connected') load(x.id, sel.ch);
     else drawList();
   }
@@ -292,7 +317,9 @@
     if (!code) { $('#chCode').focus(); return; }
     const r = await call('join', code);
     if (r.error) { toast(r.error); return; }
-    $('#chCode').value = ''; sel = { hub: r.id, ch: 0 }; keep(); refresh();
+    $('#chCode').value = '';
+    if (r.watching) return;       // an old watch-together code: joined their video, no hub
+    sel = { hub: r.id, ch: 0 }; keep(); refresh();
   }
   $('#chJoin').addEventListener('click', join);
   $('#chCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') join(); });
@@ -333,8 +360,19 @@
 
   // ---- seeing the tab: what's showing counts as read ----
   const markRead = () => { if (looking() && sel.ch && unread.delete(keyOf(sel.hub, sel.ch))) drawSide(); };
-  new MutationObserver(markRead).observe($('section[data-tab="chat"]'), { attributes: true, attributeFilter: ['class'] });
+  new MutationObserver(markRead).observe($('section[data-tab="share"]'), { attributes: true, attributeFilter: ['class'] });
   new MutationObserver(markRead).observe($('#panel'), { attributes: true, attributeFilter: ['class'] });
+
+  // ---- options (name, control, quality...) take the chat's place while open ----
+  const opts = (on) => { $('#chat').classList.toggle('opts', on); if (!on) markRead(); };
+  $('#shOptsBtn').addEventListener('click', () => opts(!$('#chat').classList.contains('opts')));
+  $('#shOptsDone').addEventListener('click', () => opts(false));
+  api.on('state', (s) => {
+    const was = p2p.role;
+    p2p = s.p2p || { role: 'off' };
+    if (p2p.role !== 'guest') joined = '';
+    if (was !== p2p.role) drawLives();
+  });
 
   api.on('chat', (c) => {
     if (c.type === 'info') onInfo(c.info);
@@ -342,5 +380,6 @@
     else if (c.type === 'notify') onNotify(c.hub, c.msg);
   });
   refresh();
-  window.chatTest = { info: () => info, sel: () => sel, pick, send: (t) => { input.value = t; input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); } };       // for main.js's checks
+  window.chatUI = { hub: () => sel.hub,       // app.js shares into this hub
+    info: () => info, sel: () => sel, pick, send: (t) => { input.value = t; input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); } };       // (and main.js's checks)
 })();

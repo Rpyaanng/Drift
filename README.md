@@ -36,8 +36,8 @@ drift.
   your own music or Spotify.
 - **Your videos, on every screen.** Play a folder of films or clips across all your monitors, with
   subtitles that find themselves and sound that just works, even Dolby and DTS.
-- **Watch together.** Share what you're watching with friends and it plays in step on their PCs too,
-  straight from yours, encrypted, with no server in between.
+- **Together.** A place for your friends to chat, with channels and history, hosted in your own Drift.
+  Share what you're watching there and it plays in step on their PCs too, straight from yours, encrypted.
 - **Calm by design.** A clock, a breathing guide, a sleep timer that fades everything out, and a
   panel that disappears until you need it.
 
@@ -145,8 +145,9 @@ key away: scenes, colour, speed, brightness, music, video and volume.
 
 ## Watch together
 
-Press **Share what I'm watching** and send the invite code. Up to eight friends paste it into their
-Drift and see the same video, in step: play, pause and skipping stay together for everyone. The video
+The **Together** tab is where your friends are: a *hub* with channels to chat in, hosted by your Drift.
+Press **Share what I'm watching** and everyone in the hub gets a **Join** button in the chat. Up to eight
+of them see the same video, in step: play, pause and skipping stay together for everyone. The video
 streams straight from your PC to theirs, encrypted, with no server, upload or account involved. A
 friend who already has the file plays their own copy, and everyone picks their own subtitles.
 
@@ -211,8 +212,19 @@ quitting (`Enter` closes, `Esc` again stays), and from there you can also close 
 
 ### Watch together in detail
 
-Play a video, open the **Together** tab and press **Share what I'm watching**. Send the invite code to a
-friend; they paste it into the same tab and press **Join**. Up to eight friends can join.
+Play a video, open the **Together** tab and press **Share what I'm watching**. If you aren't in a hub
+yet, Drift hosts one for you. Press **Copy an invite** and send the code to friends; they paste it into
+the same tab and press **Join**. From then on they're in the hub, and whenever anyone in it shares,
+the others get a card in the chat with a **Join** button. Up to eight friends can watch at once.
+
+- Chat: channels anyone in the hub can make, replies, editing (↑ edits your last message), deleting, and
+  a little formatting (`**bold**`, `*italic*`, `` `code` ``, `||spoiler||`, `> quote`). Links open in Surf
+  after showing where they go. Messages are kept on the PC of whoever hosts the hub, and the hub only
+  works while that Drift is open. Everyone is equal except the host, who can remove someone for good,
+  delete any message and stop all invites working. **Block** hides someone's messages from you only.
+- A hub invite works for 7 days. It holds the hub's addresses and the fingerprint of its certificate,
+  so nobody else can pretend to be the hub. Each person is a key made by their Drift, kept encrypted
+  by Windows; there are no accounts or passwords. The hub uses TCP port 47900.
 
 - Play, pause, seeking and moving to the next video stay in step on every PC (untick *Friends can play,
   pause and skip* to keep the controls to yourself). With *Pause for everyone while someone is loading*,
@@ -225,9 +237,10 @@ friend; they paste it into the same tab and press **Join**. Up to eight friends 
 - Subtitles on the sharing PC are offered to friends, and each person picks their own track, language and
   style. Sound and HDR conversion happen on each PC for its own screen; a friend without ffmpeg gets the
   sharing PC to convert for them.
-- The invite code holds the sharing PC's addresses and a one-time secret. The connection is TLS keyed by
-  that secret, so only people with the code can connect or see what is being watched. A new code is made
-  every time sharing starts.
+- Each share has its own code, passed to the hub's members inside the Join card. It holds the sharing
+  PC's addresses and a one-time secret. The connection is TLS keyed by that secret, so only people with
+  the code can connect or see what is being watched. A new code is made every time sharing starts. An
+  older watch-together code pasted into the Join box still works.
 
 Reaching the sharing PC: on the same network it works as is. For friends elsewhere, Drift asks the
 router (UPnP) to open one TCP port (47800 by default) while sharing and closes it afterwards; if the

@@ -77,6 +77,23 @@ async function until(pred, what, ms = 8000) {
   ok((await ben.chat.dropChannel(H, made.ch)).error, 'Ben can\'t delete Cat\'s channel');
   ok(!(await cat.chat.dropChannel(H, made.ch)).error, 'Cat can delete her own channel');
 
+  // ---- sharing (Together): the hub passes on who is sharing, so everyone gets a Join button ----
+  ben.chat.announce(H, { code: 'drift:AAAA-bbbb_1', title: 'Dune.mkv', watching: [] });
+  await until(() => (cat.hub(H).lives || []).some((l) => l.from === ben.chat.myId() && l.title === 'Dune.mkv' && l.code === 'drift:AAAA-bbbb_1'), 'everyone hears Ben is sharing');
+  ben.chat.announce(H, { code: 'drift:AAAA-bbbb_1', title: 'Dune.mkv', watching: ['Cat'] });
+  await until(() => (ana.hub(H).lives || []).some((l) => l.watching.includes('Cat')), 'and who is watching');
+  ben.chat.announce(H, { code: 'drift:<script>', title: 'x'.repeat(500), watching: [] });
+  await until(() => (cat.hub(H).lives || []).some((l) => l.code === 'drift:script'), 'a code is cleaned');
+  ok(cat.hub(H).lives.find((l) => l.from === ben.chat.myId()).title.length <= 120, 'a title is cut short');
+  ben.chat.announce('', null);
+  await until(() => !(cat.hub(H).lives || []).length, 'the card goes when Ben stops sharing');
+  dev.chat.join((await ana.chat.invite(H)).code);
+  await until(() => dev.hub(H) && dev.hub(H).status === 'connected', 'Dev joins to test leaving');
+  dev.chat.announce(H, { code: 'drift:dev', title: 'a web page', watching: [] });
+  await until(() => (ben.hub(H).lives || []).length === 1, 'Dev shares');
+  dev.chat.leave(H);
+  await until(() => !(ben.hub(H).lives || []).length, 'the card goes when the sharer disconnects');
+
   // ---- an invite pointing at the right address but a different hub (someone answering in its place) ----
   const inv = decodeInvite(code);
   const fake = encodeInvite({ ...inv, pin: Buffer.alloc(32, 7) });
@@ -88,10 +105,11 @@ async function until(pred, what, ms = 8000) {
   // ---- withdrawn invites ----
   ok(!!(await ben.chat.withdrawInvites(H)).error, 'only the host can withdraw invites');
   ok(!(await ana.chat.withdrawInvites(H)).error, 'the host withdraws every invite');
-  dev.chat.join(code);
-  await until(() => dev.hub(H) && dev.hub(H).status === 'gone', 'a withdrawn invite is refused');
-  ok(/expired or was withdrawn/.test(dev.hub(H).note), `Dev is told why: "${dev.hub(H).note}"`);
-  dev.chat.leave(H);
+  const eve = person('Eve'); await eve.chat.start();
+  eve.chat.join(code);
+  await until(() => eve.hub(H) && eve.hub(H).status === 'gone', 'a withdrawn invite is refused');
+  ok(/expired or was withdrawn/.test(eve.hub(H).note), `Eve is told why: "${eve.hub(H).note}"`);
+  await eve.chat.stop();
 
   // ---- removing someone ----
   ok((await ben.chat.removeMember(H, cat.chat.myId())).error, 'Ben can\'t remove anyone');

@@ -280,6 +280,12 @@ option C isn't recommended. Drift's licence text should also say the software is
      scripts/test-chat.js`), 34 checks in all. Also two copies of Drift pressing the real buttons:
      `DRIFT_TESTCHAT=host|guest` with `DRIFT_USERDATA`, `DRIFT_SHOTS`, `DRIFT_ONLY=aurora` and `DRIFT_TESTCODE` as
      for `DRIFT_TESTSHARE`.
+   - **Together and Chat are one tab** (decided 2026-11-21): the Together tab is built around hubs. Sharing starts in
+     the hub open in the tab (or the first connected one, or a new one hosted on the spot). The sharer's Drift tells
+     the hub its watch-together code, the title and who is watching (`live` frames, kept in memory only and dropped
+     when the sharer disconnects). Everyone else gets a card with **Join**. Watch together itself (`p2p.js`) is
+     unchanged. Only its code now travels through the hub instead of being copied by hand. The Join box still takes an
+     old watch-together code.
    - Not yet: DMs, mentions, the per-channel retention setting, safety numbers in the UI, an encrypted local cache,
      moving `p2p.js`'s reachability into `reach.js` (for now `p2p.js` exports `wire`, `upnpMap` and the address helpers).
 2. **Attachments**: chunked upload, re-encoding images and stripping EXIF, sandboxed viewing, Mark of the Web, the

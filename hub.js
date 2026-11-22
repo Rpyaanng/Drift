@@ -1,7 +1,8 @@
 // Drift — the hub: one small server for a group of friends' chat (docs/plans/voice-and-chat.md). It runs inside the
 // host's Drift (or on its own later) and keeps the channels and their history in SQLite. Members are Ed25519 public
 // keys; there are no accounts or passwords. Everyone is equal except the host, who can remove someone (a ban by key),
-// delete any message and withdraw every invite.
+// delete any message and withdraw every invite. It also passes on who is sharing a video or page right now (Together):
+// a member's Drift announces its watch-together code here, and everyone else gets a Join button in the chat.
 //
 // The connection is TLS 1.3 with the hub's own self-signed certificate (ECDSA P-256: Electron's BoringSSL refuses an
 // Ed25519 one in the handshake, though members' Ed25519 signatures inside the connection are fine). Invite codes carry the certificate's
@@ -132,6 +133,8 @@ module.exports = function createHub(opts) {
 
   // ---- connections ----
   const online = new Map();       // member id -> Set of sessions (a member may be on two PCs)
+  const lives = new Map();        // member id -> what they're sharing right now: { from, code, title, watching, since }. Never stored.
+  const liveList = () => [...lives.values()];
   const sessions = new Set();
   let server = null, port = 0;
   const everyone = (m, but) => { const line = JSON.stringify(m); for (const s of sessions) if (s.id && s !== but) s.wire.send(line); };
@@ -147,14 +150,14 @@ module.exports = function createHub(opts) {
 
   function onConnection(sock) {
     if (sessions.size >= LIMITS.connections) { sock.destroy(); return; }
-    const s = { id: null, nonce: crypto.randomBytes(24).toString('base64url'), wire: null, acts: { msg: [], other: [] }, typed: 0 };
+    const s = { id: null, nonce: crypto.randomBytes(24).toString('base64url'), wire: null, acts: { msg: [], other: [], live: [] }, typed: 0 };
     sessions.add(s);
     const login = setTimeout(() => { if (!s.id) s.wire.close(); }, 15000);
     s.wire = wire(sock, null, (m) => { try { onMessage(s, m); } catch (e) { reply(s, m, { error: 'Something went wrong on the hub.' }); if (opts.log) opts.log('hub: ' + (e && e.stack || e)); } }, () => {
       clearTimeout(login); sessions.delete(s);
       if (s.id && online.has(s.id)) {
         const set = online.get(s.id); set.delete(s);
-        if (!set.size) { online.delete(s.id); everyone({ t: 'members', list: memberList() }); }
+        if (!set.size) { online.delete(s.id); everyone({ t: 'members', list: memberList() }); if (lives.delete(s.id)) everyone({ t: 'lives', list: liveList() }); }
       }
     }, LIMITS.line);
     s.wire.send({ t: 'hello', v: VERSION, nonce: s.nonce, name: hubName });
@@ -188,7 +191,7 @@ module.exports = function createHub(opts) {
       s.id = id;
       if (!online.has(id)) online.set(id, new Set());
       online.get(id).add(s);
-      reply(s, m, { me: id, host: id === ownerId, hub: hubName, addrs: opts.addrs ? opts.addrs() : [], members: memberList(), channels: channelList() });       // addrs: so members can still find the hub when its addresses change
+      reply(s, m, { me: id, host: id === ownerId, hub: hubName, addrs: opts.addrs ? opts.addrs() : [], members: memberList(), channels: channelList(), lives: liveList() });       // addrs: so members can still find the hub when its addresses change
       everyone({ t: 'members', list: memberList() }, s);
       return;
     }
@@ -269,6 +272,17 @@ module.exports = function createHub(opts) {
         if (slow(s, 'other')) return reply(s, m, { error: 'Slow down a little.' });
         return reply(s, m, { code: invite({ by: s.id, days: m.days, uses: m.uses }) });
       }
+      case 'live': {       // this member started, changed or stopped sharing (Together). The code is their PC's watch-together invite.
+        if (!m.on) { if (lives.delete(s.id)) everyone({ t: 'lives', list: liveList() }); return; }
+        if (slow(s, 'live')) return;
+        const code = String(m.code || '').replace(/[^A-Za-z0-9_:-]/g, '').slice(0, 400);
+        if (!code) return;
+        const was = lives.get(s.id);
+        lives.set(s.id, { from: s.id, code, title: cleanText(m.title).replace(/\s+/g, ' ').slice(0, 120),
+          watching: (Array.isArray(m.watching) ? m.watching : []).slice(0, 8).map(cleanName).filter(Boolean), since: was && was.code === code ? was.since : Date.now() });
+        everyone({ t: 'lives', list: liveList() });
+        return;
+      }
       case 'withdraw-invites': {
         if (!isHost) return reply(s, m, { error: 'Only the host can do that.' });
         S.dropInvites.run();
@@ -282,6 +296,7 @@ module.exports = function createHub(opts) {
         for (const x of online.get(who.id) || []) { x.wire.send({ t: 'removed' }); setTimeout(() => x.wire.close(), 100); }
         online.delete(who.id);
         everyone({ t: 'members', list: memberList() });
+        if (lives.delete(who.id)) everyone({ t: 'lives', list: liveList() });
         return reply(s, m, {});
       }
       default: return reply(s, m, { error: 'The hub doesn\'t know how to do that.' });

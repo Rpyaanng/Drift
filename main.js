@@ -697,7 +697,7 @@ function broadcast(channel, payload, includeAudio = true) {
   for (const v of visWins) if (!v.win.isDestroyed()) v.win.webContents.send(channel, payload);
   if (includeAudio && audioWin && !audioWin.isDestroyed()) audioWin.webContents.send(channel, payload);
 }
-function pushState() { broadcast('state', publicState()); p2p.sync(); }
+function pushState() { broadcast('state', publicState()); p2p.sync(); syncLive(); }
 const say = (text) => { if (text) broadcast('cmd', { type: 'toast', text: String(text) }, false); };
 
 // ---- watch together --------------------------------------------------------------------------------
@@ -955,10 +955,41 @@ function startChat() {
   if (!SHOT_DIR || process.env.DRIFT_TESTCHAT) chat.start().catch((e) => console.log('chat: ' + e.message));
   publicIp().then((ip) => { chatPub = ip; }).catch(() => {});
 }
+// Sharing (Together) happens in a hub: the hub hears this PC's watch-together code, what's on and who's watching, and
+// everyone in it gets a Join button in the chat. liveHub is the hub the current share was started in.
+let liveHub = '', liveSent = '';
+function shareTitle() {
+  const c = cur(), w = web.info();
+  return c && visWins.some((v) => showsVideo(v.key)) ? c.name : w && w.open ? (w.title || 'a web page') : 'nothing yet';
+}
+function syncLive() {
+  if (!chat) return;
+  const p = p2p.info();
+  const live = p.role === 'host' && liveHub && p.code && !p.settling ? { code: p.code, title: shareTitle(), watching: (p.peers || []).map((x) => x.name).slice(0, 8) } : null;
+  const key = JSON.stringify([liveHub, live]);
+  if (key === liveSent) return;
+  liveSent = key;
+  chat.announce(live ? liveHub : '', live);
+  if (!live && p.role !== 'host') liveHub = '';
+}
+// The hub to share into: the one asked for, else the first one this PC is connected to, else a new one of its own.
+async function shareHub(want) {
+  const up = (id) => chat.info().hubs.some((h) => h.id === id && h.status === 'connected');
+  if (want && up(want)) return want;
+  const any = chat.info().hubs.find((h) => h.status === 'connected');
+  if (any) return any.id;
+  const r = await chat.host({ name: '', internet: state.share.internet !== false });
+  return r.hosting ? r.hosting.id : '';
+}
+
 // What the panel may ask of chat. Each argument is checked here; chat.js and the hub check them again.
 const CHAT_OPS = {
   info: () => chat.info(),
-  join: (code) => chat.join(String(code || '').slice(0, 400)),
+  join: async (code) => {       // a hub's invite, or (from before Together and Chat were one) a friend's watch-together code
+    code = String(code || '').slice(0, 400);
+    if (!createChat.decodeInvite(code) && createP2P.decodeCode(code)) { const r = await p2p.join(code, shareName()); return r.ok ? { watching: true } : { error: r.error }; }
+    return chat.join(code);
+  },
   leave: (hub) => chat.leave(String(hub)),
   host: (name) => chat.host({ name: String(name || ''), internet: state.share.internet !== false }),
   unhost: () => chat.unhost(),
@@ -1358,6 +1389,7 @@ ipcMain.on('cmd', async (e, c) => {
     // ---- watch together ----
     case 'share-start':
       if (remote) await p2p.stop();
+      liveHub = chat ? await shareHub(String(c.hub || '')) : '';
       p2p.share({ port: state.share.port, internet: state.share.internet, wait: state.share.wait, name: shareName(), local: !!process.env.DRIFT_SHARE_LOCAL });     // dev: stay on this PC
       break;
     case 'share-stop': p2p.stop(); break;
@@ -1799,34 +1831,48 @@ async function runShots() {
       log.push('guest end: ' + info() + ' scene=' + state.scene);
     }
   }
-  if (process.env.DRIFT_TESTCHAT) {     // chat between two copies of Drift on one PC (DRIFT_USERDATA apart), pressing the real buttons: =host or =guest, DRIFT_TESTCODE = a file both can reach
+  if (process.env.DRIFT_TESTCHAT) {     // the Together tab between two copies of Drift on one PC (DRIFT_USERDATA apart), pressing the real buttons: =host or =guest, DRIFT_TESTCODE = a file both can reach.
+    // The host presses Share with no hub yet (one is made), the guest joins the hub with its invite, sees the Join card, joins the video, and they chat.
     const role = process.env.DRIFT_TESTCHAT, codeFile = process.env.DRIFT_TESTCODE, wc = visWins[0].win.webContents, js = (c) => wc.executeJavaScript(c);
     const hubs = () => chat.info().hubs, until = async (f, ms = 20000) => { for (let t = 0; t < ms && !f(); t += 250) await wait(250); return f(); };
     const dom = () => js(`JSON.stringify({ title: document.querySelector('#chTitle').textContent, sub: document.querySelector('#chSub').textContent, side: document.querySelector('#chHubs').innerText.replace(/\\n+/g, ' | '),
+      lives: document.querySelector('#chLives').innerText.replace(/\\n+/g, ' | '), share: [document.querySelector('#shTitle').textContent, document.querySelector('#shGTitle').textContent].join(' / '),
       msgs: [...document.querySelectorAll('#chList .chMsg')].map((m) => m.innerText.replace(/\\n+/g, ' ')), imgs: document.querySelectorAll('#chList img').length, bold: document.querySelectorAll('#chList .chText b').length,
-      links: [...document.querySelectorAll('#chList a')].map((a) => a.textContent), typing: document.querySelector('#chTyping').textContent, tabUnread: document.querySelector('.tabs button[data-tab=chat]').classList.contains('unread') })`);
-    patch({ music: { source: 'off' }, share: { internet: false, name: role === 'host' ? 'Hosty' : 'Guesty' } });
-    wc.send('cmd', { type: 'show-panel', tab: 'chat' }); await wait(800);
+      links: [...document.querySelectorAll('#chList a')].map((a) => a.textContent), tabUnread: document.querySelector('.tabs button[data-tab=share]').classList.contains('unread') })`);
+    patch({ music: { source: 'off' }, share: { internet: false, wait: false, name: role === 'host' ? 'Hosty' : 'Guesty' } });
+    wc.send('cmd', { type: 'show-panel', tab: 'share' }); await wait(800);
     if (role === 'host') {
-      await js("document.querySelector('#chHost').click()");
-      log.push('host: hub up ' + await until(() => hubs().some((h) => h.mine && h.status === 'connected')));
-      const h = hubs().find((x) => x.mine), inv = await chat.invite(h.id);
+      if (process.env.DRIFT_TESTVIDEO) { setVideos([process.env.DRIFT_TESTVIDEO]); await wait(2500); }
+      await js("document.querySelector('#shStart').click()");
+      log.push('host: hub made and up ' + await until(() => hubs().some((h) => h.mine && h.status === 'connected')));
+      log.push('host: sharing ' + await until(() => p2p.info().role === 'host' && !!p2p.info().code && !p2p.info().settling));
+      const h = hubs().find((x) => x.mine);
+      log.push('host: hub hears the share ' + await until(() => (hubs().find((x) => x.mine) || {}).lives?.length === 1) + ' ' + JSON.stringify((hubs().find((x) => x.mine) || {}).lives?.map((l) => [l.title, l.watching])));
+      const inv = await chat.invite(h.id);
       fs.writeFileSync(codeFile, inv.code || ''); log.push('host: invite ' + (inv.code ? inv.code.length + ' chars' : inv.error));
-      log.push('host: guest arrived ' + await until(() => (hubs().find((x) => x.mine) || { members: [] }).members.some((m) => m.name === 'Guesty' && m.online), 40000));
+      log.push('host: guest watching ' + await until(() => p2p.count() === 1, 40000));
+      log.push('host: card says who watches ' + await until(() => (hubs().find((x) => x.mine) || {}).lives?.[0]?.watching?.includes('Guesty')));
       await wait(1000);
-      await js("window.chatTest.send('Hi **Guesty**! Try https://example.com <img src=x onerror=alert(1)>')");
-      await until(() => false, 6000);       // the guest answers
-      log.push('host sees: ' + await dom()); await snap('chat-host');
+      await js("window.chatUI.send('Hi **Guesty**! Try https://example.com <img src=x onerror=alert(1)>')");
+      await wait(6000);
+      log.push('host sees: ' + await dom()); await snap('together-host');
+      ipcMain.emit('cmd', { sender: wc }, { type: 'share-stop' });
+      log.push('host: the card goes when sharing stops ' + await until(() => !(hubs().find((x) => x.mine) || {}).lives?.length));
+      await wait(4000);
     } else {
       for (let i = 0; i < 80 && !(fs.existsSync(codeFile) && fs.readFileSync(codeFile, 'utf8')); i++) await wait(500);
       await js(`document.querySelector('#chCode').value = ${JSON.stringify(fs.readFileSync(codeFile, 'utf8'))}; document.querySelector('#chJoin').click()`);
-      log.push('guest: joined ' + await until(() => hubs().some((h) => h.status === 'connected')));
-      await wait(400); log.push('guest, before: ' + await dom());
-      await until(() => false, 3000);
+      log.push('guest: joined the hub ' + await until(() => hubs().some((h) => h.status === 'connected')));
+      log.push('guest: sees the card ' + await until(() => hubs().some((h) => (h.lives || []).length)));
+      await wait(500); log.push('guest, before: ' + await dom());
+      await js("[...document.querySelectorAll('#chLives button')].find((b) => b.textContent === 'Join').click()");
+      log.push('guest: watching ' + await until(() => p2p.connected()));
+      await wait(4000);
       log.push('guest sees: ' + await dom());
-      await js("window.chatTest.send('> quoted\\nhello back, `code` and ||secret||')");
-      await wait(2500); log.push('guest after sending: ' + await dom()); await snap('chat-guest');
-      await wait(3000);
+      await js("window.chatUI.send('> quoted\\nhello back, `code` and ||secret||')");
+      await wait(2500); log.push('guest after sending: ' + await dom()); await snap('together-guest');
+      log.push('guest: the card goes when the host stops ' + await until(() => !hubs().some((h) => (h.lives || []).length), 30000));
+      log.push('guest: session over ' + (p2p.role() === 'off'));
     }
   }
   if (process.env.DRIFT_TESTWEB) {     // exercise watching a web page together, the same way: =host or =guest, DRIFT_TESTCODE as above, DRIFT_TESTURL = the page. The host's page is streamed to the guest, whose mouse and keys go back
@@ -1912,7 +1958,7 @@ async function runShots() {
   }
   if (process.env.DRIFT_TESTSHAREUI) {     // press the real buttons in the Together tab and read back what it says
     const wc = visWins[0].win.webContents, js = (c) => wc.executeJavaScript(c);
-    const dump = async (tag) => log.push('shareui ' + tag + ': ' + await js("JSON.stringify({ off: getComputedStyle(document.querySelector('#shOff')).display, host: getComputedStyle(document.querySelector('#shHost')).display, title: document.querySelector('#shTitle').textContent, sub: document.querySelector('#shSub').textContent, note: document.querySelector('#shNote').textContent, code: document.querySelector('#shCodeOut').textContent.length, toast: document.querySelector('#toast').className + '|' + document.querySelector('#toast').textContent, tab: (document.querySelector('#content section.active') || {}).dataset && document.querySelector('#content section.active').dataset.tab })"));
+    const dump = async (tag) => log.push('shareui ' + tag + ': ' + await js("JSON.stringify({ off: getComputedStyle(document.querySelector('#shOff')).display, host: getComputedStyle(document.querySelector('#shHost')).display, title: document.querySelector('#shTitle').textContent, sub: document.querySelector('#shSub').textContent, note: document.querySelector('#shNote').textContent, lives: document.querySelector('#chLives').innerText, toast: document.querySelector('#toast').className + '|' + document.querySelector('#toast').textContent, tab: (document.querySelector('#content section.active') || {}).dataset && document.querySelector('#content section.active').dataset.tab })"));
     patch({ music: { source: 'off' } });
     wc.send('cmd', { type: 'show-panel', tab: 'share' }); await wait(1000); await dump('before');
     await js("document.querySelector('#shStart').click()"); await wait(1500); await dump('clicked with no video');

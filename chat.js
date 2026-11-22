@@ -7,7 +7,7 @@
 //   addrs()                   this PC's addresses for invites, LAN and public
 //   upnp(port)                promise of { ip, remove() }: open the hub's port on the router (p2p.upnpMap), or reject
 //   changed()                 the list of hubs, or one hub's state, changed
-//   event(hubId, m)           something arrived from a hub: msg, gone, typing, members, channels, removed
+//   event(hubId, m)           something arrived from a hub: msg, gone, typing, members, channels, lives, removed
 //   log(text)
 const tls = require('tls');
 const fs = require('fs');
@@ -17,7 +17,7 @@ const createHub = require('./hub');
 const { wire } = require('./p2p');
 const { decodeInvite, pinOfPeer, memberId, rawKey, loginText, LIMITS } = createHub;
 
-module.exports = function createChat(opts) {
+module.exports = function createChat(opts) {       // (module.exports.decodeInvite: is this a hub's invite?)
   const dir = opts.dir, log = opts.log || (() => {});
   const seal = opts.seal || ((b) => b), unseal = opts.unseal || ((b) => b);
   fs.mkdirSync(dir, { recursive: true });
@@ -99,7 +99,7 @@ module.exports = function createChat(opts) {
   }
   function open(h) {
     if (conns.has(h.id)) return conns.get(h.id);
-    const c = { h, status: 'connecting', note: '', wire: null, me: null, host: false, members: [], channels: [], typing: new Map(), pending: new Map(), seq: 0, retry: null, tries: 0, pinger: null, seen: 0, closed: false };
+    const c = { h, status: 'connecting', note: '', wire: null, me: null, host: false, members: [], channels: [], lives: [], typing: new Map(), pending: new Map(), seq: 0, retry: null, tries: 0, pinger: null, seen: 0, closed: false };
     conns.set(h.id, c);
     connect(c);
     return c;
@@ -140,7 +140,8 @@ module.exports = function createChat(opts) {
         changed(); return;
       }
       c.status = 'connected'; c.note = ''; c.tries = 0;
-      c.me = m.me; c.host = !!m.host; c.members = m.members || []; c.channels = m.channels || [];
+      c.me = m.me; c.host = !!m.host; c.members = m.members || []; c.channels = m.channels || []; c.lives = Array.isArray(m.lives) ? m.lives : [];
+      if (myLive && myLive.hub === c.h.id) sendLive(c, myLive.live);       // still sharing: tell the hub again after a reconnect
       Object.assign(c.h, { joined: true, token: undefined, name: String(m.hub || c.h.name || 'Hub').slice(0, 40) });
       if (Array.isArray(m.addrs) && m.addrs.length && !c.h.mine) c.h.addrs = [...new Set([...m.addrs, ...c.h.addrs])].slice(0, 8);
       save(); changed();
@@ -152,6 +153,7 @@ module.exports = function createChat(opts) {
       case 'pong': return;
       case 'members': c.members = Array.isArray(m.list) ? m.list : []; changed(); break;
       case 'channels': c.channels = Array.isArray(m.list) ? m.list : []; changed(); break;
+      case 'lives': c.lives = Array.isArray(m.list) ? m.list : []; changed(); break;
       case 'msg': if (m.msg && blocked.has(m.msg.from)) return; break;
       case 'typing': if (blocked.has(m.from)) return; break;
       case 'removed': c.h.gone = 'The host removed you from this hub.'; save(); c.closed = true; c.status = 'gone'; c.note = c.h.gone; changed(); break;
@@ -178,6 +180,17 @@ module.exports = function createChat(opts) {
     c.closed = true; clearTimeout(c.retry); clearInterval(c.pinger);
     if (c.wire) c.wire.close();
     conns.delete(id);
+  }
+
+  // ---- sharing (Together): which hub hears about it ----
+  // live: { code, title, watching } while this PC shares into hub `id`; null when it stops.
+  let myLive = null;
+  const sendLive = (c, live) => { if (c && c.wire && c.status === 'connected') c.wire.send(live ? { t: 'live', on: true, ...live } : { t: 'live', on: false }); };
+  function announce(id, live) {
+    const was = myLive;
+    myLive = id && live ? { hub: id, live } : null;
+    if (was && (!myLive || was.hub !== id)) sendLive(conns.get(was.hub), null);
+    if (myLive) sendLive(conns.get(id), live);
   }
 
   // ---- what main.js calls ----
@@ -217,7 +230,7 @@ module.exports = function createChat(opts) {
       hubs: saved.map((h) => {
         const c = conns.get(h.id);
         return { id: h.id, name: h.name, mine: !!h.mine, status: h.gone ? 'gone' : c ? c.status : 'offline', note: h.gone || (c && c.note) || '',
-          host: !!(c && c.host), members: c ? c.members : [], channels: c ? c.channels : [] };
+          host: !!(c && c.host), members: c ? c.members : [], channels: c ? c.channels : [], lives: c && c.status === 'connected' ? c.lives : [] };
       }),
     };
   }
@@ -237,7 +250,7 @@ module.exports = function createChat(opts) {
   }
 
   return {
-    start, stop, info, join, leave, host, unhost, setName, block,
+    start, stop, info, join, leave, host, unhost, setName, block, announce,
     history: (id, ch, o = {}) => ask(id, { t: 'history', ch, before: o.before, after: o.after, limit: o.limit }).then(filterMsgs),
     send: (id, ch, text, reply) => ask(id, { t: 'send', ch, text, reply, cid: cid() }),
     edit: (id, msg, text) => ask(id, { t: 'edit', id: msg, text }),
@@ -251,3 +264,4 @@ module.exports = function createChat(opts) {
     myId: () => myId,
   };
 };
+module.exports.decodeInvite = decodeInvite;
