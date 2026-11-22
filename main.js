@@ -701,7 +701,7 @@ function publicState() {
     videoUrl: c ? (c.path ? pathToFileURL(c.path).href : c.src) : '', videoName: c ? c.name : '', videoPath: c ? c.path : '', videoLeader: lead && c ? lead.key : '',
     sceneFps: sceneFps(), screens: visWins.length, spotify: { ...spotify, lead: spotifyLead() }, videoAudio, videoInfo, audioBase: audioPort && c ? local(`/a?i=${c.index}`) : '',
     xc: { ...xc, ...xcWant(), base: xcBase() }, encoders: xcoder.list(), canTonemap: !xcoder.ready() || xcoder.canTonemap(),
-    p2p: { ...p2p.info(), ctrl: !remote || !!remote.ctrl, own: !!(c && c.remote && c.path), viaHost: viaHost(), quality: shareQuality(), waitingFor: heldFor || [], defaultName: shareName(true), file: remote ? remote.file || '' : '', music: remote ? remote.music : null, chatHub: sessionHub() },       // music: a friend's, playing here in place of ours; chatHub: the hub this session is in
+    p2p: { ...p2p.info(), ctrl: !remote || !!remote.ctrl, own: !!(c && c.remote && c.path), viaHost: viaHost(), quality: shareQuality(), waitingFor: heldFor || [], defaultName: shareName(true), file: remote ? remote.file || '' : '', music: remote ? remote.music : null, chatHub: sessionHub(), lan: createP2P.localAddrs().find((a) => a.includes('.')) || '' },       // music: a friend's, playing here in place of ours; chatHub: the hub this session is in; lan: this PC's address on its network (Help)
     // a friend's page arrives as a stream; our own is a page in one of our windows
     update: updater ? updater.info() : null,
     web: remote ? { open: !!remote.web && streamShown, has: !!remote.web, stream: true, key: remote.web && streamShown ? screenFor(streamKey) : '', ...(remote.web || {}) } : web.info() };
@@ -1938,6 +1938,49 @@ async function runShots() {
     const b0 = beatCount; addTracks([process.env.DRIFT_TESTWAV]); await wait(6000); beatCount -= b0;
     log.push('beats during file: ' + beatCount);
     log.push('levels(file): ' + JSON.stringify(lastLevels) + ' now=' + JSON.stringify(nowPlaying));
+  }
+  if (process.env.DRIFT_TESTPERF) {       // dev: DRIFT_TESTPERF=<a video>. Frames it shows and drops in 6 s on each screen, spanned, with the cats off and on
+    setVideos([process.env.DRIFT_TESTPERF]); patch({ mode: 'span', video: { fit: 'auto' } }); await wait(5000);
+    const measure = async (tag) => {
+      ipcMain.emit('cmd', { sender: visWins[0].win.webContents }, { type: 'video-jump', pos: 2 }); await wait(1500);
+      const r = await Promise.all(visWins.map((v) => v.win.webContents.executeJavaScript(`new Promise((res) => {
+        const v = document.querySelector('#v'), q0 = v.getVideoPlaybackQuality(); let n = 0, on = true;
+        const f = () => { n++; if (on) v.requestVideoFrameCallback(f); }; v.requestVideoFrameCallback(f);
+        let raf = 0, lag = 0, last = performance.now(); const r = () => { raf++; if (on) requestAnimationFrame(r); }; requestAnimationFrame(r);
+        const tk = setInterval(() => { const t = performance.now(); lag = Math.max(lag, t - last - 50); last = t; }, 50);
+        setTimeout(() => { on = false; clearInterval(tk); const q = v.getVideoPlaybackQuality(); res({ shown: n, dropped: q.droppedVideoFrames - q0.droppedVideoFrames, raf, lag: Math.round(lag), t: +v.currentTime.toFixed(1), size: v.videoWidth + 'x' + v.videoHeight, paused: v.paused }); }, 6000);
+      })`).catch((e) => ({ error: e.message }))));
+      log.push(`perf ${tag}: ` + JSON.stringify(r));
+    };
+    const panelJs = (js) => Promise.all(visWins.map((v) => v.win.webContents.executeJavaScript(`(() => { const p = document.querySelector('#panel'); ${js} })()`).catch(() => {})));
+    await panelJs("p.classList.remove('show', 'open')");
+    for (const [tag, st] of [['off', { cat: false }], ['1 cat', { cat: true, catsUnlocked: false }], ['off', { cat: false }], ['12 cats', { cat: true, catsUnlocked: true, catCount: 12 }],
+      ['off', { cat: false }], ['12 cats', { cat: true, catsUnlocked: true, catCount: 12 }]]) { patch(st); await wait(1500); await measure(tag); }
+    for (let i = 0; i < 4; i++) {       // asleep: the "z Z Z", a letter at a time
+      log.push('cats asleep: ' + await visWins[0].win.webContents.executeJavaScript("(() => { const o = document.querySelector('#chatOverlay'); return o.classList.contains('asleep') + ' z=' + o.dataset.z + ' cats=' + document.querySelectorAll('.coCat.here').length; })()"));
+      await snap('cat-asleep-' + i); await wait(1100);
+    }
+    patch({ video: { paused: true } }); await wait(1200); await snap('cat-awake');
+    log.push('paused: ' + await visWins[0].win.webContents.executeJavaScript("document.querySelector('#chatOverlay').classList.contains('asleep')"));
+    patch({ cat: false, catsUnlocked: false, catCount: 3 });
+  }
+  if (process.env.DRIFT_CATNAP) {       // dev: DRIFT_CATNAP=<a video>. The cats asleep while it plays (close-ups of the "z Z Z" growing), then awake when it pauses
+    const closeUp = async (name) => {
+      const v = visWins.find((x) => x.index === catAt[0]) || visWins[0];
+      const r = await v.win.webContents.executeJavaScript("(() => { const cs = [...document.querySelectorAll('.coCat.here')].map((c) => c.getBoundingClientRect()), b = cs.length ? { x: Math.min(...cs.map((c) => c.x)), y: Math.min(...cs.map((c) => c.y)), width: Math.max(...cs.map((c) => c.right)) - Math.min(...cs.map((c) => c.x)), height: Math.max(...cs.map((c) => c.height)) } : document.querySelector('#coCats').getBoundingClientRect(); const o = document.querySelector('#chatOverlay'); return { x: Math.max(0, Math.floor(b.x - 20)), y: Math.max(0, Math.floor(b.y - 60)), width: Math.ceil(Math.min(innerWidth, b.width + 40)), height: Math.ceil(b.height + 70), asleep: o.classList.contains('asleep'), z: o.dataset.z || '', cats: document.querySelectorAll('.coCat.here').length }; })()");
+      log.push(`catnap ${name}: asleep=${r.asleep} z=${r.z} cats here=${r.cats}`);
+      const full = await v.win.webContents.capturePage(), sz = full.getSize(), k = sz.width / v.bounds.width;       // (captured in device pixels)
+      log.push(`  window ${v.key} ${JSON.stringify(v.bounds)} image ${sz.width}x${sz.height} crop ${JSON.stringify(r)}`);
+      const img = full.crop({ x: Math.round(r.x * k), y: Math.round(r.y * k), width: Math.round(r.width * k), height: Math.round(Math.min(r.height, v.bounds.height - r.y) * k) });
+      fs.writeFileSync(path.join(SHOT_DIR, `catnap-${name}.png`), img.resize({ width: Math.round(r.width * 3) }).toPNG());
+    };
+    const panelJs = (js) => Promise.all(visWins.map((v) => v.win.webContents.executeJavaScript(`(() => { const p = document.querySelector('#panel'); ${js} })()`).catch(() => {})));
+    await panelJs("p.classList.remove('show', 'open')");
+    patch({ cat: true, catsUnlocked: true, catCount: 3, palette: 'aurora' }); await wait(1500); await closeUp('awake-scene');
+    setVideos([process.env.DRIFT_CATNAP]); patch({ mode: 'span', video: { fit: 'auto', paused: false } }); await wait(3000);
+    for (let i = 0; i < 4; i++) { await closeUp('asleep-' + i); await wait(1100); }
+    patch({ video: { paused: true } }); await wait(1200); await closeUp('paused');
+    patch({ cat: false, catsUnlocked: false });
   }
   if (process.env.DRIFT_TESTVIDEO) {
     state.video.folders = [path.dirname(process.env.DRIFT_TESTVIDEO)];

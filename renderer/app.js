@@ -546,6 +546,13 @@
       });
     }
     coEl.classList.toggle('cat', catEls.some((c) => c.classList.contains('here')));       // (one fading away still counts, till it's gone)
+    // While a video plays (on any screen: they all draw in Chromium's one GPU process) the cats fall asleep. Awake, their breathing,
+    // blinking and tail have every window drawn again 60 times a second, and with a 4K video that left no room for its frames: it
+    // froze. Asleep, only their "z Z Z" changes: a letter about once a second, then a beat with none.
+    const asleep = !!S.videoLeader && !S.video.paused && coEl.classList.contains('cat'), zStep = Math.floor(Date.now() / 1100) % 5;
+    coEl.classList.toggle('asleep', asleep);
+    const z = asleep ? String(zStep > 3 ? 0 : zStep) : '';
+    if (coEl.dataset.z !== z) coEl.dataset.z = z;
     if (S.breathing) {
       const ph = (Date.now() / 1000) % 14; let k, label;   // 4 in · 2 hold · 6 out · 2 rest
       if (ph < 4) { k = ease(ph / 4); label = 'Breathe in'; }
@@ -711,8 +718,6 @@
     setVal($('#catCount'), catCount()); $('#o-catCount').textContent = catCount();
     $('#catCountRow').hidden = !S.catsUnlocked;
     $('#catName').textContent = S.catsUnlocked ? 'Summon the cats' : 'Summon the cat';
-    $('#catDesc').textContent = S.catsUnlocked ? 'Small glowing cats that wander between your screens. Opening or closing the panel under them shoos them off. Every 20 minutes they gather on the middle screen.'
-      : 'A small glowing cat that wanders between your screens. Opening or closing the panel under it shoos it off.';
     for (const k of ['autoCycle', 'quality', 'fps']) $('#' + k).value = String(S[k]);
     for (const k of ['cycleShuffle', 'clock', 'breathing', 'cat', 'keepAwake', 'onTop', 'autoUpdate', 'surfGpu']) $('#' + k).checked = !!S[k];
     syncUpdate();

@@ -33,7 +33,7 @@
     const s = x && (x.suspect || []).find((y) => y.id === id);       // someone the hub sent a bad key for: still named, so the warning makes sense
     return s ? s.name : id === info.me.id ? (info.me.name || 'You') : 'Someone who left';
   };
-  const looking = () => $('#panel').classList.contains('open') && $('section[data-tab="share"]').classList.contains('active') && !$('#chat').classList.contains('opts');
+  const looking = () => $('#panel').classList.contains('open') && $('section[data-tab="share"]').classList.contains('active') && !$('#chat').classList.contains('opts') && !$('#chat').classList.contains('help');
   let p2p = { role: 'off' }, joined = '';       // watch together as main.js reports it; joined: the code of the share we joined from a card
 
   // ---- faces: a member's picture, or their initial on a colour of their own until it arrives ----
@@ -356,6 +356,7 @@
   }
   function onInfo(next) {
     info = next;
+    drawHelp();
     if (!hubNow() && info.hubs.length) sel = { hub: info.hubs[0].id, ch: 0 };
     const x = hubNow();
     if (x && !x.channels.some((c) => c.id === sel.ch)) sel.ch = (x.channels[0] || {}).id || 0;
@@ -503,12 +504,33 @@
   new MutationObserver(markRead).observe($('#panel'), { attributes: true, attributeFilter: ['class'] });
 
   // ---- options (name, control, quality...) take the chat's place while open ----
-  const opts = (on) => { $('#chat').classList.toggle('opts', on); if (!on) markRead(); };
+  // Help (forwarding ports for friends elsewhere) takes it the same way, filled in with this PC's own address and ports
+  const opts = (on) => { $('#chat').classList.toggle('opts', on); if (on) $('#chat').classList.remove('help'); if (!on) markRead(); };
   $('#shOptsBtn').addEventListener('click', () => opts(!$('#chat').classList.contains('opts')));
   $('#shOptsDone').addEventListener('click', () => opts(false));
+  let shareSet = {};
+  const helpVals = () => {
+    const ip = p2p.lan || '', hub = (info.hosting && info.hosting.port) || 47900;
+    return { ip, router: /^\d+\.\d+\.\d+\.\d+$/.test(ip) ? ip.replace(/\.\d+$/, '.1') : '192.168.1.1', share: (p2p.role === 'host' && p2p.port) || shareSet.port || 47800,
+      hub, voice: (info.hosting && info.hosting.voicePort) || hub };
+  };
+  const drawHelp = () => {
+    if (!$('#chat').classList.contains('help')) return;
+    const v = helpVals();
+    document.querySelectorAll('.hlIp').forEach((e) => { e.textContent = v.ip || "this PC's address (see Settings → Network & internet in Windows)"; });
+    $('.hlRouter').textContent = v.router; $('.hlShare').textContent = v.share; $('.hlHub').textContent = v.hub; $('.hlVoice').textContent = v.voice;
+    document.querySelectorAll('.hlCopy').forEach((b) => { b.hidden = !v.ip; });
+  };
+  const help = (on) => { $('#chat').classList.toggle('help', on); if (on) { $('#chat').classList.remove('opts'); drawHelp(); $('#shHelp').scrollTop = 0; } else markRead(); };
+  $('#shHelpBtn').addEventListener('click', () => help(!$('#chat').classList.contains('help')));
+  $('#shHelpDone').addEventListener('click', () => help(false));
+  document.querySelectorAll('.hlCopy').forEach((b) => b.addEventListener('click', () => {
+    navigator.clipboard.writeText(helpVals().ip).then(() => { b.textContent = 'Copied'; setTimeout(() => { b.textContent = 'Copy'; }, 1500); }, () => {});
+  }));
   api.on('state', (s) => {
     const was = p2p.role;
     p2p = s.p2p || { role: 'off' };
+    shareSet = s.share || {}; drawHelp();
     overlaySetting = (s.share && s.share.overlay) || 'unheard';
     const vs = JSON.stringify(s.voice || {});
     if (vs !== JSON.stringify(voiceSet)) { voiceSet = s.voice || {}; drawVoiceOpts(); drawCall(); }

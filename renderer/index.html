@@ -42,6 +42,7 @@
 <filter id="catLight" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur in="SourceGraphic" stdDeviation="9" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
 <clipPath id="catBodyClip"><path d="M345 355C340 250 380 150 440 125C510 105 590 160 645 225C710 205 790 205 845 225C900 160 980 105 1050 125C1110 150 1145 250 1140 355C1220 430 1260 560 1245 660C1230 760 1170 820 1080 835C900 860 600 860 420 835C320 820 250 740 240 620C235 520 270 420 345 355Z"/></clipPath>
 </defs>
+<g class="catBody">
 <ellipse cx="760" cy="868" rx="560" ry="40" fill="url(#catGround)"/>
 <g class="catBang" style="stroke:var(--cat-hi)" stroke-width="30" stroke-linecap="round" filter="url(#catLight)"><path d="M268 150L306 208"/><path d="M212 218L262 244"/></g>
 <g class="catTail">
@@ -59,12 +60,15 @@
 <path d="M1059 335C1059 262 1039 205 1016 198C976 194 932 224 904 258C960 274 1010 300 1059 335Z" fill="url(#catEar)"/>
 <g filter="url(#catLight)" fill="#f4fff4">
 <g class="catEyes"><circle cx="545" cy="530" r="64"/><circle cx="950" cy="530" r="64"/></g>
+<g class="catShut" fill="none" stroke="#f4fff4" stroke-width="30" stroke-linecap="round"><path d="M478 522Q545 586 612 522"/><path d="M883 522Q950 586 1017 522"/></g>
 <path d="M690 552C690 594 738 596 750 562C762 596 810 594 810 552" fill="none" stroke="#f4fff4" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
 </g>
 <path d="M408 820C400 760 450 722 512 722C576 722 620 762 618 812C616 850 560 858 510 858C450 858 412 852 408 820Z" fill="url(#catPaw)" stroke="url(#catRim)" stroke-width="8"/>
 <path d="M918 820C910 760 960 722 1022 722C1086 722 1130 762 1128 812C1126 850 1070 858 1020 858C960 858 922 852 918 820Z" fill="url(#catPaw)" stroke="url(#catRim)" stroke-width="8"/>
 <path d="M414 826C470 842 566 840 616 816C614 850 560 858 510 858C452 858 416 852 414 826Z" style="fill:var(--cat-shade)"/>
 <path d="M924 826C980 842 1076 840 1126 816C1124 850 1070 858 1020 858C962 858 926 852 924 826Z" style="fill:var(--cat-shade)"/>
+</g>
+<g class="catZ" fill="none" stroke-width="34" stroke-linecap="round" stroke-linejoin="round" filter="url(#catLight)"><path d="M1150 330h110l-110 110h110"/><path d="M1270 170h150l-150 150h150"/><path d="M1420 -20h200l-200 200h200"/></g>
 </svg>
 </div>
 <div id="algo"></div>
@@ -231,7 +235,7 @@
               <button class="btn ghost wide" id="chHost">Host a hub</button>
             </div>
           </div>
-          <div class="sideFoot"><button class="btn ghost wide" id="shOptsBtn"><span aria-hidden="true">⚙</span> Options</button></div>
+          <div class="sideFoot"><button class="btn ghost" id="shOptsBtn"><span aria-hidden="true">⚙</span> Options</button><button class="btn ghost" id="shHelpBtn"><span aria-hidden="true">?</span> Help</button></div>
         </aside>
         <div id="chMain">
           <div id="chLives"></div>
@@ -301,6 +305,43 @@
             <p class="note optFoot">Subtitles, sound conversion and HDR conversion all work for friends too, and each person picks their own subtitles.</p>
           </div>
         </div>
+        <div id="shHelp">
+          <div class="optHead"><h2>Help: friends joining from anywhere</h2><button class="btn ghost" id="shHelpDone">← Back to the chat</button></div>
+          <div class="optCard">
+            <h3>Do you need this?</h3>
+            <p class="hlText">Probably not. Friends on your own Wi-Fi can always join, and most routers let Drift open the way for friends elsewhere by itself. This page is only for when Drift tells you that friends elsewhere might not get in.</p>
+            <p class="hlText">Nothing here can break your internet. Every step can be undone by deleting what you added, and Drift only lets in someone who has your invite or share code.</p>
+          </div>
+          <div class="optCard">
+            <h3>The easy way: turn on UPnP</h3>
+            <p class="hlText">UPnP lets apps like Drift (and most games and consoles) ask the router to open a port while they need it. Drift closes it again when you stop. If your router has UPnP switched off, switching it on is all you need: look for <b>UPnP</b> in the router's settings (steps 2 and 3 below show how to get there), turn it on, then share or host again.</p>
+          </div>
+          <div class="optCard">
+            <h3>Or forward the ports yourself</h3>
+            <ol class="hlSteps">
+              <li><b>Your PC's address</b><span>Your router needs to know which PC the friends are coming to. This PC is <code class="hlIp">…</code> <button class="btn ghost hlCopy" data-copy="ip">Copy</button></span></li>
+              <li><b>Open your router's settings</b><span>Type <code class="hlRouter">192.168.1.1</code> into any web browser's address bar. If nothing comes up, try <code>192.168.0.1</code> or <code>10.0.0.1</code>. The sign-in name and password are often on a sticker on the router. Some routers, like Google Nest Wifi, eero, or your internet provider's own, use a phone app instead.</span></li>
+              <li><b>Find port forwarding</b><span>It's often under <i>Advanced</i>, <i>NAT</i> or <i>Firewall</i>, and may be called <i>Port forwarding</i>, <i>Virtual servers</i>, <i>Port mapping</i> or <i>Applications &amp; gaming</i>.</span></li>
+              <li><b>Add these rules</b><span>Point each one at <code class="hlIp">…</code>. If the router asks for a start and an end port, put the same number in both. Name them anything, like "Drift".</span>
+                <table class="hlPorts">
+                  <thead><tr><th>For</th><th>Port</th><th>Protocol</th></tr></thead>
+                  <tbody>
+                    <tr><td>Watching together</td><td><code class="hlShare">47800</code></td><td>TCP</td></tr>
+                    <tr><td>Your hub's chat</td><td><code class="hlHub">47900</code></td><td>TCP</td></tr>
+                    <tr><td>Voice calls in your hub</td><td><code class="hlVoice">47900</code></td><td>UDP</td></tr>
+                  </tbody>
+                </table>
+              </li>
+              <li><b>Save, and try it</b><span>Share or host your hub again. When Drift can tell the way is open, the warning goes away. Some routers can't check this from the inside, so the best test is asking a friend to join.</span></li>
+            </ol>
+          </div>
+          <div class="optCard">
+            <h3>If it still doesn't work</h3>
+            <p class="hlText"><b>Your PC's address changed.</b> Routers sometimes give a PC a new address after a restart. Look for <i>DHCP reservation</i> or <i>Static IP</i> in the router and reserve <code class="hlIp">…</code> for this PC.</p>
+            <p class="hlText"><b>Your internet provider shares one address between homes.</b> Some do (it's called CGNAT, and it's common on mobile and satellite internet). Then no router setting can open the way. Ask your provider for a public IP address, or let a friend whose connection works host the hub instead.</p>
+            <p class="hlText"><b>Changed your mind?</b> Delete the rules you added. Drift goes on working for friends on your own Wi-Fi.</p>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -349,7 +390,7 @@
             <h3>Extras</h3>
             <label class="chk optRow"><span class="optText"><b>Show clock</b></span><input type="checkbox" id="clock"><i></i></label>
             <label class="chk optRow"><span class="optText"><b>Breathing guide</b></span><input type="checkbox" id="breathing"><i></i></label>
-            <label class="chk optRow"><span class="optText"><b id="catName">Summon the cat</b><em id="catDesc">A small glowing cat that wanders between your screens. Opening or closing the panel under it shoos it off.</em></span><input type="checkbox" id="cat"><i></i></label>
+            <label class="chk optRow"><span class="optText"><b id="catName">Summon the cat</b></span><input type="checkbox" id="cat"><i></i></label>
             <div class="optRow slideRow" id="catCountRow" hidden><div class="optText"><b>How many cats<output id="o-catCount"></output></b></div><input type="range" id="catCount" min="1" max="12" step="1" aria-label="How many cats"></div>
             <label class="chk optRow"><span class="optText"><b>Keep screens awake</b></span><input type="checkbox" id="keepAwake"><i></i></label>
             <label class="chk optRow"><span class="optText"><b>Stay above other windows</b></span><input type="checkbox" id="onTop"><i></i></label>

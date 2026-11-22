@@ -497,7 +497,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
   function info() {
     return {
       me: { id: myId, name: me.name, av: avatarId(me.avatar || ''), mic: myMic },
-      hosting: hub ? { id: hub.pin.toString('base64url'), name: hub.name(), port: hub.port(), note: hostNote, internet: !!(hosting && hosting.internet) } : null,
+      hosting: hub ? { id: hub.pin.toString('base64url'), name: hub.name(), port: hub.port(), voicePort: hub.voicePort(), note: hostNote, internet: !!(hosting && hosting.internet) } : null,
       blocked: [...blocked],
       hubs: saved.map((h) => {
         const c = conns.get(h.id), t = trust[h.id] || {}, up = !!c && c.status === 'connected';
