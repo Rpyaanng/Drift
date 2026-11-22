@@ -614,12 +614,12 @@ input.num { width: 46px; text-align: center; padding: 6px 4px; }
 #chatOverlay.asleep .coCat * { animation: none; }
 /* asleep, the cat dims: its colours mixed darker and its glow turned down. The "z Z Z" keeps its own colour: the accent's opposite, kept light */
 #chatOverlay.asleep .coCat {
-  --cat-base: color-mix(in oklab, var(--accent), black 38%); --cat-mid: color-mix(in oklab, var(--accent), black 28%); --cat-hi: color-mix(in oklab, var(--accent), white 12%);
-  --cat-rim: color-mix(in oklab, var(--accent), white 28%); --cat-lo: color-mix(in oklab, var(--accent), black 45%); --cat-shade: color-mix(in oklab, var(--accent), black 66%);
-  --cat-deep: color-mix(in oklab, var(--accent), black 68%); --cat-dark: color-mix(in oklab, var(--accent), black 84%);
-  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--cat-hi) 40%, transparent)) drop-shadow(0 0 10px color-mix(in srgb, var(--accent) 22%, transparent)); }
-#chatOverlay.asleep .coCat .catShut { stroke: #9aa39a; }
-#chatOverlay.asleep .coCat .catBody { opacity: .6; }       /* the cat fades as one piece; the "z Z Z" stays bright */
+  --cat-base: color-mix(in oklab, var(--accent), black 28%); --cat-mid: color-mix(in oklab, var(--accent), black 18%); --cat-hi: color-mix(in oklab, var(--accent), white 22%);
+  --cat-rim: color-mix(in oklab, var(--accent), white 40%); --cat-lo: color-mix(in oklab, var(--accent), black 35%); --cat-shade: color-mix(in oklab, var(--accent), black 60%);
+  --cat-deep: color-mix(in oklab, var(--accent), black 62%); --cat-dark: color-mix(in oklab, var(--accent), black 80%);
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--cat-hi) 50%, transparent)) drop-shadow(0 0 12px color-mix(in srgb, var(--accent) 30%, transparent)); }
+#chatOverlay.asleep .coCat .catShut { stroke: #b8c2b8; }
+#chatOverlay.asleep .coCat .catBody { opacity: .72; }       /* the cat fades as one piece; the "z Z Z" stays bright */
 .coCat .catZ { stroke: oklch(from var(--accent) max(l, .82) max(c, .12) calc(h + 180)); }
 #chatOverlay.asleep .coCat .catEyes, #chatOverlay.asleep .coCat .catBang { display: none; }
 #chatOverlay.asleep .coCat .catShut { display: inline; }
