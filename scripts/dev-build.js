@@ -64,6 +64,8 @@ function vmpSign(appDir) {
       /^\/\.githooks(\/|$)/,
       /^\/\.git(\/|$)/,
       /^\/vendor(\/|$)/,
+      /^\/spikes(\/|$)/,
+      /^\/docs(\/|$)/,
     ],
     quiet: true,
   });
