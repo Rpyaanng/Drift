@@ -28,6 +28,7 @@
   </div>
 </div>
 <div id="toast"></div>
+<div id="chatOverlay"><div id="coList"></div><div id="coBox"><span id="coWhere"></span><input type="search" id="coInput" maxlength="4000" spellcheck="true" autocomplete="off"></div></div>
 <div id="algo"></div>
 <div id="confirm"><div class="box"><b>Close Drift?</b><p id="confirmNote"></p><div class="row"><button class="btn" id="confirmNo">Stay</button><button class="btn ghost" id="confirmMon" title="Turn Drift off on this monitor only. Turn it back on in Settings.">Close this monitor</button><button class="btn danger" id="confirmYes">Close Drift</button></div></div></div>
 
@@ -199,7 +200,23 @@
         </div>
         <div id="shOpts">
           <div class="row head"><h3>Options</h3><button class="btn ghost" id="shOptsDone">Back to the chat</button></div>
-          <label>Your name, as friends see it<input type="search" id="shName" maxlength="24" spellcheck="false" autocomplete="off"></label>
+          <div class="row chMe">
+            <span id="meFace"></span>
+            <label>Your name, as friends see it<input type="search" id="shName" maxlength="24" spellcheck="false" autocomplete="off"></label>
+          </div>
+          <div class="row">
+            <button class="btn ghost" id="meFacePick">Choose a picture…</button>
+            <button class="btn ghost" id="meFaceDrop">Remove picture</button>
+            <input type="file" id="meFaceFile" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" hidden>
+          </div>
+          <label>Chat over the video while watching together
+            <select id="shOverlay">
+              <option value="unheard">Messages from people who can't be heard (no mic, or not talking)</option>
+              <option value="all">Every message</option>
+              <option value="off">None: only in this tab</option>
+            </select>
+          </label>
+          <p class="note">While you watch, press Enter to write a message without opening this tab. Voice isn't here yet, so for now nobody can be heard and every message shows.</p>
           <div class="checks one">
             <label class="chk"><input type="checkbox" id="shControl"><i></i>Friends can play, pause and skip, and use a web page</label>
             <label class="chk"><input type="checkbox" id="shWait"><i></i>Pause for everyone while someone is loading</label>

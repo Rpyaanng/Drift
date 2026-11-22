@@ -77,6 +77,20 @@ async function until(pred, what, ms = 8000) {
   ok((await ben.chat.dropChannel(H, made.ch)).error, 'Ben can\'t delete Cat\'s channel');
   ok(!(await cat.chat.dropChannel(H, made.ch)).error, 'Cat can delete her own channel');
 
+  // ---- pictures and microphones ----
+  const PNG1 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  ok(!ana.chat.setAvatar(PNG1).error, 'Ana sets a picture');
+  await until(() => (ben.hub(H).members.find((m) => m.id === ana.chat.myId()) || {}).av, 'friends see she has one');
+  const av = ben.hub(H).members.find((m) => m.id === ana.chat.myId()).av;
+  ok((await ben.chat.avatar(H, ana.chat.myId(), av)).data === PNG1, 'and can fetch it');
+  ok(!!ben.chat.setAvatar('data:image/svg+xml;base64,PHN2Zz48c2NyaXB0PmFsZXJ0KDEpPC9zY3JpcHQ+PC9zdmc+').error, 'an SVG picture is refused (it could carry script)');
+  ok(!!ben.chat.setAvatar(PNG1.replace('image/png', 'image/jpeg')).error, 'a picture whose bytes don\'t match its type is refused');
+  ok(!!ben.chat.setAvatar('data:image/png;base64,' + 'A'.repeat(20000)).error, 'a picture that is too big is refused');
+  ana.chat.setAvatar('');
+  await until(() => !(ben.hub(H).members.find((m) => m.id === ana.chat.myId()) || {}).av, 'removing the picture reaches friends');
+  ben.chat.setMic(false); cat.chat.setMic(true);
+  await until(() => { const ms = ana.hub(H).members; return (ms.find((m) => m.id === ben.chat.myId()) || {}).mic === false && (ms.find((m) => m.id === cat.chat.myId()) || {}).mic === true; }, 'everyone sees who has no microphone');
+
   // ---- sharing (Together): the hub passes on who is sharing, so everyone gets a Join button ----
   ben.chat.announce(H, { code: 'drift:AAAA-bbbb_1', title: 'Dune.mkv', watching: [] });
   await until(() => (cat.hub(H).lives || []).some((l) => l.from === ben.chat.myId() && l.title === 'Dune.mkv' && l.code === 'drift:AAAA-bbbb_1'), 'everyone hears Ben is sharing');

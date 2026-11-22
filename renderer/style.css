@@ -450,3 +450,39 @@ input.num { width: 46px; text-align: center; padding: 6px 4px; }
 #chat.opts #chMain { display: none; }
 #shOpts label { display: block; margin-bottom: 12px; }
 #chat.carded #shHost .row, #chat.carded #shGuest .row, #chat.carded #shPeople { display: none; }
+/* faces: a picture, or an initial on the person's own colour */
+.face { --hue: 200; display: inline-grid; place-items: center; flex: none; width: 30px; height: 30px; border-radius: 50%; overflow: hidden; box-sizing: border-box;
+  background: hsl(var(--hue) 45% 38%); color: #fff; font: 600 13px/1 "Segoe UI", system-ui; user-select: none; }
+.face img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.face.small { width: 20px; height: 20px; font-size: 10px; }
+.face.big { width: 56px; height: 56px; font-size: 22px; }
+.face.co { width: 26px; height: 26px; font-size: 11px; }
+.faceWrap { position: relative; display: inline-flex; flex: none; }
+.faceWrap .dot { position: absolute; right: -2px; bottom: -2px; width: 8px; height: 8px; border: 2px solid rgba(14,16,22,.95); }
+.chWho:not(.on) .face { opacity: .45; }
+.nomic { font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase; color: #e6b43c; white-space: nowrap; }
+.chMsg { padding-left: 48px; }
+.chMsg .msgFace { position: absolute; left: 8px; top: 3px; }
+.chRe { margin-left: 0; }
+.chMe { align-items: flex-end; gap: 14px; }
+.chMe label { flex: 1; margin: 0; }
+/* chat over the video */
+#chatOverlay { position: fixed; left: 28px; bottom: 150px; width: min(440px, 40vw); z-index: 30; pointer-events: none; display: flex; flex-direction: column; gap: 6px; }
+#chatOverlay.under { opacity: 0; }
+#coList { display: flex; flex-direction: column; gap: 5px; }
+.coMsg { display: flex; align-items: flex-start; gap: 8px; padding: 6px 10px 6px 6px; border-radius: 14px; background: rgba(10,12,18,.58); backdrop-filter: blur(14px);
+  color: var(--ink); font-size: 13px; line-height: 1.4; text-shadow: 0 1px 2px rgba(0,0,0,.5); transition: opacity .8s; width: fit-content; max-width: 100%; animation: coIn .25s ease-out; }
+.coMsg.old { opacity: 0; }
+#chatOverlay.typing .coMsg.old { opacity: .9; }
+.coBody { min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; padding-top: 3px; }
+.coBody .coName { margin-right: 6px; }
+.coBody em { font-style: normal; color: var(--dim); font-size: 11px; margin-right: 6px; }
+.coText code { font: 12px Consolas, monospace; background: rgba(0,0,0,.4); padding: 0 4px; border-radius: 4px; }
+.coText a { color: var(--accent); }
+.coText .spoiler { background: rgba(255,255,255,.85); color: transparent; border-radius: 3px; }
+#coBox { display: none; align-items: center; gap: 8px; padding: 6px 8px 6px 12px; border-radius: 14px; background: rgba(10,12,18,.78); backdrop-filter: blur(18px); border: 1px solid var(--accent); pointer-events: auto; }
+#chatOverlay.typing #coBox { display: flex; }
+#coWhere { color: var(--dim); font-size: 12px; white-space: nowrap; }
+#coInput { flex: 1; width: auto; border: 0; background: transparent; padding: 4px 2px; }
+#coInput::-webkit-search-cancel-button { display: none; }
+@keyframes coIn { from { opacity: 0; transform: translateY(6px); } }

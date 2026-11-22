@@ -222,6 +222,13 @@ the others get a card in the chat with a **Join** button. Up to eight friends ca
   after showing where they go. Messages are kept on the PC of whoever hosts the hub, and the hub only
   works while that Drift is open. Everyone is equal except the host, who can remove someone for good,
   delete any message and stop all invites working. **Block** hides someone's messages from you only.
+- While you watch together, messages from the hub float over the video in a corner of the screen and
+  fade after a few seconds, so nobody has to open the panel. Press **Enter** to answer from there. In
+  *Options* you choose whose messages show: people who can't be heard (no microphone, or not talking:
+  voice isn't in Drift yet, so for now that's everyone), every message, or none. People whose PC has no
+  microphone are marked *no mic*.
+- *Options* also sets your picture. Drift cuts it to a square and saves it again small, which drops what
+  else the file carried (such as where a photo was taken), and every hub you're in shows it.
 - A hub invite works for 7 days. It holds the hub's addresses and the fingerprint of its certificate,
   so nobody else can pretend to be the hub. Each person is a key made by their Drift, kept encrypted
   by Windows; there are no accounts or passwords. The hub uses TCP port 47900.

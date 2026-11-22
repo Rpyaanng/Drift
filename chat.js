@@ -15,7 +15,7 @@ const path = require('path');
 const crypto = require('crypto');
 const createHub = require('./hub');
 const { wire } = require('./p2p');
-const { decodeInvite, pinOfPeer, memberId, rawKey, loginText, LIMITS } = createHub;
+const { decodeInvite, pinOfPeer, memberId, rawKey, loginText, cleanAvatar, avatarId, LIMITS } = createHub;
 
 module.exports = function createChat(opts) {       // (module.exports.decodeInvite: is this a hub's invite?)
   const dir = opts.dir, log = opts.log || (() => {});
@@ -69,6 +69,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
   // Stop hosting. The hub's history stays on disk, so hosting again later brings it all back with the same invites.
   async function unhost() {
     if (!hub) return;
+    log('chat: stopped hosting');
     const h = hub; hub = null;
     const id = h.pin.toString('base64url');
     close(id);
@@ -110,7 +111,9 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
     try { sock = await dial(c.h); } catch { sock = null; }
     if (c.closed) { if (sock) sock.destroy(); return; }
     if (!sock) { again(c, c.h.joined ? 'Can\'t reach this hub right now. Drift keeps trying.' : 'Couldn\'t reach that hub. Check that the host\'s Drift is open.'); return; }
+    sock.on('error', (e) => log(`chat: ${c.h.name || c.h.id}: ${e.message}`));
     c.wire = wire(sock, null, (m) => onMessage(c, m), () => {
+      log(`chat: the connection to ${c.h.name || c.h.id} closed`);
       clearInterval(c.pinger); c.wire = null;
       for (const p of c.pending.values()) p({ error: 'The connection to the hub dropped.' });
       c.pending.clear();
@@ -142,12 +145,16 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
       c.status = 'connected'; c.note = ''; c.tries = 0;
       c.me = m.me; c.host = !!m.host; c.members = m.members || []; c.channels = m.channels || []; c.lives = Array.isArray(m.lives) ? m.lives : [];
       if (myLive && myLive.hub === c.h.id) sendLive(c, myLive.live);       // still sharing: tell the hub again after a reconnect
+      const mine = c.members.find((x) => x.id === myId), want = avatarId(me.avatar || '');
+      if (mine && (mine.av || '') !== want) c.wire.send({ t: 'avatar', re: 'av', data: me.avatar || '' });       // a picture chosen (or removed) while away
+      if (myMic !== null) c.wire.send({ t: 'mic', on: myMic });
       Object.assign(c.h, { joined: true, token: undefined, name: String(m.hub || c.h.name || 'Hub').slice(0, 40) });
       if (Array.isArray(m.addrs) && m.addrs.length && !c.h.mine) c.h.addrs = [...new Set([...m.addrs, ...c.h.addrs])].slice(0, 8);
       save(); changed();
       opts.event && opts.event(c.h.id, { t: 'ready' });
       return;
     }
+    if (m.re === 'av') return;
     if (m.re !== undefined && c.pending.has(m.re)) { const p = c.pending.get(m.re); c.pending.delete(m.re); p(m.t === 'err' ? { error: String(m.error || 'The hub said no.') } : m); return; }
     switch (m.t) {
       case 'pong': return;
@@ -218,13 +225,41 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
     writeJson('identity.json', me);
     for (const c of conns.values()) if (c.status === 'connected') ask(c.h.id, { t: 'name', name: me.name });
   }
+  // Your picture: kept with your identity and given to every hub you're in.
+  function setAvatar(data) {
+    const clean = data ? cleanAvatar(data) : '';
+    if (clean === null) return { error: 'That picture can\'t be used.' };
+    me.avatar = clean; writeJson('identity.json', me);
+    for (const c of conns.values()) if (c.status === 'connected' && c.wire) c.wire.send({ t: 'avatar', re: 'av', data: clean });
+    changed();
+    return { av: avatarId(clean) };
+  }
+  // Someone's picture, by its id (members lists carry the id; the picture is fetched once and kept).
+  const faces = new Map();
+  async function avatar(id, member, av) {
+    if (!av) return { data: '' };
+    if (faces.has(av)) return { data: faces.get(av) };
+    if (member === myId && avatarId(me.avatar || '') === av) return { data: me.avatar };
+    const r = await ask(id, { t: 'avatar-get', member });
+    const data = r && r.data && cleanAvatar(r.data) && avatarId(r.data) === av ? r.data : '';
+    if (data) { faces.set(av, data); if (faces.size > 500) faces.delete(faces.keys().next().value); }
+    return { data };
+  }
+  // Whether this PC has a microphone (the panel finds out and tells us); hubs pass it on.
+  let myMic = null;
+  function setMic(on) {
+    on = !!on;
+    if (myMic === on) return;
+    myMic = on;
+    for (const c of conns.values()) if (c.status === 'connected' && c.wire) c.wire.send({ t: 'mic', on });
+  }
   function block(member, on) {
     if (on) blocked.add(member); else blocked.delete(member);
     writeJson('blocked.json', [...blocked]); changed();
   }
   function info() {
     return {
-      me: { id: myId, name: me.name },
+      me: { id: myId, name: me.name, av: avatarId(me.avatar || ''), mic: myMic },
       hosting: hub ? { id: hub.pin.toString('base64url'), name: hub.name(), port: hub.port(), note: hostNote, internet: !!(hosting && hosting.internet) } : null,
       blocked: [...blocked],
       hubs: saved.map((h) => {
@@ -250,7 +285,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
   }
 
   return {
-    start, stop, info, join, leave, host, unhost, setName, block, announce,
+    start, stop, info, join, leave, host, unhost, setName, block, announce, setAvatar, avatar, setMic,
     history: (id, ch, o = {}) => ask(id, { t: 'history', ch, before: o.before, after: o.after, limit: o.limit }).then(filterMsgs),
     send: (id, ch, text, reply) => ask(id, { t: 'send', ch, text, reply, cid: cid() }),
     edit: (id, msg, text) => ask(id, { t: 'edit', id: msg, text }),

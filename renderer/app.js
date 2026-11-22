@@ -1119,6 +1119,7 @@
       el.title = `${k} ${k === 1 ? 'person is' : 'people are'} on this tab`;
     }
     $('#shQuality').value = sh.quality || 'original';
+    $('#shOverlay').value = sh.overlay || 'unheard';
     $('#shQNote').textContent = p.role === 'guest' && sh.quality !== p.quality ? `${p.host || 'Your friend'} is sending ${QNAME[p.quality] || p.quality} at most.` : '';
   }
   let peopleKey = '';
@@ -1423,6 +1424,7 @@
   $('#shName').addEventListener('keydown', (e) => { if (e.key === 'Enter') e.target.blur(); });
   for (const [id, k] of [['#shControl', 'control'], ['#shWait', 'wait'], ['#shInternet', 'internet'], ['#shAdblock', 'adblock']]) $(id).addEventListener('change', (e) => P({ share: { [k]: e.target.checked } }));
   $('#shQuality').addEventListener('change', (e) => P({ share: { quality: e.target.value } }));
+  $('#shOverlay').addEventListener('change', (e) => P({ share: { overlay: e.target.value } }));
   $('#videoFit').addEventListener('change', (e) => P({ video: { fit: e.target.value } }));
   $('#videoSound').addEventListener('change', (e) => P({ video: { sound: e.target.checked } }));
   $('#videoAuto').addEventListener('change', (e) => P({ video: { autoplay: e.target.checked } }));

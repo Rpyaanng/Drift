@@ -17,7 +17,7 @@ const crypto = require('crypto');
 const { wire, ipBytes, ipText } = require('./p2p');
 
 const VERSION = 1;
-const LIMITS = { line: 16 * 1024, text: 4000, name: 24, channel: 32, channels: 50, page: 100, actions: 10, perSecs: 10, connections: 64 };
+const LIMITS = { line: 16 * 1024, text: 4000, name: 24, channel: 32, channels: 50, page: 100, actions: 10, perSecs: 10, connections: 64, avatar: 14000 };
 const INVITE_DAYS = 7;
 
 // ---- the hub's certificate: X.509 for a P-256 key, written by hand (Node can read certificates but not make them) ----
@@ -75,6 +75,19 @@ function decodeInvite(text) {
 // ---- cleaning what members send ----
 const cleanName = (n) => String(n || '').replace(/[\x00-\x1f\x7f<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, LIMITS.name);
 const cleanText = (t) => String(t || '').replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '').replace(/\n{4,}/g, '\n\n\n').trim();
+// A profile picture: a small raster image as a data: URL, made by the member's Drift (cropped, re-encoded, so no EXIF).
+// Only WebP, JPEG and PNG, and the bytes must really start like one: never SVG, which can carry script.
+const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+function cleanAvatar(d) {
+  d = String(d || '');
+  const m = /^data:image\/(webp|jpeg|png);base64,([A-Za-z0-9+/]+={0,2})$/.exec(d);
+  if (!m || d.length > LIMITS.avatar) return null;
+  const b = Buffer.from(m[2], 'base64');
+  const ok = m[1] === 'jpeg' ? b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff : m[1] === 'png' ? b.subarray(0, 8).equals(PNG)
+    : b.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'WEBP';
+  return ok ? d : null;
+}
+const avatarId = (d) => (d ? crypto.createHash('sha256').update(d).digest().subarray(0, 9).toString('base64url') : '');
 const cleanChannel = (n) => String(n || '').toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9_-]/g, '').replace(/-{2,}/g, '-').replace(/^-|-$/g, '').slice(0, LIMITS.channel);
 
 // opts: dir (where the database and key live), owner (the host's public key, raw 32 bytes), name (what the hub is
@@ -93,6 +106,7 @@ module.exports = function createHub(opts) {
     CREATE INDEX IF NOT EXISTS messages_by_channel ON messages (ch, id);
     CREATE TABLE IF NOT EXISTS invites (token BLOB PRIMARY KEY, made_by TEXT NOT NULL, at INTEGER NOT NULL, expires INTEGER NOT NULL, uses INTEGER NOT NULL);
   `);
+  for (const col of ['avatar TEXT', 'av TEXT']) { try { db.exec(`ALTER TABLE members ADD COLUMN ${col}`); } catch { /* there already */ } }       // added after the first hubs were made
   const q = (sql) => db.prepare(sql);
   const getMeta = q('SELECT v FROM meta WHERE k = ?'), setMeta = q('INSERT OR REPLACE INTO meta (k, v) VALUES (?, ?)');
   const meta = (k) => { const r = getMeta.get(k); return r ? r.v : null; };
@@ -117,7 +131,8 @@ module.exports = function createHub(opts) {
   const S = {
     member: q('SELECT * FROM members WHERE id = ?'), addMember: q('INSERT INTO members (id, key, name, joined) VALUES (?, ?, ?, ?)'),
     rename: q('UPDATE members SET name = ? WHERE id = ?'), ban: q('UPDATE members SET banned = 1 WHERE id = ?'),
-    members: q('SELECT id, name, joined FROM members WHERE banned = 0 ORDER BY joined'),
+    members: q('SELECT id, name, joined, av FROM members WHERE banned = 0 ORDER BY joined'),
+    setAvatar: q('UPDATE members SET avatar = ?, av = ? WHERE id = ?'), avatar: q('SELECT avatar FROM members WHERE id = ? AND banned = 0'),
     channels: q('SELECT id, name FROM channels ORDER BY id'), channel: q('SELECT * FROM channels WHERE id = ?'),
     addChannel: q('INSERT INTO channels (name, made_by, at) VALUES (?, ?, ?)'), dropChannel: q('DELETE FROM channels WHERE id = ?'),
     channelCount: q('SELECT COUNT(*) n FROM channels'), channelNamed: q('SELECT id FROM channels WHERE name = ?'),
@@ -133,12 +148,13 @@ module.exports = function createHub(opts) {
 
   // ---- connections ----
   const online = new Map();       // member id -> Set of sessions (a member may be on two PCs)
+  const mics = new Map();         // member id -> does their PC have a microphone (only while online)
   const lives = new Map();        // member id -> what they're sharing right now: { from, code, title, watching, since }. Never stored.
   const liveList = () => [...lives.values()];
   const sessions = new Set();
   let server = null, port = 0;
   const everyone = (m, but) => { const line = JSON.stringify(m); for (const s of sessions) if (s.id && s !== but) s.wire.send(line); };
-  const memberList = () => S.members.all().map((m) => ({ id: m.id, name: m.name, host: m.id === ownerId, online: online.has(m.id) }));
+  const memberList = () => S.members.all().map((m) => ({ id: m.id, name: m.name, host: m.id === ownerId, online: online.has(m.id), av: m.av || '', mic: online.has(m.id) && mics.has(m.id) ? mics.get(m.id) : null }));
   const channelList = () => S.channels.all().map((c) => ({ id: c.id, name: c.name }));
 
   function invite({ by, days = INVITE_DAYS, uses = 25 }) {
@@ -155,9 +171,10 @@ module.exports = function createHub(opts) {
     const login = setTimeout(() => { if (!s.id) s.wire.close(); }, 15000);
     s.wire = wire(sock, null, (m) => { try { onMessage(s, m); } catch (e) { reply(s, m, { error: 'Something went wrong on the hub.' }); if (opts.log) opts.log('hub: ' + (e && e.stack || e)); } }, () => {
       clearTimeout(login); sessions.delete(s);
+      if (opts.log) opts.log(`hub: ${s.id || 'someone not signed in'} disconnected`);
       if (s.id && online.has(s.id)) {
         const set = online.get(s.id); set.delete(s);
-        if (!set.size) { online.delete(s.id); everyone({ t: 'members', list: memberList() }); if (lives.delete(s.id)) everyone({ t: 'lives', list: liveList() }); }
+        if (!set.size) { online.delete(s.id); mics.delete(s.id); everyone({ t: 'members', list: memberList() }); if (lives.delete(s.id)) everyone({ t: 'lives', list: liveList() }); }
       }
     }, LIMITS.line);
     s.wire.send({ t: 'hello', v: VERSION, nonce: s.nonce, name: hubName });
@@ -283,6 +300,25 @@ module.exports = function createHub(opts) {
         everyone({ t: 'lives', list: liveList() });
         return;
       }
+      case 'avatar': {       // set (or with no data, clear) this member's picture
+        const data = m.data ? cleanAvatar(m.data) : '';
+        if (data === null) return reply(s, m, { error: 'That picture can\'t be used. Pictures are small WebP, JPEG or PNG images.' });
+        if (slow(s, 'other')) return reply(s, m, { error: 'Slow down a little.' });
+        S.setAvatar.run(data || null, avatarId(data) || null, s.id);
+        everyone({ t: 'members', list: memberList() });
+        return reply(s, m, { av: avatarId(data) });
+      }
+      case 'avatar-get': {
+        const r = S.avatar.get(String(m.member || ''));
+        return reply(s, m, { data: r && r.avatar ? r.avatar : '' });
+      }
+      case 'mic': {       // whether this member's PC has a microphone: people without one are shown, and their messages go over the video
+        const on = !!m.on;
+        if (mics.get(s.id) === on) return;
+        mics.set(s.id, on);
+        everyone({ t: 'members', list: memberList() });
+        return;
+      }
       case 'withdraw-invites': {
         if (!isHost) return reply(s, m, { error: 'Only the host can do that.' });
         S.dropInvites.run();
@@ -323,6 +359,7 @@ module.exports = function createHub(opts) {
     invite: (o = {}) => invite({ by: ownerId, ...o }),
     stats: () => ({ online: online.size, sessions: sessions.size, members: S.members.all().length }),
     stop: () => new Promise((resolve) => {
+      if (opts.log) opts.log('hub: stopping');
       for (const s of sessions) { s.wire.send({ t: 'bye' }); s.wire.close(); }
       if (!server) { db.close(); resolve(); return; }
       server.close(() => { db.close(); resolve(); });
@@ -330,4 +367,4 @@ module.exports = function createHub(opts) {
     }),
   };
 };
-Object.assign(module.exports, { encodeInvite, decodeInvite, pinOfPeer, memberId, rawKey, loginText, cleanText, VERSION, LIMITS });
+Object.assign(module.exports, { encodeInvite, decodeInvite, pinOfPeer, memberId, rawKey, loginText, cleanText, cleanAvatar, avatarId, VERSION, LIMITS });

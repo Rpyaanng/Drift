@@ -31,6 +31,26 @@
   const looking = () => $('#panel').classList.contains('open') && $('section[data-tab="share"]').classList.contains('active') && !$('#chat').classList.contains('opts');
   let p2p = { role: 'off' }, joined = '';       // watch together as main.js reports it; joined: the code of the share we joined from a card
 
+  // ---- faces: a member's picture, or their initial on a colour of their own until it arrives ----
+  const faceData = new Map();       // picture id -> data: URL ('' when it couldn't be had, so it isn't asked for again)
+  function face(x, id, cls = '') {
+    const m = (x && x.members.find((y) => y.id === id)) || (id === info.me.id ? { name: info.me.name || 'You', av: info.me.av } : null);
+    const name = m ? m.name : '?', av = m && m.av;
+    const el = h('span.face' + cls, { 'data-av': av || undefined, 'aria-hidden': 'true' });
+    el.style.setProperty('--hue', [...String(id)].reduce((a, ch) => (a * 31 + ch.charCodeAt(0)) % 360, 7));
+    const d = av && faceData.get(av);
+    el.append(d ? h('img', { src: d, alt: '' }) : (name.trim()[0] || '?').toUpperCase());
+    if (av && !faceData.has(av)) {
+      faceData.set(av, '');
+      call('avatar', x ? x.id : '', id, av).then((r) => {
+        if (!r.data || !/^data:image\/(webp|jpeg|png);base64,/.test(r.data)) return;
+        faceData.set(av, r.data);
+        for (const e of document.querySelectorAll(`.face[data-av="${CSS.escape(av)}"]`)) e.replaceChildren(h('img', { src: r.data, alt: '' }));
+      });
+    }
+    return el;
+  }
+
   // ---- text to elements: the Markdown Drift understands ----
   const INLINE = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(\|\|[^|\n]+\|\|)|(\*[^*\s][^*\n]*\*|_[^_\s][^_\n]*_)|(https?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]])/g;
   function inline(text) {
@@ -103,7 +123,8 @@
         for (const p of people) {
           const isMe = p.id === info.me.id, blocked = info.blocked.includes(p.id);
           box.append(h('div.chWho' + (p.online ? '.on' : ''), {},
-            h('span.dot'), h('span.nm', {}, p.name + (isMe ? ' (you)' : '')), p.host ? h('em', {}, 'host') : null,
+            h('span.faceWrap', {}, face(x, p.id, '.small'), h('span.dot')), h('span.nm', {}, p.name + (isMe ? ' (you)' : '')), p.host ? h('em', {}, 'host') : null,
+            p.online && p.mic === false ? h('span.nomic', { title: 'No microphone: they can only type, so their messages go over the video' }, 'no mic') : null,
             !isMe ? h('button.mini', { title: blocked ? 'Show their messages again' : 'Hide their messages from you. They aren\'t told.', onclick: () => call('block', p.id, !blocked).then(() => reload()) }, blocked ? 'Unblock' : 'Block') : null,
             !isMe && x.host && !p.host ? h('button.mini.danger', { title: 'Remove them from this hub for good', onclick: () => removePerson(x, p) }, 'Remove') : null));
         }
@@ -147,7 +168,7 @@
         const to = got.msgs.find((y) => y.id === m.reply);
         row.append(h('div.chRe', {}, '↪ ', to ? h('b', {}, nameOf(x, to.from)) : 'a deleted message', to ? ' ' + to.text.slice(0, 80) : ''));
       }
-      if (head) row.append(h('div.chBy', {}, h('b', {}, nameOf(x, m.from)), h('time', { title: new Date(m.at).toLocaleString() }, when(m.at))));
+      if (head) row.append(face(x, m.from, '.msgFace'), h('div.chBy', {}, h('b', {}, nameOf(x, m.from)), h('time', { title: new Date(m.at).toLocaleString() }, when(m.at))));
       row.append(h('div.chText', {}, render(m.text), m.edited ? h('span.chEd', { title: 'Edited ' + new Date(m.edited).toLocaleString() }, ' (edited)') : null));
       const tools = h('div.chTools');
       tools.append(h('button.mini', { onclick: () => setMode('reply', m) }, 'Reply'));
@@ -226,7 +247,7 @@
     if (!hubNow() && info.hubs.length) sel = { hub: info.hubs[0].id, ch: 0 };
     const x = hubNow();
     if (x && !x.channels.some((c) => c.id === sel.ch)) sel.ch = (x.channels[0] || {}).id || 0;
-    keep(); drawSide(); drawLives(); drawHead(); drawTyping();
+    keep(); drawSide(); drawLives(); drawHead(); drawTyping(); drawMe();
     if (x && sel.ch && !cache.has(keyOf(x.id, sel.ch)) && x.status === 'connected') load(x.id, sel.ch);
     else drawList();
   }
@@ -266,8 +287,13 @@
   // A new message, on the one screen main.js picked: a note at the top unless this channel is open right here.
   let toastTimer = null;
   function toast(text) { const t = $('#toast'); t.textContent = text; t.classList.add('on'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('on'), 3500); }
-  function onNotify(hub, msg) {
-    if (hub === sel.hub && msg.ch === sel.ch && looking()) return;
+  function onNotify(hub, msg, over) {
+    if (over && overlaySetting !== 'off') {       // watching together in this hub: over the video, if it's for the overlay
+      const x = info.hubs.find((y) => y.id === hub);
+      if ((overlaySetting === 'all' || !canBeHeard(x, msg.from)) && !(hub === sel.hub && msg.ch === sel.ch && looking())) overlayShow(x, msg);
+      return;
+    }
+    if (msg.from === info.me.id || (hub === sel.hub && msg.ch === sel.ch && looking())) return;
     const x = info.hubs.find((y) => y.id === hub), c = x && x.channels.find((y) => y.id === msg.ch);
     toast(`${nameOf(x, msg.from)} in #${c ? c.name : '?'}: ${msg.text.replace(/\s+/g, ' ').slice(0, 90)}`);
   }
@@ -370,16 +396,98 @@
   api.on('state', (s) => {
     const was = p2p.role;
     p2p = s.p2p || { role: 'off' };
+    overlaySetting = (s.share && s.share.overlay) || 'unheard';
     if (p2p.role !== 'guest') joined = '';
+    if (p2p.role === 'off' && was !== 'off') { coList.replaceChildren(); closeCompose(); }       // the session is over: so is its chat over the video
     if (was !== p2p.role) drawLives();
   });
+
+  // ---- your picture (Options) ----
+  function drawMe() {
+    $('#meFace').replaceChildren(face(null, info.me.id, '.big'));
+    $('#meFaceDrop').style.display = info.me.av ? '' : 'none';
+  }
+  $('#meFacePick').addEventListener('click', () => $('#meFaceFile').click());
+  $('#meFaceDrop').addEventListener('click', () => call('setAvatar', '').then((r) => r.error && toast(r.error)));
+  // The picture is made here: cut to a square, drawn small and saved again as WebP. That drops everything else the file
+  // carried (where a photo was taken, the camera...), and keeps it small enough for every hub to hold.
+  $('#meFaceFile').addEventListener('change', async (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    let bmp = null;
+    try { bmp = await createImageBitmap(f); } catch { toast('That picture couldn\'t be opened. Try a PNG or JPEG.'); return; }
+    const side = Math.min(bmp.width, bmp.height), cv = document.createElement('canvas'), g = cv.getContext('2d');
+    let data = '';
+    for (const [px, q] of [[128, 0.85], [128, 0.7], [96, 0.7], [96, 0.5], [64, 0.6]]) {
+      cv.width = cv.height = px;
+      g.imageSmoothingQuality = 'high';
+      g.drawImage(bmp, (bmp.width - side) / 2, (bmp.height - side) / 2, side, side, 0, 0, px, px);
+      data = cv.toDataURL('image/webp', q);
+      if (data.length <= 13500) break;
+    }
+    bmp.close();
+    const r = await call('setAvatar', data);
+    toast(r.error || 'Your picture is set. Friends see it in every hub you\'re in.');
+  });
+
+  // ---- does this PC have a microphone? Hubs show who hasn't, and their messages go over the video ----
+  async function checkMic() { try { const d = await navigator.mediaDevices.enumerateDevices(); call('mic', d.some((x) => x.kind === 'audioinput')); } catch { /* can't tell */ } }
+  checkMic();
+  if (navigator.mediaDevices) navigator.mediaDevices.addEventListener('devicechange', checkMic);
+
+  // ---- chat over the video, while watching together ----
+  // Messages from the session's hub show in a corner of the screen main.js picks and fade after a while. Enter opens a
+  // box to answer in, without opening the panel. Which messages: from people who can't be heard (the setting's default)
+  // or all of them. Voice isn't built yet, so nobody can be heard and every message shows; once it is, someone talking
+  // in the call with a working mic counts as heard and their typing stays in the tab.
+  let overlaySetting = 'unheard', coTarget = null, coTyped = 0;
+  const co = $('#chatOverlay'), coList = $('#coList'), coInput = $('#coInput');
+  const canBeHeard = (_x, _id) => false;
+  function overlayShow(x, msg) {
+    const c = x && x.channels.find((y) => y.id === msg.ch);
+    const row = h('div.coMsg', {}, face(x, msg.from, '.co'),
+      h('div.coBody', {}, h('b.coName', {}, nameOf(x, msg.from)), x && x.channels.length > 1 && c ? h('em', {}, '#' + c.name) : null, h('span.coText', {}, render(msg.text))));
+    coList.append(row);
+    while (coList.children.length > 8) coList.firstChild.remove();
+    setTimeout(() => row.classList.add('old'), 12000);
+  }
+  function openCompose() {
+    const x = info.hubs.find((y) => y.id === p2p.chatHub);
+    if (!x || x.status !== 'connected' || !x.channels.length) return false;
+    const ch = sel.hub === x.id && x.channels.some((c) => c.id === sel.ch) ? sel.ch : x.channels[0].id;
+    coTarget = { hub: x.id, ch };
+    $('#coWhere').textContent = '#' + x.channels.find((c) => c.id === ch).name;
+    coInput.placeholder = 'Say something · Enter sends, Esc closes';
+    co.classList.add('typing'); coInput.focus();
+    return true;
+  }
+  function closeCompose() { co.classList.remove('typing'); coTarget = null; if (document.activeElement === coInput) coInput.blur(); }
+  addEventListener('keydown', (e) => {       // Enter while watching (and not typing anywhere else): answer over the video
+    if (e.key !== 'Enter' || e.defaultPrevented || (document.activeElement && document.activeElement !== document.body) || $('#confirm').classList.contains('on')) return;
+    if (p2p.role === 'off' || !p2p.chatHub) return;
+    if (openCompose()) e.preventDefault();
+  });
+  coInput.addEventListener('keydown', async (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); coInput.value = ''; closeCompose(); return; }
+    if (e.key !== 'Enter') { if (coTarget && Date.now() - coTyped > 2500) { coTyped = Date.now(); call('typing', coTarget.hub, coTarget.ch); } return; }
+    e.preventDefault();
+    const text = coInput.value.trim();
+    if (!text || !coTarget) { closeCompose(); return; }
+    const r = await call('send', coTarget.hub, coTarget.ch, text);
+    if (r.error) { toast(r.error); return; }
+    coInput.value = ''; closeCompose();
+  });
+  coInput.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== coInput) co.classList.remove('typing'); }, 100));
+  new MutationObserver(() => co.classList.toggle('under', $('#panel').classList.contains('open'))).observe($('#panel'), { attributes: true, attributeFilter: ['class'] });
 
   api.on('chat', (c) => {
     if (c.type === 'info') onInfo(c.info);
     else if (c.type === 'event') onEvent(c.hub, c.m);
-    else if (c.type === 'notify') onNotify(c.hub, c.msg);
+    else if (c.type === 'notify') onNotify(c.hub, c.msg, !!c.overlay);
   });
   refresh();
   window.chatUI = { hub: () => sel.hub,       // app.js shares into this hub
+    overlay: () => [...coList.children].map((r) => r.innerText.replace(/\n+/g, ' ')), compose: (t) => { if (!openCompose()) return false; coInput.value = t; coInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); return true; },
     info: () => info, sel: () => sel, pick, send: (t) => { input.value = t; input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); } };       // (and main.js's checks)
 })();

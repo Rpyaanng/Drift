@@ -286,6 +286,15 @@ option C isn't recommended. Drift's licence text should also say the software is
      when the sharer disconnects). Everyone else gets a card with **Join**. Watch together itself (`p2p.js`) is
      unchanged. Only its code now travels through the hub instead of being copied by hand. The Join box still takes an
      old watch-together code.
+   - **Chat over the video and pictures** (2026-11-21). While watching together, messages from the session's hub
+     go over the video on the focused screen (`notify` with `overlay`), and Enter opens a box to answer in. The setting
+     `share.overlay` is `unheard` (default), `all` or `off`. "Unheard" means no microphone or not talking in voice;
+     voice doesn't exist yet, so `canBeHeard()` in `renderer/chat.js` is always false. Phase 3 should make it true
+     for someone in the call with a working, unmuted mic. Each Drift reports whether the PC has a microphone
+     (`enumerateDevices`) and the hub passes it on (held in memory only). Pictures are made in the renderer
+     (square crop, at most 128 px, WebP, at most 13,500 characters as a data: URL, so no EXIF) and checked by the
+     hub (WebP/JPEG/PNG only, magic bytes). They're stored in `members.avatar`, and member lists carry only a picture
+     id (`av`), so pictures are fetched once (`avatar-get`) and cached in `chat.js`.
    - Not yet: DMs, mentions, the per-channel retention setting, safety numbers in the UI, an encrypted local cache,
      moving `p2p.js`'s reachability into `reach.js` (for now `p2p.js` exports `wire`, `upnpMap` and the address helpers).
 2. **Attachments**: chunked upload, re-encoding images and stripping EXIF, sandboxed viewing, Mark of the Web, the
