@@ -466,6 +466,39 @@ input.num { width: 46px; text-align: center; padding: 6px 4px; }
 .chRe { margin-left: 0; }
 .chMe { align-items: flex-end; gap: 14px; }
 .chMe label { flex: 1; margin: 0; }
+/* voice: the call in the side, locks, safety numbers, and the bar over the scenes */
+.vcWho { display: flex; align-items: center; gap: 7px; padding: 3px 8px; font-size: 12px; color: var(--ink); }
+.vcWho .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vcWho .vcVol { margin-left: auto; width: 64px; }
+.vcTag { font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); white-space: nowrap; }
+.lock { font-size: 11px; cursor: default; }
+.lock.ok { color: var(--accent); }
+.lock.bad { color: #ff8a6b; }
+.lock.wait { color: var(--dim); }
+.warn { margin: 4px 8px; padding: 6px 8px; border-radius: 8px; font-size: 11.5px; line-height: 1.35; color: #ffd9c9; background: rgba(255,110,70,.14); border: 1px solid rgba(255,110,70,.35); }
+.vcNote { margin: 4px 8px; font-size: 11px; color: var(--dim); }
+.vcNote.ok { color: var(--accent); }
+.faceWrap.speaking .face, .cbFace.speaking .face { box-shadow: 0 0 0 2px #1ed760, 0 0 8px #1ed760; }
+.chWho .nm.link { cursor: pointer; }
+.chWho .nm.link:hover { text-decoration: underline; }
+.ver { color: var(--accent); font-size: 11px; }
+.chProfile { margin: 2px 8px 8px 35px; padding: 8px 10px; border-radius: 8px; background: rgba(255,255,255,.05); font-size: 11.5px; color: var(--dim); }
+.chProfile .safety { display: block; margin: 3px 0 4px; color: var(--ink); font: 600 16px/1.2 Consolas, monospace; letter-spacing: .08em; }
+.chProfile .note { margin: 4px 0 6px; }
+#callBar { position: fixed; left: 18px; top: 18px; z-index: 31; display: none; align-items: center; gap: 10px; padding: 6px 8px 6px 12px; border-radius: 999px;
+  background: rgba(10,12,18,.62); backdrop-filter: blur(16px); border: 1px solid var(--line); color: var(--ink); font-size: 12px; }
+#callBar.on { display: flex; }
+.cbWhere { display: flex; align-items: center; gap: 6px; white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.cbWhere .lock { font-size: 12px; }
+.cbFaces { display: flex; gap: 4px; }
+.cbFace { position: relative; display: inline-flex; }
+.cbFace i { position: absolute; right: -3px; top: -3px; width: 11px; height: 11px; border-radius: 50%; background: #ff6b4a; color: #fff; font: 700 8px/11px "Segoe UI", system-ui; text-align: center; font-style: normal; }
+.cbMic { font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--dim); white-space: nowrap; }
+.cbMic.live { color: #ff6b6b; }
+.cbBtn { all: unset; cursor: pointer; padding: 4px 10px; border-radius: 999px; background: rgba(255,255,255,.08); font-size: 11.5px; }
+.cbBtn:hover { background: rgba(255,255,255,.16); }
+.cbBtn.off { background: rgba(255,90,90,.35); }
+.cbBtn.leave:hover { background: rgba(255,90,90,.5); }
 /* chat over the video */
 #chatOverlay { position: fixed; left: 28px; bottom: 150px; width: min(440px, 40vw); z-index: 30; pointer-events: none; display: flex; flex-direction: column; gap: 6px; }
 #chatOverlay.under { opacity: 0; }

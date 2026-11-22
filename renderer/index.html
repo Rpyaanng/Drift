@@ -28,6 +28,7 @@
   </div>
 </div>
 <div id="toast"></div>
+<div id="callBar"></div>
 <div id="chatOverlay"><div id="coList"></div><div id="coBox"><span id="coWhere"></span><input type="search" id="coInput" maxlength="4000" spellcheck="true" autocomplete="off"></div></div>
 <div id="algo"></div>
 <div id="confirm"><div class="box"><b>Close Drift?</b><p id="confirmNote"></p><div class="row"><button class="btn" id="confirmNo">Stay</button><button class="btn ghost" id="confirmMon" title="Turn Drift off on this monitor only. Turn it back on in Settings.">Close this monitor</button><button class="btn danger" id="confirmYes">Close Drift</button></div></div></div>
@@ -216,7 +217,21 @@
               <option value="off">None: only in this tab</option>
             </select>
           </label>
-          <p class="note">While you watch, press Enter to write a message without opening this tab. Voice isn't here yet, so for now nobody can be heard and every message shows.</p>
+          <p class="note">While you watch, press Enter to write a message without opening this tab. Someone talking in the call with a working, unmuted microphone counts as heard.</p>
+          <h3 class="sub">Calls</h3>
+          <div class="checks one">
+            <label class="chk"><input type="checkbox" id="vcDirect"><i></i>Connect directly in calls (lower delay; others in the call can see your IP address)</label>
+            <label class="chk"><input type="checkbox" id="vcPtt"><i></i>Hold a key to talk</label>
+          </div>
+          <label>Key to hold
+            <select id="vcKey">
+              <option value="backquote">` (the key under Esc)</option>
+              <option value="rctrl">Right Ctrl</option>
+              <option value="mouse4">Mouse back button</option>
+              <option value="mouse5">Mouse forward button</option>
+            </select>
+          </label>
+          <p class="note">Calls go through the hub's PC by default, so nobody in a call learns anyone else's address. Either way the sound is encrypted from your PC to theirs: Drift checks every connection and shows a lock on each one it verified, end-to-end encrypted in calls of up to 8. Changes here apply from your next call.</p>
           <div class="checks one">
             <label class="chk"><input type="checkbox" id="shControl"><i></i>Friends can play, pause and skip, and use a web page</label>
             <label class="chk"><input type="checkbox" id="shWait"><i></i>Pause for everyone while someone is loading</label>

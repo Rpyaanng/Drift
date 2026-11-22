@@ -27,7 +27,12 @@
   const keyOf = (hub, ch) => `${hub}:${ch}`;
   const hubNow = () => info.hubs.find((x) => x.id === sel.hub);
   const chanNow = () => { const x = hubNow(); return x && x.channels.find((c) => c.id === sel.ch); };
-  const nameOf = (x, id) => { const m = x && x.members.find((y) => y.id === id); return m ? m.name : 'Someone who left'; };
+  const nameOf = (x, id) => {
+    const m = x && x.members.find((y) => y.id === id);
+    if (m) return m.name;
+    const s = x && (x.suspect || []).find((y) => y.id === id);       // someone the hub sent a bad key for: still named, so the warning makes sense
+    return s ? s.name : id === info.me.id ? (info.me.name || 'You') : 'Someone who left';
+  };
   const looking = () => $('#panel').classList.contains('open') && $('section[data-tab="share"]').classList.contains('active') && !$('#chat').classList.contains('opts');
   let p2p = { role: 'off' }, joined = '';       // watch together as main.js reports it; joined: the code of the share we joined from a card
 
@@ -112,21 +117,29 @@
         !open && n ? h('span.badge', {}, n > 99 ? '99+' : n) : null));
       if (!open) continue;
       if (x.status === 'gone' || (x.status !== 'connected' && x.note)) box.append(h('p.note.chNote', {}, x.note));
+      if (x.status === 'connected') {       // what the hub said about people that didn't check out
+        for (const w of x.suspect || []) box.append(h('p.warn', {}, `⚠ The hub sent a key for ${w.name} that doesn't belong to them, so Drift is ignoring it. The hub may be interfering.`));
+        for (const w of x.lookalikes || []) box.append(h('p.warn', {}, `⚠ This ${w.name} has a different key from the ${w.name} you met here before. It may be a new PC, or the hub pretending. Click their name in People and compare safety numbers.`));
+      }
       for (const c of x.channels) {
         const u = unread.get(keyOf(x.id, c.id)) || 0;
         box.append(h('button.chChan' + (c.id === sel.ch ? '.on' : '') + (u ? '.new' : ''), { onclick: () => pick(x.id, c.id) }, '# ' + c.name, u ? h('span.badge', {}, u > 99 ? '99+' : u) : null));
       }
       if (x.status === 'connected') {
         box.append(h('button.chChan.add', { title: 'Make a channel', onclick: () => makeChannel(x) }, '+ New channel'));
+        drawVoice(box, x);
         const people = [...x.members].sort((a, b) => (b.online - a.online) || a.name.localeCompare(b.name));
         box.append(h('h3.sub', {}, `People · ${people.filter((p) => p.online).length} here`));
         for (const p of people) {
           const isMe = p.id === info.me.id, blocked = info.blocked.includes(p.id);
           box.append(h('div.chWho' + (p.online ? '.on' : ''), {},
-            h('span.faceWrap', {}, face(x, p.id, '.small'), h('span.dot')), h('span.nm', {}, p.name + (isMe ? ' (you)' : '')), p.host ? h('em', {}, 'host') : null,
+            h('span.faceWrap', {}, face(x, p.id, '.small'), h('span.dot')),
+            h('span.nm' + (isMe ? '' : '.link'), { title: isMe ? undefined : 'Their profile and safety number', onclick: isMe ? undefined : () => { profile = profile === p.id ? '' : p.id; drawSide(); } }, p.name + (isMe ? ' (you)' : '')),
+            p.verified ? h('span.ver', { title: 'You compared safety numbers with them' }, '✓') : null, p.host ? h('em', {}, 'host') : null,
             p.online && p.mic === false ? h('span.nomic', { title: 'No microphone: they can only type, so their messages go over the video' }, 'no mic') : null,
             !isMe ? h('button.mini', { title: blocked ? 'Show their messages again' : 'Hide their messages from you. They aren\'t told.', onclick: () => call('block', p.id, !blocked).then(() => reload()) }, blocked ? 'Unblock' : 'Block') : null,
             !isMe && x.host && !p.host ? h('button.mini.danger', { title: 'Remove them from this hub for good', onclick: () => removePerson(x, p) }, 'Remove') : null));
+          if (profile === p.id && !isMe) box.append(drawProfile(x, p));
         }
         const acts = h('div.row.chActs');
         acts.append(h('button.btn', { title: 'Copies a code friends paste into their Drift. It works for 7 days.', onclick: () => invite(x) }, 'Copy an invite'));
@@ -207,7 +220,106 @@
     joined = l.code;
     api.cmd({ type: 'share-join', code: l.code });
   }
-  function drawAll(stick) { drawSide(); drawLives(); drawHead(); drawList(stick); drawTyping(); drawMode(); }
+  function drawAll(stick) { drawSide(); drawLives(); drawHead(); drawList(stick); drawTyping(); drawMode(); drawCall(); }
+
+  // ---- voice: who is in the hub's call, and how far each connection can be trusted ----
+  let profile = '';                 // the member whose profile is open in People
+  const safetyCodes = new Map();    // "hub:member" -> their safety number with you
+  // A lock for each person in the call with you. Only a connection whose signed SDP checked out and whose certificate
+  // matches the signed one counts as end-to-end encrypted; anything else says what went wrong.
+  function lockOf(x, id) {
+    const c = info.call, live = info.live || { peers: {} }, name = nameOf(x, id);
+    if (!c || id === info.me.id || !x || c.hub !== x.id) return null;
+    if (c.verdict[id] === 'mismatch') return { kind: 'bad', text: `The connection to ${name} didn't use the certificate they signed, so Drift closed it. The hub may be interfering.` };
+    if (c.refused[id]) return { kind: 'bad', text: `Couldn't verify ${name}. The hub may be interfering.` };
+    if (c.told.includes(id)) return { kind: 'bad', text: `${name} couldn't verify your connection. The hub may be interfering.` };
+    if (c.verdict[id] === 'verified' && live.peers[id] === 'connected') return { kind: 'ok', text: `Verified: ${name}'s Drift signed this connection and it uses the certificate they signed. End-to-end encrypted in calls of up to 8: the hub passes the sound on but can't hear it.` };
+    if (live.peers[id] === 'failed') return { kind: 'bad', text: `Couldn't connect to ${name}.` };
+    return { kind: 'wait', text: `Connecting to ${name}…` };
+  }
+  function e2eNote(x) {
+    const ids = (x.voice || []).map((v) => v.id).filter((id) => id !== info.me.id);
+    if (!ids.length) return { text: 'Nobody else is in the call yet.' };
+    const kinds = ids.map((id) => lockOf(x, id).kind);
+    if (kinds.every((k) => k === 'ok')) return { ok: true, text: '🔒 End-to-end encrypted in calls of up to 8. The hub passes the sound on but can\'t hear it.' };
+    if (kinds.some((k) => k === 'ok')) return { text: 'Connections with a 🔒 are end-to-end encrypted (in calls of up to 8). The others aren\'t verified.' };
+    return { text: kinds.some((k) => k === 'bad') ? 'No connection in this call is verified.' : 'Checking each connection…' };
+  }
+  function drawVoice(box, x) {
+    const list = x.voice || [], inCall = !!info.call && info.call.hub === x.id;
+    box.append(h('h3.sub', {}, list.length ? `Voice · ${list.length} in the call` : 'Voice'));
+    for (const v of list) {
+      const isMe = v.id === info.me.id, lock = inCall ? lockOf(x, v.id) : null, vol = (voiceSet.volumes || {})[v.id];
+      box.append(h('div.vcWho', {},
+        h('span.faceWrap', { 'data-speak': v.id }, face(x, v.id, '.small')), h('span.nm', {}, nameOf(x, v.id) + (isMe ? ' (you)' : '')),
+        lock ? h('span.lock.' + lock.kind, { title: lock.text }, lock.kind === 'ok' ? '🔒' : lock.kind === 'bad' ? '⚠' : '…') : null,
+        v.deaf ? h('span.vcTag', {}, 'deafened') : v.muted ? h('span.vcTag', {}, 'muted') : !v.mic ? h('span.vcTag', {}, 'no mic') : null,
+        inCall && !isMe && lock.kind !== 'bad' ? h('input.vcVol', { type: 'range', min: '0', max: '100', value: String(Math.round((vol ?? 1) * 100)), title: `${nameOf(x, v.id)}'s volume, for you only`,
+          oninput: (e) => api.patch({ voice: { volumes: { [v.id]: +e.target.value / 100 } } }) }) : null));
+      if (lock && lock.kind === 'bad') box.append(h('p.warn', {}, lock.text));
+    }
+    if (inCall) { const n = e2eNote(x); box.append(h('p.vcNote' + (n.ok ? '.ok' : ''), {}, n.text)); }
+    const full = !inCall && list.length >= 8;
+    box.append(h('div.row.chActs', {}, inCall
+      ? h('button.btn.ghost', { onclick: () => call('voiceLeave') }, 'Leave the call')
+      : h('button.btn', { disabled: full, title: full ? 'Up to 8 people can be in a call at once' : 'Talk with whoever is in this hub\'s call', onclick: () => joinVoice(x) }, full ? 'The call is full' : list.length ? 'Join the call' : 'Start a call')));
+  }
+  async function joinVoice(x) {
+    const r = await call('voiceJoin', x.id);
+    if (r.error) toast(r.error);
+  }
+  function drawProfile(x, p) {
+    const k = `${x.id}:${p.id}`, code = safetyCodes.get(k);
+    if (!safetyCodes.has(k)) {
+      safetyCodes.set(k, '');
+      call('safety', x.id, p.id).then((r) => { safetyCodes.set(k, r.code || r.error || ''); if (profile === p.id) drawSide(); });
+    }
+    return h('div.chProfile', {},
+      'Safety number with you', h('b.safety', {}, code || '…'),
+      h('p.note', {}, `Compare it with ${p.name} in person or on the phone. If yours match, nobody (not even the hub) can pretend to be either of you in calls.`),
+      h('button.mini', { onclick: () => call('verify', x.id, p.id, !p.verified).then((r) => r.error && toast(r.error)) }, p.verified ? 'Not verified any more' : 'They match: mark as verified'));
+  }
+  // ---- the call bar over the scenes, on every screen while you're in a call ----
+  function drawCall() {
+    const bar = $('#callBar'), c = info.call, live = info.live;
+    if (!c || !live) { bar.classList.remove('on'); bar.replaceChildren(); return; }
+    const x = info.hubs.find((y) => y.id === c.hub), n = x ? e2eNote(x) : { text: '' };
+    const ids = [info.me.id, ...c.peers.filter((id) => !x || (x.voice || []).some((v) => v.id === id))];
+    const mic = live.mic === 'off' ? 'No microphone' : live.mic === 'live' ? 'Mic on' : voiceSet.ptt && !voiceSet.muted && !voiceSet.deaf ? `Hold ${KEY_NAMES[voiceSet.pttKey] || 'the key'} to talk` : 'Muted';
+    bar.replaceChildren(
+      h('span.cbWhere', { title: n.text }, n.ok ? h('span.lock.ok', {}, '🔒') : null, x ? x.name : 'Call'),
+      h('span.cbFaces', {}, ids.map((id) => {
+        const l = x && lockOf(x, id);
+        return h('span.cbFace', { 'data-speak': id, title: id === info.me.id ? 'You' : `${nameOf(x, id)}${l ? ' · ' + l.text : ''}` }, face(x, id, '.small'), l && l.kind === 'bad' ? h('i', {}, '!') : null);
+      })),
+      h('span.cbMic' + (live.mic === 'live' ? '.live' : ''), {}, mic),
+      h('button.cbBtn' + (voiceSet.muted ? '.off' : ''), { title: 'Your microphone (or click the light in the tray)', onclick: () => api.patch({ voice: { muted: !voiceSet.muted } }) }, voiceSet.muted ? 'Unmute' : 'Mute'),
+      h('button.cbBtn' + (voiceSet.deaf ? '.off' : ''), { title: 'Hear nobody, and nobody hears you', onclick: () => api.patch({ voice: { deaf: !voiceSet.deaf } }) }, voiceSet.deaf ? 'Undeafen' : 'Deafen'),
+      h('button.cbBtn.leave', { onclick: () => call('voiceLeave') }, 'Leave'));
+    bar.classList.add('on');
+    speaking();
+  }
+  const KEY_NAMES = { backquote: '`', rctrl: 'Right Ctrl', mouse4: 'the mouse\'s back button', mouse5: 'the mouse\'s forward button' };
+  // The speaking rings change many times a second: set in place, without drawing anything again.
+  function speaking() {
+    const on = new Set((info.live && info.live.speaking) || []);
+    for (const el of document.querySelectorAll('[data-speak]')) el.classList.toggle('speaking', on.has(el.dataset.speak));
+  }
+  let liveKey = '';
+  function onVoice(live) {
+    info.live = live;
+    const key = JSON.stringify(live && { mic: live.mic, peers: live.peers });
+    if (key !== liveKey) { liveKey = key; drawSide(); drawCall(); }
+    speaking();
+  }
+  let voiceSet = {};
+  function drawVoiceOpts() {
+    $('#vcDirect').checked = !!voiceSet.direct; $('#vcPtt').checked = !!voiceSet.ptt; $('#vcKey').value = voiceSet.pttKey || 'backquote';
+    $('#vcKey').disabled = !voiceSet.ptt;
+  }
+  $('#vcDirect').addEventListener('change', (e) => api.patch({ voice: { direct: e.target.checked } }));
+  $('#vcPtt').addEventListener('change', (e) => api.patch({ voice: { ptt: e.target.checked } }));
+  $('#vcKey').addEventListener('change', (e) => api.patch({ voice: { pttKey: e.target.value } }));
 
   // ---- loading and keeping up ----
   async function load(hub, ch) {
@@ -247,7 +359,8 @@
     if (!hubNow() && info.hubs.length) sel = { hub: info.hubs[0].id, ch: 0 };
     const x = hubNow();
     if (x && !x.channels.some((c) => c.id === sel.ch)) sel.ch = (x.channels[0] || {}).id || 0;
-    keep(); drawSide(); drawLives(); drawHead(); drawTyping(); drawMe();
+    liveKey = JSON.stringify(info.live && { mic: info.live.mic, peers: info.live.peers });
+    keep(); drawSide(); drawLives(); drawHead(); drawTyping(); drawMe(); drawCall();
     if (x && sel.ch && !cache.has(keyOf(x.id, sel.ch)) && x.status === 'connected') load(x.id, sel.ch);
     else drawList();
   }
@@ -397,6 +510,8 @@
     const was = p2p.role;
     p2p = s.p2p || { role: 'off' };
     overlaySetting = (s.share && s.share.overlay) || 'unheard';
+    const vs = JSON.stringify(s.voice || {});
+    if (vs !== JSON.stringify(voiceSet)) { voiceSet = s.voice || {}; drawVoiceOpts(); drawCall(); }
     if (p2p.role !== 'guest') joined = '';
     if (p2p.role === 'off' && was !== 'off') { coList.replaceChildren(); closeCompose(); }       // the session is over: so is its chat over the video
     if (was !== p2p.role) drawLives();
@@ -439,11 +554,11 @@
   // ---- chat over the video, while watching together ----
   // Messages from the session's hub show in a corner of the screen main.js picks and fade after a while. Enter opens a
   // box to answer in, without opening the panel. Which messages: from people who can't be heard (the setting's default)
-  // or all of them. Voice isn't built yet, so nobody can be heard and every message shows; once it is, someone talking
-  // in the call with a working mic counts as heard and their typing stays in the tab.
+  // or all of them. Someone in the hub's call with a working, unmuted microphone counts as heard, so what they type stays
+  // in the tab (they can just say it).
   let overlaySetting = 'unheard', coTarget = null, coTyped = 0;
   const co = $('#chatOverlay'), coList = $('#coList'), coInput = $('#coInput');
-  const canBeHeard = (_x, _id) => false;
+  const canBeHeard = (x, id) => { const v = x && (x.voice || []).find((y) => y.id === id); return !!v && !!v.mic && !v.muted && !v.deaf; };
   function overlayShow(x, msg) {
     const c = x && x.channels.find((y) => y.id === msg.ch);
     const row = h('div.coMsg', {}, face(x, msg.from, '.co'),
@@ -485,9 +600,10 @@
     if (c.type === 'info') onInfo(c.info);
     else if (c.type === 'event') onEvent(c.hub, c.m);
     else if (c.type === 'notify') onNotify(c.hub, c.msg, !!c.overlay);
+    else if (c.type === 'voice') onVoice(c.live);
   });
   refresh();
   window.chatUI = { hub: () => sel.hub,       // app.js shares into this hub
     overlay: () => [...coList.children].map((r) => r.innerText.replace(/\n+/g, ' ')), compose: (t) => { if (!openCompose()) return false; coInput.value = t; coInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); return true; },
-    info: () => info, sel: () => sel, pick, send: (t) => { input.value = t; input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); } };       // (and main.js's checks)
+    info: () => info, sel: () => sel, pick, canBeHeard: (hub, id) => canBeHeard(info.hubs.find((y) => y.id === hub), id), send: (t) => { input.value = t; input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); } };       // (and main.js's checks)
 })();

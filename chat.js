@@ -416,6 +416,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
     const line = `a=fingerprint:${String(alg)} ${String(fp)}`.replace(/\s+/g, ' ').toLowerCase();
     const ok = call.prints.get(peer).includes(line);
     call.verdict.set(peer, ok ? 'verified' : 'mismatch');
+    if (!ok) call.refused.set(peer, 'the certificate they used isn\'t the one they signed');       // and nothing more from them this call
     if (!ok) log(`chat: the certificate ${nameIn(conns.get(call.hub), peer)} used doesn't match their signed one; closing that connection`);
     emit(call.hub, { t: 'voice-verdict', id: peer, ok });
     changed();

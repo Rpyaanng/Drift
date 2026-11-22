@@ -1,5 +1,5 @@
 // Drift — main process: one fullscreen window per monitor, shared state, hidden audio engine window.
-const { app, BrowserWindow, ipcMain, screen, dialog, powerSaveBlocker, shell, session, desktopCapturer, net, clipboard, webContents, protocol, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, dialog, powerSaveBlocker, shell, session, desktopCapturer, net, clipboard, webContents, protocol, safeStorage, Tray, Menu, nativeImage } = require('electron');
 const { pathToFileURL } = require('url');
 const http = require('http');
 const os = require('os');
@@ -62,6 +62,9 @@ const DEFAULTS = {
   // watch together: internet = ask the router to let friends outside the home in; control = friends may play / pause / seek;
   // wait = pause for everyone while someone is loading; quality = picture size sent to (and asked from) friends
   share: { name: '', internet: true, control: true, wait: true, quality: 'original', port: 47800, adblock: true, overlay: 'unheard' },       // overlay: whose chat messages go over the video (unheard / all / off)
+  // calls: direct = connect straight to the others (lower delay, but they see this PC's address) instead of through the
+  // hub's relay; ptt = hold a key to talk (pttKey, see VOICE_KEYS); volumes = each person's volume, by member id
+  voice: { direct: false, ptt: false, pttKey: 'backquote', muted: false, deaf: false, volumes: {} },
   // subtitles: on = show them when a video has some; perFile remembers the track and timing chosen for each video
   subs: { on: true, lang: 'en', size: 1, color: '#ffffff', bg: 'outline', lift: 0, perFile: {} },
   prevScene: 'aurora',
@@ -102,6 +105,7 @@ function loadSettings() {
     state.video = { ...DEFAULTS.video, ...(s.video || {}) };
     state.subs = { ...DEFAULTS.subs, ...(s.subs || {}) };
     state.share = cleanShare({ ...DEFAULTS.share, ...(s.share || {}) });
+    state.voice = cleanVoice({ ...DEFAULTS.voice, ...(s.voice || {}) });
     if (!state.subs.perFile || typeof state.subs.perFile !== 'object' || Array.isArray(state.subs.perFile)) state.subs.perFile = {};
     state.video.files = (state.video.files || []).filter((p) => { try { return fs.existsSync(p); } catch { return false; } });
     state.video.index = Math.min(state.video.index || 0, Math.max(0, state.video.files.length - 1));
@@ -141,6 +145,12 @@ const QUALITY = { original: { h: 0, kbps: 0 }, 1080: { h: 1080, kbps: 6000 }, 72
 function cleanShare(q) {
   return { name: String(q.name || '').replace(/[\x00-\x1f<>]/g, '').slice(0, 24), internet: !!q.internet, control: !!q.control, wait: !!q.wait, adblock: !!q.adblock,
     quality: QUALITY[q.quality] ? String(q.quality) : 'original', overlay: ['unheard', 'all', 'off'].includes(q.overlay) ? q.overlay : 'unheard', port: q.port >= 1024 && q.port <= 65535 ? Math.round(q.port) : DEFAULTS.share.port };
+}
+const VOICE_KEYS = { backquote: 0xc0, rctrl: 0xa3, mouse4: 0x05, mouse5: 0x06 };       // hold-to-talk keys, as Windows virtual-key codes
+function cleanVoice(q) {
+  const vols = Object.entries(q.volumes && typeof q.volumes === 'object' ? q.volumes : {}).filter(([id, v]) => /^[A-Za-z0-9_-]{6,20}$/.test(id) && isFinite(v)).slice(-200);
+  return { direct: !!q.direct, ptt: !!q.ptt, pttKey: Object.hasOwn(VOICE_KEYS, q.pttKey) ? q.pttKey : 'backquote', muted: !!q.muted, deaf: !!q.deaf,
+    volumes: Object.fromEntries(vols.map(([id, v]) => [id, Math.max(0, Math.min(1, +v))])) };
 }
 function dropVideoScene() {
   if (state.scene === 'video') state.scene = 'aurora';
@@ -933,6 +943,7 @@ async function publicIp() { const r = await net.fetch('https://api.ipify.org', {
 // chat.js holds this PC's identity, its hubs and (when hosting) a hub of its own; this passes what it says to the windows.
 // Every window's panel has a Chat tab, so all of them hear about changes. A new message pops up on one screen only.
 let chat = null, chatPub = '', shownSessionHub = '';
+const chatLog = (t) => { console.log(t); if (SHOT_DIR) { try { fs.appendFileSync(path.join(SHOT_DIR, 'chat.log'), new Date().toISOString().slice(11, 23) + ' ' + t + '\n'); } catch { /* fine */ } } };       // test runs keep chat's log
 function startChat() {
   const enc = safeStorage.isEncryptionAvailable();
   chat = createChat({
@@ -940,13 +951,14 @@ function startChat() {
     seal: (b) => (enc ? safeStorage.encryptString(b.toString('latin1')) : b),
     unseal: (b) => (enc ? Buffer.from(safeStorage.decryptString(Buffer.from(b)), 'latin1') : b),
     addrs: () => [...(createP2P.isPublic(chatPub) ? [chatPub] : []), ...createP2P.localAddrs()],
-    upnp: async (port) => { const m = await createP2P.upnpMap(port); if (createP2P.isPublic(m.ip)) chatPub = m.ip; return m; },
+    upnp: async (port, proto) => { const m = await createP2P.upnpMap(port, proto); if (createP2P.isPublic(m.ip)) chatPub = m.ip; return m; },
     changed: () => {
-      broadcast('chat', { type: 'info', info: chat.info() }, false);
+      broadcast('chat', { type: 'info', info: chatInfo() }, false);
       const sh = sessionHub();       // the session's hub is known once that hub lists the share: the panels need it to chat over the video
       if (sh !== shownSessionHub) { shownSessionHub = sh; pushState(); }
     },
     event: (hub, m) => {
+      if (String(m.t).startsWith('voice-')) { onVoiceEvent(hub, m); return; }       // for the call's window, not the panels
       broadcast('chat', { type: 'event', hub, m }, false);
       // A new message pops up on one screen: over the video, while watching together in that hub (yours too, so the
       // conversation reads in order), or as a note at the top for anyone else's.
@@ -956,7 +968,7 @@ function startChat() {
         if (v && !v.win.isDestroyed()) v.win.webContents.send('chat', { type: 'notify', hub, msg: m.msg, overlay: over });
       }
     },
-    log: (t) => { console.log(t); if (SHOT_DIR) { try { fs.appendFileSync(path.join(SHOT_DIR, 'chat.log'), new Date().toISOString().slice(11, 23) + ' ' + t + '\n'); } catch { /* fine */ } } },       // test runs keep chat's log
+    log: chatLog,
   });
   chat.setName(shareName());
   if (!SHOT_DIR || process.env.DRIFT_TESTCHAT) chat.start().catch((e) => console.log('chat: ' + e.message));
@@ -998,7 +1010,7 @@ async function shareHub(want) {
 
 // What the panel may ask of chat. Each argument is checked here; chat.js and the hub check them again.
 const CHAT_OPS = {
-  info: () => chat.info(),
+  info: () => chatInfo(),
   join: async (code) => {       // a hub's invite, or (from before Together and Chat were one) a friend's watch-together code
     code = String(code || '').slice(0, 400);
     if (!createChat.decodeInvite(code) && createP2P.decodeCode(code)) { const r = await p2p.join(code, shareName()); return r.ok ? { watching: true } : { error: r.error }; }
@@ -1022,11 +1034,150 @@ const CHAT_OPS = {
   setAvatar: (data) => chat.setAvatar(String(data || '').slice(0, 20000)),
   avatar: (hub, member, av) => chat.avatar(String(hub), String(member || ''), String(av || '')),
   mic: (on) => chat.setMic(!!on),
+  voiceJoin: (hub) => voiceJoin(String(hub || '')),
+  voiceLeave: () => voiceLeave(),
+  safety: (hub, member) => chat.safety(String(hub || ''), String(member || '')),
+  verify: (hub, member, on) => chat.setVerified(String(hub || ''), String(member || ''), !!on),
 };
 ipcMain.handle('chat', async (_e, op, ...args) => {
   if (!chat || !Object.hasOwn(CHAT_OPS, op)) return { error: 'Chat isn\'t ready.' };
   try { return (await CHAT_OPS[op](...args)) ?? {}; } catch (e) { return { error: String(e && e.message || e) }; }
 });
+
+// ---- voice calls ------------------------------------------------------------------------------------
+// A call lives in its own hidden window (renderer/voice.html), made when you join and closed when you leave, so the
+// microphone is only open during a call. chat.js signs what this PC sends and checks what arrives before the window
+// sees it; this only carries messages between the two, keeps the "mic live" light in the tray, and watches the
+// hold-to-talk key. voiceLive is what the panels draw: the call's hub, the microphone, who is speaking, each connection.
+let voiceWin = null, voiceUp = false, voiceQueue = [], voiceLive = null, micTray = null, pttProc = null;
+const chatInfo = () => ({ ...chat.info(), live: voiceLive });
+const pushVoice = () => broadcast('chat', { type: 'voice', live: voiceLive }, false);
+function toVoice(m) {       // to the call's window; held until it has loaded
+  if (!voiceLive) return;
+  if (voiceUp && voiceWin && !voiceWin.isDestroyed()) voiceWin.webContents.send('voice', m); else voiceQueue.push(m);
+}
+async function voiceJoin(hub) {
+  if (voiceLive && voiceLive.hub === hub) return {};
+  await voiceLeave();
+  voiceLive = { hub, mic: 'off', micOk: false, speaking: [], peers: {} }; voiceUp = false; voiceQueue = [];       // (setup messages arriving meanwhile wait in the queue)
+  const r = await chat.voiceJoin(hub, { muted: state.voice.muted, deaf: state.voice.deaf });
+  if (r.error || (!r.iceServers.length && !state.voice.direct)) {
+    if (!r.error) await chat.voiceLeave();
+    voiceLive = null; voiceQueue = []; pushVoice();
+    return { error: r.error || 'This hub\'s voice relay isn\'t running, so the call can\'t keep your address private. Turn on "Connect directly in calls" in Options to call without it.' };
+  }
+  voiceQueue.unshift({ t: 'start', me: r.me, peers: r.peers, iceServers: r.iceServers, policy: state.voice.direct ? 'all' : 'relay', tone: !!process.env.DRIFT_TESTVOICE,
+    muted: state.voice.muted, deaf: state.voice.deaf, ptt: state.voice.ptt, volumes: state.voice.volumes });
+  const w = voiceWin = new BrowserWindow({ show: false, width: 240, height: 120, skipTaskbar: true, title: 'Drift call',
+    webPreferences: { preload: path.join(__dirname, 'voice-preload.js'), sandbox: true, contextIsolation: true, backgroundThrottling: false, autoplayPolicy: 'no-user-gesture-required' } });
+  if (process.env.DRIFT_MUTE) w.webContents.setAudioMuted(true);
+  w.on('closed', () => { if (voiceWin === w) { voiceWin = null; if (voiceLive) voiceLeave(); } });
+  w.loadFile(path.join(__dirname, 'renderer', 'voice.html')).catch(() => {});
+  pttWatch(); micLight(); pushVoice();
+  return {};
+}
+async function voiceLeave() {
+  if (!voiceLive) return {};
+  closeVoiceWin();
+  await chat.voiceLeave();
+  return {};
+}
+function closeVoiceWin() {
+  voiceLive = null; voiceUp = false; voiceQueue = [];
+  const w = voiceWin; voiceWin = null;
+  if (w && !w.isDestroyed()) w.destroy();       // the microphone goes with it
+  pttWatch(); micLight(); pushVoice();
+}
+// What chat.js says about the call (all of it already checked there).
+function onVoiceEvent(hub, m) {
+  const named = String(m.name || 'someone');
+  switch (m.t) {
+    case 'voice-sdp': toVoice({ t: 'sdp', from: m.from, sdp: m.sdp }); break;
+    case 'voice-candidate': toVoice({ t: 'candidate', from: m.from, c: m.c }); break;
+    case 'voice-left': toVoice({ t: 'left', id: m.id }); if (voiceLive) { delete voiceLive.peers[m.id]; pushVoice(); } break;
+    case 'voice-refused': toVoice({ t: 'close', id: m.from }); say(`Couldn't verify ${named}. The hub may be interfering.`); break;
+    case 'voice-told': say(`${named} couldn't verify your connection. The hub may be interfering.`); break;
+    case 'voice-verdict': if (!m.ok) { toVoice({ t: 'close', id: m.id }); say('A connection in the call didn\'t match its signed certificate, so it was closed. The hub may be interfering.'); } break;
+    case 'voice-ended': closeVoiceWin(); say(m.why); break;
+    default: break;
+  }
+}
+ipcMain.on('voice', (e, type, d) => {
+  if (!voiceWin || voiceWin.isDestroyed() || e.sender !== voiceWin.webContents) return;
+  if (type === 'log') { chatLog('voice: ' + String(d).slice(0, 300)); return; }
+  if (!voiceLive) return;
+  switch (type) {
+    case 'hello': voiceUp = true; for (const m of voiceQueue.splice(0)) voiceWin.webContents.send('voice', m); break;
+    case 'signal': if (d && typeof d === 'object') chat.voiceSignal(String(d.to || ''), d.d); break;
+    case 'cert': if (d && typeof d === 'object') chat.voiceCert(String(d.peer || ''), String(d.alg || ''), String(d.fp || '')); break;       // a mismatch comes back as voice-verdict and closes it
+    case 'state':
+      if (!d || typeof d !== 'object') break;
+      Object.assign(voiceLive, { mic: ['off', 'open', 'live'].includes(d.mic) ? d.mic : 'off', micOk: !!d.micOk });
+      chat.voiceState({ muted: !!d.muted, deaf: !!d.deaf, mic: !!d.micOk });
+      micLight(); pushVoice(); break;
+    case 'speaking': voiceLive.speaking = (Array.isArray(d) ? d : []).map(String).slice(0, 9); pushVoice(); break;
+    case 'peer': if (d && typeof d === 'object') { voiceLive.peers[String(d.id)] = String(d.state); pushVoice(); } break;
+    case 'failed': say('The call couldn\'t start: ' + String(d).slice(0, 120)); voiceLeave(); break;
+    default: break;
+  }
+});
+function applyVoice(q) {
+  const was = state.voice;
+  const v = state.voice = cleanVoice({ ...was, ...q, volumes: { ...was.volumes, ...(q.volumes && typeof q.volumes === 'object' ? q.volumes : {}) } });
+  if (v.muted !== was.muted) toVoice({ t: 'mute', on: v.muted });
+  if (v.deaf !== was.deaf) toVoice({ t: 'deafen', on: v.deaf });
+  if (v.ptt !== was.ptt) toVoice({ t: 'ptt', on: v.ptt });
+  for (const id of Object.keys(q.volumes || {})) if (id in v.volumes) toVoice({ t: 'volume', id, v: v.volumes[id] });
+  if (v.ptt !== was.ptt || v.pttKey !== was.pttKey) pttWatch();
+  if (v.muted !== was.muted) micLight();
+}
+// The "mic live" light in the tray: grey while in a call and nobody can hear you, red while they can.
+function dotImage(r, g, b) {
+  const s = 16, buf = Buffer.alloc(s * s * 4);
+  for (let y = 0; y < s; y++) for (let x = 0; x < s; x++) {
+    const a = Math.max(0, Math.min(1, 6.5 - Math.hypot(x - 7.5, y - 7.5))), i = (y * s + x) * 4;
+    buf[i] = b; buf[i + 1] = g; buf[i + 2] = r; buf[i + 3] = Math.round(a * 255);
+  }
+  return nativeImage.createFromBitmap(buf, { width: s, height: s });
+}
+function micLight() {
+  if (!voiceLive) { if (micTray) { micTray.destroy(); micTray = null; } return; }
+  const live = voiceLive.mic === 'live';
+  const img = live ? dotImage(230, 40, 40) : dotImage(140, 140, 140);
+  if (!micTray) { micTray = new Tray(img); micTray.on('click', () => patch({ voice: { muted: !state.voice.muted } })); } else micTray.setImage(img);
+  micTray.setToolTip(live ? 'Drift: you\'re in a call and people can hear you' : voiceLive.mic === 'off' ? 'Drift: you\'re in a call, with no microphone' : 'Drift: you\'re in a call, and your microphone is muted');
+  micTray.setContextMenu(Menu.buildFromTemplate([
+    { label: state.voice.muted ? 'Unmute' : 'Mute', click: () => patch({ voice: { muted: !state.voice.muted } }) },
+    { label: 'Leave the call', click: () => voiceLeave() },
+  ]));
+}
+// Hold-to-talk: Electron's globalShortcut only reports presses, never releases (spike 1), so a small helper watches
+// the key with GetAsyncKeyState, which also sees it while a game or another program has the keyboard.
+const pttScript = (vk) => [
+  'Add-Type -TypeDefinition @\'',
+  'using System; using System.Runtime.InteropServices;',
+  'public static class K {',
+  '  [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);',
+  '  [DllImport("winmm.dll")] public static extern uint timeBeginPeriod(uint ms);',
+  '}',
+  '\'@',
+  '[K]::timeBeginPeriod(1) | Out-Null',
+  '$down = $false',
+  'while ($true) {',
+  `  $now = ([K]::GetAsyncKeyState(${vk}) -band 0x8000) -ne 0`,
+  '  if ($now -ne $down) { $down = $now; if ($down) { [Console]::Out.WriteLine(\'D\') } else { [Console]::Out.WriteLine(\'U\') } }',
+  '  Start-Sleep -Milliseconds 5',
+  '}'].join('\n');
+function pttWatch() {
+  if (pttProc) { try { pttProc.kill(); } catch { /* gone */ } pttProc = null; }
+  if (!voiceLive || !state.voice.ptt || process.platform !== 'win32') return;
+  const p = pttProc = ps(pttScript(VOICE_KEYS[state.voice.pttKey]), { stdio: ['ignore', 'pipe', 'ignore'] });
+  let buf = '';
+  p.stdout.setEncoding('utf8');
+  p.stdout.on('data', (d) => { buf += d; const lines = buf.split(/\r?\n/); buf = lines.pop(); for (const l of lines) if (l === 'D' || l === 'U') toVoice({ t: 'key', down: l === 'D' }); });
+  p.on('error', () => { if (pttProc === p) pttProc = null; });
+  p.on('close', () => { if (pttProc === p) pttProc = null; });
+}
 
 function initFor(wc) {
   const v = visWins.find((x) => x.win.webContents === wc);
@@ -1191,6 +1342,7 @@ function patch(p) {
       if (!/^[a-z0-9_]{1,24}$/.test(v.enc)) v.enc = 'auto';
       if (!['auto', '2160', '1440', '1080', '720', '480'].includes(String(v.xq))) v.xq = 'auto';
     }
+    else if (k === 'voice') applyVoice(p.voice || {});
     else if (k === 'share') { state.share = cleanShare({ ...state.share, ...(p.share || {}) }); p2p.setOptions({ wait: state.share.wait, name: shareName() }); if (chat && p.share && p.share.name !== undefined) chat.setName(shareName()); web.blockChanged(); }
     else if (k === 'music') {
       state.music = { ...state.music, ...p.music };
@@ -1669,6 +1821,7 @@ else {
       return;
     }
     if (updater) updater.install(false);       // a downloaded update goes in once Drift has closed
+    if (pttProc) { try { pttProc.kill(); } catch { /* gone */ } }
     spotifyWatch(false); spotifyVolWatch(false); xcoder.stopAll(); for (const k of audioKids) { try { k.kill(); } catch { /* gone */ } } noteProgress(); saveNow(); });
 }
 
@@ -1901,6 +2054,64 @@ async function runShots() {
       log.push('guest: the card goes when the host stops ' + await until(() => !hubs().some((h) => (h.lives || []).length), 30000));
       log.push('guest: session over ' + (p2p.role() === 'off'));
     }
+  }
+  if (process.env.DRIFT_TESTVOICE) {     // a call between three copies of Drift on one PC (DRIFT_USERDATA apart): =host, =guest or =third. DRIFT_TESTCODE = a file
+    // for the invite, DRIFT_TESTVOICE_OUT = a folder where each writes what it saw (<role>.json). The host's Drift runs the hub, so DRIFT_HUB_TAMPER
+    // goes to the host. They press the real buttons: the host starts the call, the guest joins, the third joins last (and offers to both).
+    const role = process.env.DRIFT_TESTVOICE, codeFile = process.env.DRIFT_TESTCODE, outDir = process.env.DRIFT_TESTVOICE_OUT;
+    const name = { host: 'Hosty', guest: 'Guesty', third: 'Third' }[role] || role;
+    const wc = visWins[0].win.webContents, js = (c) => wc.executeJavaScript(c);
+    const until = async (f, ms = 30000) => { for (let t = 0; t < ms && !f(); t += 250) await wait(250); return f(); };
+    const vlog = (t) => log.push(`voice ${role}: ${t}`);
+    const hubNow = () => chat.info().hubs.find((h) => h.status === 'connected');
+    patch({ music: { source: 'off' }, share: { internet: false, name }, voice: { muted: false, deaf: false, ptt: false, direct: false } });
+    wc.send('cmd', { type: 'show-panel', tab: 'share' }); await wait(800);
+    if (role === 'host') {
+      await js("document.querySelector('#chHost').click()");
+      vlog('hub up ' + await until(() => hubNow()));
+      fs.writeFileSync(codeFile, (await chat.invite(hubNow().id)).code || '');
+    } else {
+      for (let i = 0; i < 120 && !(fs.existsSync(codeFile) && fs.readFileSync(codeFile, 'utf8')); i++) await wait(500);
+      await js(`document.querySelector('#chCode').value = ${JSON.stringify(fs.readFileSync(codeFile, 'utf8'))}; document.querySelector('#chJoin').click()`);
+      vlog('joined the hub ' + await until(() => hubNow()));
+    }
+    const everyone = () => { const h = hubNow(); return h ? h.members.length + h.suspect.length : 0; };
+    vlog('everyone is in the hub ' + await until(() => everyone() >= 3, 60000));
+    const turn = { host: 0, guest: 1, third: 2 }[role];
+    vlog('my turn to join the call ' + await until(() => hubNow() && hubNow().voice.length === turn, 60000));
+    await wait(400);
+    await js("[...document.querySelectorAll('#chHubs button')].find((b) => /^(Start a call|Join the call)$/.test(b.textContent)).click()");
+    vlog('in the call ' + await until(() => !!chat.info().call));
+    // Settled: all three in the call, and every connection either verified, refused, or given up on.
+    const settled = () => {
+      const c = chat.info().call, h = hubNow();
+      if (!c || !h || h.voice.length < 3 || !voiceLive) return false;
+      return c.peers.length === 2 && c.peers.every((id) => c.verdict[id] || c.refused[id] || c.told.includes(id) || voiceLive.peers[id] === 'failed');
+    };
+    vlog('settled ' + await until(settled, 60000));
+    await wait(4000);       // sound flowing for a while, and the panel drawn
+    const h = hubNow(), names = Object.fromEntries([...h.members, ...h.suspect].map((m) => [m.id, m.name]));
+    const res = {
+      role, name, me: chat.myId(), names, call: chat.info().call, live: voiceLive, suspect: h.suspect, voice: h.voice,
+      test: voiceWin ? await voiceWin.webContents.executeJavaScript('window.voiceTest()').catch((e) => ({ error: e.message })) : null,
+      panel: JSON.parse(await js(`JSON.stringify({ warns: [...document.querySelectorAll('#chHubs .warn')].map((e) => e.textContent),
+        locks: Object.fromEntries([...document.querySelectorAll('#chHubs .vcWho')].map((r) => [r.querySelector('.nm').textContent, (r.querySelector('.lock') || {}).title || ''])),
+        note: (document.querySelector('#chHubs .vcNote') || {}).textContent || '', bar: document.querySelector('#callBar').classList.contains('on') ? document.querySelector('#callBar').innerText.replace(/\\n+/g, ' | ') : '' })`)),
+      heard: JSON.parse(await js(`JSON.stringify(Object.fromEntries(${JSON.stringify(h.voice.map((v) => v.id))}.map((id) => [id, window.chatUI.canBeHeard(${JSON.stringify(h.id)}, id)])))`)),
+      relay: role === 'host' ? chat.relayStats() : null,
+    };
+    await snap('voice-' + role);
+    patch({ voice: { muted: true } }); await wait(1500);       // muting reaches the hub, and the others stop counting you as heard
+    res.mutedReported = (hubNow().voice.find((v) => v.id === chat.myId()) || {}).muted === true;
+    res.lightAfterMute = voiceLive && voiceLive.mic;
+    patch({ voice: { muted: false } });
+    fs.mkdirSync(outDir, { recursive: true });
+    fs.writeFileSync(path.join(outDir, role + '.json'), JSON.stringify(res, null, 1));
+    vlog('wrote what it saw');
+    await until(() => ['host', 'guest', 'third'].every((r) => fs.existsSync(path.join(outDir, r + '.json'))), role === 'host' ? 90000 : 30000);       // the host keeps the hub up until everyone is done
+    await js("[...document.querySelectorAll('#callBar button')].find((b) => b.textContent === 'Leave').click()");
+    vlog('left the call: window closed ' + await until(() => !voiceWin && !voiceLive, 5000));
+    if (role === 'host') await wait(1500);
   }
   if (process.env.DRIFT_TESTWEB) {     // exercise watching a web page together, the same way: =host or =guest, DRIFT_TESTCODE as above, DRIFT_TESTURL = the page. The host's page is streamed to the guest, whose mouse and keys go back
     const role = process.env.DRIFT_TESTWEB, codeFile = process.env.DRIFT_TESTCODE, wc = visWins[0].win.webContents, cmd = (c) => ipcMain.emit('cmd', { sender: wc }, c);
