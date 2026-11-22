@@ -145,11 +145,13 @@ key away: scenes, colour, speed, brightness, music, video and volume.
 
 ## Watch together
 
-The **Together** tab is where your friends are: a *hub* with channels to chat in, hosted by your Drift.
-Press **Share what I'm watching** and everyone in the hub gets a **Join** button in the chat. Up to eight
-of them see the same video, in step: play, pause and skipping stay together for everyone. The video
-streams straight from your PC to theirs, encrypted, with no server, upload or account involved. A
-friend who already has the file plays their own copy, and everyone picks their own subtitles.
+The **Together** tab is where your friends are: a *hub* with channels to chat in and a call to talk in,
+hosted by your Drift. Press **Share what I'm watching** and everyone in the hub gets a **Join** button in
+the chat. Up to eight of them see the same video, in step: play, pause and skipping stay together for
+everyone. The video streams straight from your PC to theirs, encrypted, with no server, upload or account
+involved. A friend who already has the file plays their own copy, and everyone picks their own subtitles.
+Press **Start a call** to talk while you watch: up to eight people, end-to-end encrypted, and Drift shows
+a lock on each connection it has verified.
 
 ## Surf, alone or together
 
@@ -224,14 +226,38 @@ the others get a card in the chat with a **Join** button. Up to eight friends ca
   delete any message and stop all invites working. **Block** hides someone's messages from you only.
 - While you watch together, messages from the hub float over the video in a corner of the screen and
   fade after a few seconds, so nobody has to open the panel. Press **Enter** to answer from there. In
-  *Options* you choose whose messages show: people who can't be heard (no microphone, or not talking:
-  voice isn't in Drift yet, so for now that's everyone), every message, or none. People whose PC has no
-  microphone are marked *no mic*.
+  *Options* you choose whose messages show: people who can't be heard (not in the call, muted, or with no
+  working microphone), every message, or none. People whose PC has no microphone are marked *no mic*.
 - *Options* also sets your picture. Drift cuts it to a square and saves it again small, which drops what
   else the file carried (such as where a photo was taken), and every hub you're in shows it.
 - A hub invite works for 7 days. It holds the hub's addresses and the fingerprint of its certificate,
   so nobody else can pretend to be the hub. Each person is a key made by their Drift, kept encrypted
-  by Windows; there are no accounts or passwords. The hub uses TCP port 47900.
+  by Windows; there are no accounts or passwords. The hub uses port 47900, TCP for the chat and UDP for
+  calls.
+
+**Calls.** Each hub has one call, for up to eight people. Press **Start a call** (or **Join the call**) in
+the Together tab. While you're in it, a small bar over the scenes shows who is there, rings whoever is
+speaking, and has **Mute**, **Deafen** and **Leave**; the tray shows a light, grey while nobody can hear
+you and red while they can. Each person has their own volume slider, for you only. The microphone is only
+open while you're in a call. *Hold a key to talk* (in *Options*) works even while another program has the
+keyboard: the key under Esc, Right Ctrl, or a mouse's side buttons.
+
+- **End-to-end encrypted, even from the hub.** The sound goes from your PC to each friend's, encrypted
+  (DTLS-SRTP). The hub only passes on the messages that set each connection up, and your Drift signs each
+  of those with your key; theirs checks the signature, and then checks that the connection really uses the
+  certificate you signed. So a hub can't listen in without it showing. Each connection that passes gets a
+  🔒, and *End-to-end encrypted in calls of up to 8* only appears when every connection in your call has
+  one. If a check fails, Drift doesn't connect to that person and says so: *Couldn't verify Ana. The hub
+  may be interfering.*
+- **Your address stays private.** Calls go through the hub's PC by default, so nobody in a call learns
+  anyone else's IP address (the hub passes the sound on, but can't hear it). *Connect directly in calls*
+  lowers the delay a little, for friends who don't mind seeing each other's addresses.
+- **Safety numbers.** Click someone's name under *People* to see a 12-digit safety number for the two of
+  you. Compare it in person or on the phone; if yours match, nobody (not even the hub) is pretending to be
+  either of you, and you can mark them verified. Drift remembers who it has met in each hub, and warns if
+  a name you know turns up with a different key.
+- For echo cancelling to remove the sound of what you're watching, play both the video and the call on
+  Windows' default sound output.
 
 - Play, pause, seeking and moving to the next video stay in step on every PC (untick *Friends can play,
   pause and skip* to keep the controls to yourself). With *Pause for everyone while someone is loading*,
@@ -359,8 +385,8 @@ not beside your videos.
 ### Privacy
 
 Drift has no account, no telemetry and no ads. Apart from checking for updates (see below), it only goes online when you ask it to: looking up
-subtitles, or sharing a video with friends (and then finding your public address if your router doesn't
-say). Spotify control talks to the Spotify app on this PC, not the internet. Nothing about you goes with
+subtitles, chatting, calling or sharing a video with friends (and then finding your public address if your
+router doesn't say). Calls go through your hub's PC, not a company's server, and are end-to-end encrypted. Spotify control talks to the Spotify app on this PC, not the internet. Nothing about you goes with
 the update check: it is a plain request for the release list. Drift asks GitHub about its latest release a
 little after it starts and every 12 hours after that. It downloads a new release from GitHub when you press
 *Download update*, or by itself with *Update Drift automatically* on (in Settings).
@@ -427,6 +453,11 @@ windows or sound. `DRIFT_SHOTS=<folder>` runs the screenshot tour (add `DRIFT_ON
 were made with it. Add `DRIFT_TESTSURF=1` for the picture of Surf's start page. `DRIFT_TESTMIRROR=1` with `DRIFT_FAKE_DISPLAYS=2` checks Surf's mirroring (`DRIFT_FAKE_WIDTHS=1,2` makes the fake monitors different widths; add `DRIFT_TESTGPU=1` for the graphics-card drawing, and `DRIFT_HIDDEN=1` so your own mouse can't reach the test page). `DRIFT_TESTKEYS=1` presses Surf's keyboard shortcuts in a test page (add `DRIFT_TESTGPU=1` for the offscreen page). The picture of a page shared in
 Surf comes from two copies run at once with `DRIFT_TESTWEB=host` and `=guest` (with the same `DRIFT_TESTCODE`
 file, `DRIFT_TESTURL` and `DRIFT_SHARE_LOCAL=1`); `DRIFT_TESTNAME` sets each one's name.
+Chat and calls have their own checks: `node scripts/test-chat.js` and `node scripts/test-voice.js` (no
+Electron needed; both also run under `ELECTRON_RUN_AS_NODE=1`), and `node scripts/test-calls.js`, which
+runs three copies of Drift in a call (`DRIFT_TESTVOICE=host|guest|third`) honestly and with the hub
+misbehaving on purpose (`DRIFT_HUB_TAMPER=fingerprint|unsigned|replay|swapkey`, aimed with
+`DRIFT_HUB_TAMPER_PAIR=From>To`).
 To try updating, run a packaged copy with `DRIFT_FAKE_VERSION=1.0.0` (it then thinks the latest release is
 newer) and `DRIFT_UPDATE_AUTOINSTALL=1` (it installs and restarts as soon as the download is ready).
 

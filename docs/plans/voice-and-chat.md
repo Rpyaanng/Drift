@@ -1,7 +1,8 @@
 # Plan: voice and chat in Drift (Discord-style)
 
 Status: design settled (§11), 2026-11-21, branch `voip`. The four spikes are done and measured (§10.0). Phase 1 (hub
-and text chat) is built and tested (§10, "Phase 1 as built"); attachments and voice come next.
+and text chat) and Phase 3 (voice, end-to-end encrypted against a hostile hub) are built and tested (§10, "Phase 1 as
+built" and "Phase 3 as built"); attachments (Phase 2) come next.
 
 The goal is a Discord-like space for a group of friends inside Drift:
 - **Text channels** with history, replies, edits, reactions, mentions and **attachments** (images, video, files).
@@ -295,11 +296,90 @@ option C isn't recommended. Drift's licence text should also say the software is
      (square crop, at most 128 px, WebP, at most 13,500 characters as a data: URL, so no EXIF) and checked by the
      hub (WebP/JPEG/PNG only, magic bytes). They're stored in `members.avatar`, and member lists carry only a picture
      id (`av`), so pictures are fetched once (`avatar-get`) and cached in `chat.js`.
-   - Not yet: DMs, mentions, the per-channel retention setting, safety numbers in the UI, an encrypted local cache,
+   - Not yet: DMs, mentions, the per-channel retention setting, an encrypted local cache,
      moving `p2p.js`'s reachability into `reach.js` (for now `p2p.js` exports `wire`, `upnpMap` and the address helpers).
 2. **Attachments**: chunked upload, re-encoding images and stripping EXIF, sandboxed viewing, Mark of the Web, the
    warning for files that run, quotas.
 3. **Voice**: mesh and relay, signed fingerprints, push-to-talk, per-person volume, moderator mute, the speaking ring, the voice bar.
+   **Phase 3 as built (2026-11-21):** one call per hub, up to 8 people, a mesh, relayed through the hub by default.
+   The threat model: the hub only passes setup messages along and may be hostile (swap DTLS fingerprints to sit in the
+   middle, replay old setup messages, drop signatures, invent a member). It must never be able to hear a call without
+   a member being able to see it happen.
+   - **Public keys from the hub.** Member lists carry each member's raw Ed25519 key. `chat.js` (`checkMembers`) keeps
+     an entry only if `memberId(key) === id`; anything else is set aside with the name it claimed, and the panel says
+     "The hub sent a key for <name> that doesn't belong to them". The panel's own member list never carries keys.
+     **Trust on first use**: `userData/chat/trust.json` holds, per hub, each member id's first-seen name and key. A
+     member whose name matches someone met *earlier* under another id gets a warning until their safety number is
+     compared and they're marked verified.
+   - **Safety numbers**: 12 digits from scrypt (N = 2^14) over both raw keys, sorted, so both people get the same one.
+     scrypt rather than a plain hash because 12 digits is only ~40 bits: a hub hunting for a key of its own that gives
+     the same 12 digits would need ~10^12 scrypt runs. It costs **21 ms** in Node and **44 ms** in Electron's Node
+     (BoringSSL), worked out only when a profile is opened. Shown on a member's profile (click their name under
+     People), with "They match: mark as verified" (kept locally, a ✓ by their name).
+   - **Signed setup messages** (`voiceText`, `signSdp`, `verifySdp` in `chat.js`). The signed text is
+     `drift-voice-v1 \n hub pin \n call id \n from \n to \n nonce \n sorted a=fingerprint lines` (lines lowercased,
+     every field checked to be base64url so none can smuggle a newline). The call id is random, proposed by whoever
+     starts the call and handed out by the hub. Each offer gets a fresh nonce; the answer must carry the same one,
+     and `chat.js` refuses an answer to an offer it didn't make and any nonce it has already accepted in this call.
+     Checks happen in the receiving `chat.js` before the voice window sees anything; a failure drops the SDP, refuses
+     that person for the rest of the call (or until they leave and rejoin), tells them (a `refused` note through the
+     hub), and shows "Couldn't verify <name>. The hub may be interfering." Signing costs **0.02 ms** and checking
+     **0.04–0.06 ms** (Electron's Node and Node). ICE candidates aren't signed (spike 4).
+   - **What a hostile hub can still do, and why it doesn't matter for listening**: it can hand a later joiner an old
+     call id, so a replayed offer from that earlier call would pass the call id check. It still can't listen: each
+     call uses a fresh `RTCCertificate` whose private key never leaves that call's window, so the replayed fingerprint
+     belongs to a certificate nobody holds any more and Chromium's DTLS refuses to connect (spike 4). It can also stop
+     calls (drop messages, change candidates, refuse to relay) and see who is in a call and when. That's visible, not
+     secret, and the same as Phase 1's trust model for metadata.
+   - **The voice window** (`renderer/voice.html` + `voice.js`, preload `voice-preload.js`): hidden, sandboxed, made
+     when you join and destroyed when you leave, so the microphone is only open during a call. It never sees a key or
+     the hub. It makes a fresh ECDSA P-256 `RTCCertificate` per call and applies exactly the SDP it was given, apart
+     from adding `usedtx=1` to the Opus line (and it checks the fingerprint lines are unchanged by that edit). Once
+     connected it reads `transport.remoteCertificateId` from getStats and sends it to `chat.js`, which compares it with
+     the fingerprints it verified; a mismatch closes that connection and marks it. The newcomer offers to everyone
+     already in the call, so there's no glare; after a failure the offerer tries an ICE restart (signed like any
+     offer) up to twice.
+   - **Relay**: `turn.js` (spike 3's server) moved to the top level as the hub's relay. `hub.js` starts it on UDP at
+     the hub's own port number (47900, so one number to forward; any port if that's taken) and maps it with UPnP next
+     to the TCP port. It relays only between its own allocations, in memory. Members get TURN REST credentials in the
+     `voice-join` reply (24 hours), but the relay also asks the hub on every request whether that member is still in
+     the call, and drops their allocations as soon as they leave or are removed, so credentials are useless outside
+     the call. At most 24 allocations per member and 128 in all. The relay's addresses are named after the hub's LAN
+     IPv4 address (Chromium won't relay via 127.0.0.1); members reach it at the address they reached the hub at, or
+     the hub's own addresses (nearest first) when that was loopback or IPv6. Calls use `iceTransportPolicy: 'relay'`
+     unless "Connect directly in calls (lower delay; others in the call can see your IP address)" is on; then the
+     relay stays as a fallback and also answers STUN.
+   - **Calls in the UI**: the Together tab shows each hub's call (who, muted/deafened/no mic, a volume slider each,
+     speaking rings) with "Start a call" / "Join the call" / "Leave the call". A lock on each person: 🔒 only when
+     their signature checked out *and* the certificate matches, otherwise a warning that says what failed. "🔒
+     End-to-end encrypted in calls of up to 8" only appears when every connection in your call is verified;
+     otherwise "Connections with a 🔒 are end-to-end encrypted...". A small call bar sits over the scenes (top left, on
+     every screen) with faces, the mic state, Mute, Deafen and Leave. The tray light is grey (in a call, nobody can
+     hear you) or red (they can); clicking it mutes. Hold-to-talk is the GetAsyncKeyState helper from spike 1, with a
+     choice of `, Right Ctrl or a mouse side button. Settings are `state.voice` (direct, ptt, pttKey, muted, deaf,
+     volumes). `canBeHeard()` is true for someone in the call whose microphone opened and who isn't muted or deafened.
+   - **Hub messages**: `voice-join` (reply: call id, who's there, relay credentials and addresses), `voice-leave`,
+     `voice-state` (muted, deafened, whether the mic opened), `voice-signal` (passed on unchanged, at most 200 per
+     10 s), and `voice` (the roster, to everyone in the hub). The same person joining from a second PC takes over
+     and the first gets `voice-ended`. Losing the connection to the hub ends your call (rejoin by hand).
+   - **Tests**: `node scripts/test-voice.js` (also `ELECTRON_RUN_AS_NODE=1 electron scripts/test-voice.js`), **76
+     checks**: the helpers (an honest SDP and a DTX edit pass; a swapped, extra or missing fingerprint, a missing or
+     damaged signature, the wrong sender, recipient, call, nonce or hub, and member entries whose key doesn't hash to
+     their id are all refused), then real hubs and `chat.js` copies with stand-in SDPs: an honest offer and answer,
+     the certificate check both ways, the relay (credentials work in the call, a wrong password or name doesn't, and
+     leaving ends the allocations and the credentials), a full call at 8, each `DRIFT_HUB_TAMPER` mode, an offer
+     really signed by the sender replayed in the same call and into a later one, and trust on first use with safety
+     numbers. `node scripts/test-calls.js` runs three copies of Drift (`DRIFT_TESTVOICE=host|guest|third`) pressing the
+     real buttons, each sending a steady tone, once honestly and once for each tamper mode aimed at Third -> Guesty:
+     **186 checks**. Honest: all 6 directions verified, connected `relay -> relay`, the DTLS certificate equal to the
+     signed fingerprint, sound arriving (≈17–19 KB in the 4 s window, level 0.18 for a 0.25 tone), locks and the
+     end-to-end line in every panel, the call bar, `canBeHeard`, muting reaching the hub and turning the light grey,
+     and the hub's relay carrying it (6 allocations for 3 people, nothing dropped). Each hostile mode: Guesty refuses
+     Third and shows the warning, Third is told, neither claims the whole call is encrypted, and the other two pairs
+     connect, verified, through the relay. BoringSSL broke nothing this time (Ed25519, scrypt, HMAC-SHA1, MD5 for TURN).
+   - Not built: moderator server-mute (§11.6 dropped roles; the host's remove already drops someone from the call),
+     surviving a hub reconnect mid-call, a "voice output" device picker (it would break echo cancelling, spike 2), and
+     a by-ear check of hold-to-talk while a game runs as administrator.
 4. **Sharing into voice**: the existing page and screen sharing, started from a voice channel.
 5. **Standalone hub**: `electron hub.js` / Node 24, a guide for running it on a Pi or VPS, and backups of the SQLite file.
 6. Later: end-to-end encrypted DMs, an SFU for big channels, and mobile? (out of scope).
@@ -327,5 +407,6 @@ option C isn't recommended. Drift's licence text should also say the software is
 
 Start here: read this plan (the decisions in §11 are settled), then `p2p.js` (the connection, the invite codes and `wire()`), then
 `renderer/app.js` around line 844 (WebRTC signalling over the p2p channel), then `main.js`'s `runShots` (how the
-`DRIFT_TEST*` checks work). The spikes and Phase 1 are done; read `hub.js` and `chat.js`, then begin Phase 2
-(attachments) or Phase 3 (voice, starting from `spikes/voice/turn.js` and the signing in `spikes/voice/main.js`).
+`DRIFT_TEST*` checks work). The spikes, Phase 1 and Phase 3 are done; read `hub.js`, `chat.js` (the call signing is
+near the top and under "calls"), `turn.js` and `renderer/voice.js`, then begin Phase 2 (attachments) or Phase 4
+(sharing into the call). Before changing anything in calls, run `scripts/test-voice.js` and `scripts/test-calls.js`.
