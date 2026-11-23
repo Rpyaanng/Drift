@@ -29,7 +29,7 @@ function runDrift(role) {
   delete env.ELECTRON_RUN_AS_NODE;
   const p = spawn(electron, [ROOT], { env, stdio: 'ignore' });
   return new Promise((resolve) => {
-    const t = setTimeout(() => { try { p.kill(); } catch { /* gone */ } resolve('timed out'); }, 420000);
+    const t = setTimeout(() => { try { p.kill(); } catch { /* gone */ } resolve('timed out'); }, 180000);       // a pass takes about 45 s; a failure stops early (main.js `need`)
     p.on('exit', (code) => { clearTimeout(t); resolve(code); });
   });
 }
@@ -44,6 +44,7 @@ function runDrift(role) {
     if (!res) { console.log(`FAIL ${r}: wrote nothing (see ${path.join(dir, 'shots-' + r)})`); failed++; continue; }
     for (const [k, v] of Object.entries(res)) if (typeof v === 'boolean') { console.log(`${v ? 'ok  ' : 'FAIL'} ${r}: ${k}`); if (!v) failed++; }
   }
+  try { console.log(`STOPPED EARLY (${fs.readFileSync(path.join(dir, 'out', 'abort'), 'utf8')}): the checks after it didn't run`); } catch { /* ran to the end */ }
   console.log(failed ? `${failed} failed (logs: ${dir}\\shots-*\\log.txt and chat.log)` : 'all passed');
   process.exit(failed ? 1 : 0);
 })();

@@ -2813,6 +2813,17 @@ else {
 }
 
 // ---- dev-only screenshot harness -------------------------------------------------
+// Test runs drive the pages with scripts. Every one goes through pageJs, never webContents.executeJavaScript itself: the
+// script's syntax is checked here first, so a slip (often an escape lost inside a quoted script) fails at once with the real
+// reason and the script, not Electron's bare "Script failed to execute" after a whole run. Better still, write new ones with
+// pageRun: a real function, checked by `node --check` with the rest of this file, so nothing needs escaping twice. It runs in
+// the page, so it can't see anything here: pass what it needs as arguments (JSON).
+//   pageRun(wc, (sel) => document.querySelector(sel).innerText.replace(/\n+/g, ' | '), '#callBar')
+function pageJs(wc, code, ...more) {
+  try { new (require('vm').Script)(code); } catch (e) { return Promise.reject(new Error(`page script doesn't parse (${e.message}): ${code.slice(0, 400)}`)); }
+  return wc.executeJavaScript(code, ...more);
+}
+const pageRun = (wc, fn, ...args) => pageJs(wc, `(${fn})(...${JSON.stringify(args)})`);
 async function runShots() {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   fs.mkdirSync(SHOT_DIR, { recursive: true });
@@ -2830,7 +2841,7 @@ async function runShots() {
   // what each monitor's player is doing, next to where the shared clock says it should be
   const look = async (tag) => {
     for (const v of visWins) {
-      const r = await v.win.webContents.executeJavaScript(`(() => { const v = document.querySelector('#v'); return { src: (v.currentSrc || '').replace(/k=[0-9a-f]+/, 'k').replace(/^file:.*\\//, 'file:').slice(0, 70), t: +v.currentTime.toFixed(2), rs: v.readyState, paused: v.paused, size: v.videoWidth + 'x' + v.videoHeight, err: v.error && v.error.code, rate: +v.playbackRate.toFixed(3) }; })()`);
+      const r = await pageJs(v.win.webContents, `(() => { const v = document.querySelector('#v'); return { src: (v.currentSrc || '').replace(/k=[0-9a-f]+/, 'k').replace(/^file:.*\\//, 'file:').slice(0, 70), t: +v.currentTime.toFixed(2), rs: v.readyState, paused: v.paused, size: v.videoWidth + 'x' + v.videoHeight, err: v.error && v.error.code, rate: +v.playbackRate.toFixed(3) }; })()`);
       const at = (/\/x\?/.test(r.src) ? xc.start : 0) + r.t;
       log.push(`${tag} [${v.key} hdr=${v.hdr}] at=${at.toFixed(2)} clock=${vpos().toFixed(2)} off=${(at - vpos()).toFixed(2)} ${JSON.stringify(r)}`);
     }
@@ -2849,23 +2860,23 @@ async function runShots() {
     patch({ overlay: 'none', palette: 'aurora' });
   }
   if (process.env.DRIFT_CAT) {       // dev: the cat in the chat overlay, with the panel hidden, as just its bar, and open
-    const panelJs = (js) => Promise.all(visWins.map((v) => v.win.webContents.executeJavaScript(`(() => { const p = document.querySelector('#panel'); ${js} })()`).catch(() => {})));
+    const panelJs = (js) => Promise.all(visWins.map((v) => pageJs(v.win.webContents, `(() => { const p = document.querySelector('#panel'); ${js} })()`).catch(() => {})));
     patch({ scene: 'lake', cat: true }); await panelJs("p.classList.remove('show')"); await wait(1500); await snap('cat');
     await panelJs("p.classList.remove('open'); p.classList.add('show')"); await wait(900); await snap('cat-bar');
     await panelJs("document.querySelector('.tabs [data-tab=\"settings\"]').click(); p.classList.add('show')"); await wait(900); await panelJs("p.classList.add('show')"); await snap('cat-panel');
     // shoo: the mouse runs at every cat on each screen, a few times; then they all gather on the middle screen
-    const count = async (tag) => log.push(`${tag} ` + JSON.stringify(await Promise.all(visWins.map((v) => v.win.webContents.executeJavaScript("document.querySelectorAll('.coCat.here').length").catch(() => -1)))));
+    const count = async (tag) => log.push(`${tag} ` + JSON.stringify(await Promise.all(visWins.map((v) => pageJs(v.win.webContents, "document.querySelectorAll('.coCat.here').length").catch(() => -1)))));
     await panelJs("p.classList.remove('show', 'open')"); await wait(1200); await count('cats before shoo');
     log.push(`cats at ${JSON.stringify(catAt)} screens ${JSON.stringify(catScreens())} off ${JSON.stringify(state.displaysOff)} unlocked ${state.catsUnlocked} count ${state.catCount}`);
     await count('cats before unlock');
     await panelJs("document.querySelector('.tabs [data-tab=\\\"settings\\\"]').click(); p.classList.add('show', 'open'); for (const key of 'meow') dispatchEvent(new KeyboardEvent('keydown', { key }))");
-    await wait(1500); log.push('unlocked: ' + state.catsUnlocked + ' / label: ' + await visWins[0].win.webContents.executeJavaScript("document.querySelector('#catName').textContent + ' / slider hidden: ' + document.querySelector('#catCountRow').hidden"));
+    await wait(1500); log.push('unlocked: ' + state.catsUnlocked + ' / label: ' + await pageJs(visWins[0].win.webContents, "document.querySelector('#catName').textContent + ' / slider hidden: ' + document.querySelector('#catCountRow').hidden"));
     await snap('cat-unlocked'); await panelJs("p.classList.remove('show', 'open')"); await wait(1500); await count('cats after unlock');
     for (let i = 0; i < 3; i++) { await panelJs(`p.classList.${i % 2 ? 'remove' : 'add'}('show')`); await wait(1300); await count('cats after panel ' + (i % 2 ? 'closed' : 'opened')); }
     await count('cats after shoo'); await snap('cat-shooed');
     catGather(); await wait(CAT_GATHER_GAP * 3 + 1200); await count('cats gathered (middle ' + catMiddle() + ')'); await snap('cat-gather');
-    log.push('cat names: ' + await visWins[0].win.webContents.executeJavaScript("[...document.querySelectorAll('.coCat')].map((c) => c.dataset.name).join(' ')"));
-    log.push('hover tag: ' + await visWins[0].win.webContents.executeJavaScript("(() => { const c = document.querySelector('.coCat.here'); if (!c) return 'no cat here'; c.dispatchEvent(new MouseEvent('mouseenter')); const t = document.querySelector('#coCatTag'); return t.textContent + ' on=' + t.classList.contains('on'); })()"));
+    log.push('cat names: ' + await pageJs(visWins[0].win.webContents, "[...document.querySelectorAll('.coCat')].map((c) => c.dataset.name).join(' ')"));
+    log.push('hover tag: ' + await pageJs(visWins[0].win.webContents, "(() => { const c = document.querySelector('.coCat.here'); if (!c) return 'no cat here'; c.dispatchEvent(new MouseEvent('mouseenter')); const t = document.querySelector('#coCatTag'); return t.textContent + ' on=' + t.classList.contains('on'); })()"));
     const offWas = state.displaysOff; patch({ displaysOff: [] }); await wait(3000);
     if (visWins.length > 1) {       // a monitor turned off: its cats move to the screens still showing, right away (not at the next tick)
       const off = visWins[visWins.length - 1].index; patch({ displaysOff: [off] }); await wait(3000);
@@ -2883,7 +2894,7 @@ async function runShots() {
     setVideos([process.env.DRIFT_TESTPERF]); patch({ mode: 'span', video: { fit: 'auto' } }); await wait(5000);
     const measure = async (tag) => {
       ipcMain.emit('cmd', { sender: visWins[0].win.webContents }, { type: 'video-jump', pos: 2 }); await wait(1500);
-      const r = await Promise.all(visWins.map((v) => v.win.webContents.executeJavaScript(`new Promise((res) => {
+      const r = await Promise.all(visWins.map((v) => pageJs(v.win.webContents, `new Promise((res) => {
         const v = document.querySelector('#v'), q0 = v.getVideoPlaybackQuality(); let n = 0, on = true;
         const f = () => { n++; if (on) v.requestVideoFrameCallback(f); }; v.requestVideoFrameCallback(f);
         let raf = 0, lag = 0, last = performance.now(); const r = () => { raf++; if (on) requestAnimationFrame(r); }; requestAnimationFrame(r);
@@ -2892,29 +2903,29 @@ async function runShots() {
       })`).catch((e) => ({ error: e.message }))));
       log.push(`perf ${tag}: ` + JSON.stringify(r));
     };
-    const panelJs = (js) => Promise.all(visWins.map((v) => v.win.webContents.executeJavaScript(`(() => { const p = document.querySelector('#panel'); ${js} })()`).catch(() => {})));
+    const panelJs = (js) => Promise.all(visWins.map((v) => pageJs(v.win.webContents, `(() => { const p = document.querySelector('#panel'); ${js} })()`).catch(() => {})));
     await panelJs("p.classList.remove('show', 'open')");
     for (const [tag, st] of [['off', { cat: false }], ['1 cat', { cat: true, catsUnlocked: false }], ['off', { cat: false }], ['12 cats', { cat: true, catsUnlocked: true, catCount: 12 }],
       ['off', { cat: false }], ['12 cats', { cat: true, catsUnlocked: true, catCount: 12 }]]) { patch(st); await wait(1500); await measure(tag); }
     for (let i = 0; i < 4; i++) {       // asleep: the "z Z Z", a letter at a time
-      log.push('cats asleep: ' + await visWins[0].win.webContents.executeJavaScript("(() => { const o = document.querySelector('#chatOverlay'); return o.classList.contains('asleep') + ' z=' + o.dataset.z + ' cats=' + document.querySelectorAll('.coCat.here').length; })()"));
+      log.push('cats asleep: ' + await pageJs(visWins[0].win.webContents, "(() => { const o = document.querySelector('#chatOverlay'); return o.classList.contains('asleep') + ' z=' + o.dataset.z + ' cats=' + document.querySelectorAll('.coCat.here').length; })()"));
       await snap('cat-asleep-' + i); await wait(1100);
     }
     patch({ video: { paused: true } }); await wait(1200); await snap('cat-awake');
-    log.push('paused: ' + await visWins[0].win.webContents.executeJavaScript("document.querySelector('#chatOverlay').classList.contains('asleep')"));
+    log.push('paused: ' + await pageJs(visWins[0].win.webContents, "document.querySelector('#chatOverlay').classList.contains('asleep')"));
     patch({ cat: false, catsUnlocked: false, catCount: 3 });
   }
   if (process.env.DRIFT_CATNAP) {       // dev: DRIFT_CATNAP=<a video>. The cats asleep while it plays (close-ups of the "z Z Z" growing), then awake when it pauses
     const closeUp = async (name) => {
       const v = visWins.find((x) => x.index === catAt[0]) || visWins[0];
-      const r = await v.win.webContents.executeJavaScript("(() => { const cs = [...document.querySelectorAll('.coCat.here')].map((c) => c.getBoundingClientRect()), b = cs.length ? { x: Math.min(...cs.map((c) => c.x)), y: Math.min(...cs.map((c) => c.y)), width: Math.max(...cs.map((c) => c.right)) - Math.min(...cs.map((c) => c.x)), height: Math.max(...cs.map((c) => c.height)) } : document.querySelector('#coCats').getBoundingClientRect(); const o = document.querySelector('#chatOverlay'); return { x: Math.max(0, Math.floor(b.x - 20)), y: Math.max(0, Math.floor(b.y - 60)), width: Math.ceil(Math.min(innerWidth, b.width + 40)), height: Math.ceil(b.height + 70), asleep: o.classList.contains('asleep'), z: o.dataset.z || '', cats: document.querySelectorAll('.coCat.here').length }; })()");
+      const r = await pageJs(v.win.webContents, "(() => { const cs = [...document.querySelectorAll('.coCat.here')].map((c) => c.getBoundingClientRect()), b = cs.length ? { x: Math.min(...cs.map((c) => c.x)), y: Math.min(...cs.map((c) => c.y)), width: Math.max(...cs.map((c) => c.right)) - Math.min(...cs.map((c) => c.x)), height: Math.max(...cs.map((c) => c.height)) } : document.querySelector('#coCats').getBoundingClientRect(); const o = document.querySelector('#chatOverlay'); return { x: Math.max(0, Math.floor(b.x - 20)), y: Math.max(0, Math.floor(b.y - 60)), width: Math.ceil(Math.min(innerWidth, b.width + 40)), height: Math.ceil(b.height + 70), asleep: o.classList.contains('asleep'), z: o.dataset.z || '', cats: document.querySelectorAll('.coCat.here').length }; })()");
       log.push(`catnap ${name}: asleep=${r.asleep} z=${r.z} cats here=${r.cats}`);
       const full = await v.win.webContents.capturePage(), sz = full.getSize(), k = sz.width / v.bounds.width;       // (captured in device pixels)
       log.push(`  window ${v.key} ${JSON.stringify(v.bounds)} image ${sz.width}x${sz.height} crop ${JSON.stringify(r)}`);
       const img = full.crop({ x: Math.round(r.x * k), y: Math.round(r.y * k), width: Math.round(r.width * k), height: Math.round(Math.min(r.height, v.bounds.height - r.y) * k) });
       fs.writeFileSync(path.join(SHOT_DIR, `catnap-${name}.png`), img.resize({ width: Math.round(r.width * 3) }).toPNG());
     };
-    const panelJs = (js) => Promise.all(visWins.map((v) => v.win.webContents.executeJavaScript(`(() => { const p = document.querySelector('#panel'); ${js} })()`).catch(() => {})));
+    const panelJs = (js) => Promise.all(visWins.map((v) => pageJs(v.win.webContents, `(() => { const p = document.querySelector('#panel'); ${js} })()`).catch(() => {})));
     await panelJs("p.classList.remove('show', 'open')");
     patch({ cat: true, catsUnlocked: true, catCount: 3, palette: 'aurora' }); await wait(1500); await closeUp('awake-scene');
     setVideos([process.env.DRIFT_CATNAP]); patch({ mode: 'span', video: { fit: 'auto', paused: false } }); await wait(3000);
@@ -2931,7 +2942,7 @@ async function runShots() {
     ipcMain.emit('cmd', { sender: visWins[0].win.webContents }, { type: 'video-jump', pos: 9 }); await wait(1500); await snap('video-each');
   }
   if (process.env.DRIFT_TESTSUBS) {     // exercise subtitles: auto-pick, styling, timing, online lookup, on / off (run with DRIFT_TESTVIDEO)
-    const wc = visWins[0].win.webContents, js = (c) => wc.executeJavaScript(c);
+    const wc = visWins[0].win.webContents, js = (c) => pageJs(wc, c);
     ipcMain.emit('cmd', { sender: wc }, { type: 'video-jump', pos: +process.env.DRIFT_TESTSUBS || 20 }); await wait(9000);
     log.push('subs: ' + JSON.stringify({ ...subInfo, tracks: subInfo.tracks.length, first: subInfo.tracks.slice(0, 3).map((t) => t.label) }) + ' cues=' + subCues.length);
     const seen = new Set();
@@ -2965,17 +2976,17 @@ async function runShots() {
     {       // choosing another folder moves the highlight with it, straight away
       const wc = visWins[0].win.webContents, other = app.getPath('temp');
       patch({ video: { folders: [dir, other] } }); await wait(1200);
-      const look = () => wc.executeJavaScript("JSON.stringify({ lit: [...document.querySelectorAll('#vfolders .vf.active span')].map((x) => x.textContent), open: (document.querySelector('#vcrumb b') || {}).textContent })");
+      const look = () => pageJs(wc, "JSON.stringify({ lit: [...document.querySelectorAll('#vfolders .vf.active span')].map((x) => x.textContent), open: (document.querySelector('#vcrumb b') || {}).textContent })");
       log.push('folders before: ' + await look());
-      await wc.executeJavaScript("document.querySelectorAll('#vfolders .vf span')[1].click()"); await wait(1200);
+      await pageJs(wc, "document.querySelectorAll('#vfolders .vf span')[1].click()"); await wait(1200);
       log.push('folders after clicking the second: ' + await look());
-      await wc.executeJavaScript("document.querySelectorAll('#vfolders .vf span')[0].click()"); await wait(1200);
+      await pageJs(wc, "document.querySelectorAll('#vfolders .vf span')[0].click()"); await wait(1200);
       log.push('folders after clicking the first: ' + await look());
     }
     patch({ music: { source: 'generative' } });
   }
   if (process.env.DRIFT_CTX) {     // exercise the tab-aware transport
-    const wc = visWins[0].win.webContents, press = (code) => wc.executeJavaScript(code);
+    const wc = visWins[0].win.webContents, press = (code) => pageJs(wc, code);
     wc.send('cmd', { type: 'show-panel', tab: 'video' }); await wait(1500);
     const i0 = state.video.index; await press("document.querySelector('#nextTrack').click()"); await wait(800);
     log.push(`video tab next: index ${i0} -> ${state.video.index}, scene=${state.scene}`);
@@ -2996,16 +3007,16 @@ async function runShots() {
     const wc = visWins[0].win.webContents;
     patch({ scene: 'polyhedra', palette: 'sunset' });
     wc.send('cmd', { type: 'show-panel', tab: 'scenes' }); await wait(1500);
-    await wc.executeJavaScript("document.querySelector('.sw.cus').click()"); await wait(600);
+    await pageJs(wc, "document.querySelector('.sw.cus').click()"); await wait(600);
     log.push('custom seeded: ' + state.palette + ' ' + JSON.stringify(state.customColors));
-    await wc.executeJavaScript("(() => { const el = document.querySelector('#customRow input[data-i=\"2\"]'); el.value = '#ff2d95'; el.dispatchEvent(new Event('input', { bubbles: true })); })()"); await wait(600);
+    await pageJs(wc, "(() => { const el = document.querySelector('#customRow input[data-i=\"2\"]'); el.value = '#ff2d95'; el.dispatchEvent(new Event('input', { bubbles: true })); })()"); await wait(600);
     log.push('custom edited: ' + JSON.stringify(state.customColors));
-    await wc.executeJavaScript("document.querySelector('#customDark').click()"); await wait(7000);
+    await pageJs(wc, "document.querySelector('#customDark').click()"); await wait(7000);
     log.push('custom matched: ' + JSON.stringify(state.customColors));
     patch({ customColors: ['red', '#000000', '#111111', '#222222'] }); log.push('bad input ignored: ' + JSON.stringify(state.customColors));
-    await wc.executeJavaScript("document.querySelector('#customRow').scrollIntoView({ block: 'center' })"); await wait(500);
+    await pageJs(wc, "document.querySelector('#customRow').scrollIntoView({ block: 'center' })"); await wait(500);
     await snap('custom-panel');
-    await wc.executeJavaScript("document.querySelector('#panel').classList.remove('show')"); await wait(800); await snap('custom-scene');
+    await pageJs(wc, "document.querySelector('#panel').classList.remove('show')"); await wait(800); await snap('custom-scene');
     spotifyVolSet(0.5); log.push('spotify vol off-Windows: ' + JSON.stringify(spotify));
   }
   if (process.env.DRIFT_TESTXC) {     // exercise live conversion: HDR to SDR, jumping, pausing, changing settings (DRIFT_FAKE_HDR=0 / 1 picks the kind of screen)
@@ -3059,7 +3070,7 @@ async function runShots() {
   }
   if (process.env.DRIFT_TESTCHAT) {     // the Together tab between two copies of Drift on one PC (DRIFT_USERDATA apart), pressing the real buttons: =host or =guest, DRIFT_TESTCODE = a file both can reach.
     // The host presses Share with no hub yet (one is made), the guest joins the hub with its invite, sees the Join card, joins the video, and they chat.
-    const role = process.env.DRIFT_TESTCHAT, codeFile = process.env.DRIFT_TESTCODE, wc = visWins[0].win.webContents, js = (c) => wc.executeJavaScript(c);
+    const role = process.env.DRIFT_TESTCHAT, codeFile = process.env.DRIFT_TESTCODE, wc = visWins[0].win.webContents, js = (c) => pageJs(wc, c);
     const hubs = () => chat.info().hubs, until = async (f, ms = 20000) => { for (let t = 0; t < ms && !f(); t += 250) await wait(250); return f(); };
     const dom = () => js(`JSON.stringify({ title: document.querySelector('#chTitle').textContent, sub: document.querySelector('#chSub').textContent, side: document.querySelector('#chHubs').innerText.replace(/\\n+/g, ' | '),
       lives: document.querySelector('#chLives').innerText.replace(/\\n+/g, ' | '), share: [document.querySelector('#shTitle').textContent, document.querySelector('#shGTitle').textContent].join(' / '),
@@ -3097,7 +3108,7 @@ async function runShots() {
       log.push('guest: watching ' + await until(() => p2p.connected()));
       await js("document.querySelector('#panel').classList.remove('open')");       // watching, the panel away: messages come over the video
       log.push('guest: session hub ' + JSON.stringify({ chatHub: publicState().p2p.chatHub, joined: joinedCode.slice(0, 16), lives: hubs().map((h) => (h.lives || []).map((l) => l.code.slice(0, 16))), focused: (visWins.find((v) => v.win === BrowserWindow.getFocusedWindow()) || {}).key || 'none' }));
-      const overlays = async () => (await Promise.all(visWins.map((v) => v.win.webContents.executeJavaScript('window.chatUI.overlay()')))).flat();       // (on whichever screen has focus)
+      const overlays = async () => (await Promise.all(visWins.map((v) => pageJs(v.win.webContents, 'window.chatUI.overlay()')))).flat();       // (on whichever screen has focus)
       log.push('guest: the message comes over the video ' + await (async () => { for (let t = 0; t < 15000; t += 250) { if ((await overlays()).length > 0) return true; await wait(250); } return false; })());
       log.push('guest: overlay ' + JSON.stringify(await overlays()));
       await snap('together-overlay');
@@ -3116,11 +3127,11 @@ async function runShots() {
     // goes to the host. Opening the hub doesn't put you in voice: each presses Join voice in the hub bar, then Unmute (a test tone, not a microphone).
     const role = process.env.DRIFT_TESTVOICE, codeFile = process.env.DRIFT_TESTCODE, outDir = process.env.DRIFT_TESTVOICE_OUT;
     const name = { host: 'Hosty', guest: 'Guesty', third: 'Third' }[role] || role;
-    const wc = visWins[0].win.webContents, js = (c) => wc.executeJavaScript(c);
+    const wc = visWins[0].win.webContents, js = (c) => pageJs(wc, c);
     const until = async (f, ms = 30000) => { for (let t = 0; t < ms && !f(); t += 250) await wait(250); return f(); };
     const vlog = (t) => log.push(`voice ${role}: ${t}`);
     const hubNow = () => chat.info().hubs.find((h) => h.status === 'connected');
-    const vtest = () => (voiceWin ? voiceWin.webContents.executeJavaScript('window.voiceTest()').catch((e) => ({ error: e.message })) : null);
+    const vtest = () => (voiceWin ? pageJs(voiceWin.webContents, 'window.voiceTest()').catch((e) => ({ error: e.message })) : null);
     const barBtn = (label) => js(`(() => { const b = [...document.querySelectorAll('#callBar button')].find((x) => x.textContent === ${JSON.stringify(label)}); if (b) b.click(); return !!b; })()`);
     patch({ music: { source: 'off' }, share: { internet: false, name }, voice: { talk: false, deaf: false, ptt: false, direct: false, pin: '' } });
     wc.send('cmd', { type: 'show-panel', tab: 'share' }); await wait(800);
@@ -3183,7 +3194,7 @@ async function runShots() {
   if (process.env.DRIFT_TESTSTREAM) {     // a hub's media stream, two copies of Drift (scripts/test-stream.js): =host or =guest. DRIFT_TESTCODE = a file for
     // the invite, DRIFT_TESTSTREAM_DIR = a folder holding a.mp4 and b.mp4 (added to the library), DRIFT_TESTSTREAM_OUT = where each writes <role>.json.
     const role = process.env.DRIFT_TESTSTREAM, codeFile = process.env.DRIFT_TESTCODE, dir = process.env.DRIFT_TESTSTREAM_DIR, outDir = process.env.DRIFT_TESTSTREAM_OUT;
-    const wc = visWins[0].win.webContents, js = (c) => wc.executeJavaScript(c), other = role === 'host' ? 'guest' : 'host';
+    const wc = visWins[0].win.webContents, js = (c) => pageJs(wc, c), other = role === 'host' ? 'guest' : 'host';
     const until = async (f, ms = 30000) => { for (let t = 0; t < ms && !f(); t += 250) await wait(250); return f(); };
     const hubNow = () => chat.info().hubs.find((h) => h.status === 'connected');
     const lives = () => (hubNow() || {}).lives || [];
@@ -3279,10 +3290,15 @@ async function runShots() {
     // DRIFT_TESTSS_CLIP = a video to put on the media stream meanwhile. The host serves the test pages itself, on this PC: the
     // hub's browser may open that one local address (Settings) and no other.
     const role = process.env.DRIFT_TESTSS, codeFile = process.env.DRIFT_TESTCODE, outDir = process.env.DRIFT_TESTSS_OUT, other = role === 'host' ? 'guest' : 'host';
-    const name = role === 'host' ? 'Hosty' : 'Guesty', wc = visWins[0].win.webContents, js = (c) => wc.executeJavaScript(c);
-    const until = async (f, ms = 30000) => { for (let t = 0; t < ms; t += 250) { if (await f()) return true; await wait(250); } return !!(await f()); };
+    const name = role === 'host' ? 'Hosty' : 'Guesty', wc = visWins[0].win.webContents, js = (c) => pageJs(wc, c);
+    // Failing fast: once something everything after it depends on fails (need), or either side crashes, an `abort` marker is
+    // written and every wait on both sides gives up at once, instead of each running out its own timeout (minutes in all).
+    const abortFile = path.join(outDir, 'abort'), aborted = () => fs.existsSync(abortFile);
+    const abort = (why) => { try { fs.writeFileSync(abortFile, `${role}: ${why}`); } catch { /* fine */ } };
+    const until = async (f, ms = 30000) => { for (let t = 0; t < ms && !aborted(); t += 250) { if (await f()) return true; await wait(250); } return !!(await f()); };
     const step = async (s, ms = 120000) => { fs.writeFileSync(path.join(outDir, `${role}-${s}`), ''); log.push(`surf ${role}: at ${s}`); return until(() => fs.existsSync(path.join(outDir, `${other}-${s}`)), ms); };
     const res = { role, name, me: chat.myId() }, tl = (k, v) => { res[k] = v; log.push(`surf ${role}: ${k} ${JSON.stringify(v)}`); };
+    const need = (k, v) => { tl(k, v); if (!v) { abort(k); throw new Error('stopped early: ' + k); } };
     const hubNow = () => chat.info().hubs.find((h) => h.status === 'connected');
     const surf = (d, more) => ipcMain.emit('cmd', { sender: wc }, { type: 'surf', do: d, ...more });       // as the Surf tab and its bar do
     const input = (e) => ipcMain.emit('cmd', { sender: wc }, { type: 'web-input', e });       // as the mouse and keys over the picture do
@@ -3318,7 +3334,7 @@ async function runShots() {
         surf('home');
         tl('before any hub, Surf is my own browser', await until(() => web.info().open, 15000) && surfMode() === 'own');
         await js("document.querySelector('#chHost').click()");
-        tl('hub up', await until(() => !!hubNow()));
+        need('hub up', await until(() => !!hubNow()));
         fs.writeFileSync(codeFile, (await chat.invite(hubNow().id)).code || '');
         tl('online in my own hub: my own browser is put away, its tabs kept', await until(() => surfMode() === 'hub' && !web.info().has && !!surfKept && surfKept.urls.length === 1, 15000));
         tl('...and the Surf tab is the hub\'s browser, drawn here offscreen', await until(() => !!hubWeb && hubWeb.running() && surfView().open && surfView().gpu && surfView().hub, 15000));
@@ -3329,12 +3345,27 @@ async function runShots() {
         await session.fromPartition('persist:web').cookies.set({ url: base, name: 'mine', value: 'secret' });
         tl('its own profile: none of my browser\'s cookies', !(await hubSes.cookies.get({ url: base })).some((c) => c.name === 'mine'));
         await step('ready');
-        tl('a member watching: the stream window opens', await until(() => !!ssWin && ssWatchers().length === 1, 60000));
-        tl('...and connects to them', await until(() => Object.values(ssPeers).includes('connected'), 40000));
+        need('a member watching: the stream window opens', await until(() => !!ssWin && ssWatchers().length === 1, 60000));
+        need('...and connects to them', await until(() => Object.values(ssPeers).includes('connected'), 40000));
         tl('...certificate checked', await until(() => Object.values(chat.info().ss.host.viewers).some((v) => v.verdict === 'verified'), 20000));
         let st = null;
-        tl('...relayed through the hub, sending picture and sound', await until(async () => { st = ssWin && await ssWin.webContents.executeJavaScript('window.surfStreamTest()').catch(() => null); return !!st && Object.values(st.peers).some((p) => /relay/.test(p.path || '') && p.framesOut > 10 && p.audioOut > 0); }, 20000));
+        tl('...relayed through the hub, sending picture and sound', await until(async () => { st = ssWin && await pageJs(ssWin.webContents, 'window.surfStreamTest()').catch(() => null); return !!st && Object.values(st.peers).some((p) => /relay/.test(p.path || '') && p.framesOut > 10 && p.audioOut > 0); }, 20000));
         log.push('surf host: stream ' + JSON.stringify(st));
+        {       // the hub bar over the page: out of sight, back under the browser's bar (not beside it, not over the page's top left)
+          const bar = () => pageRun(wc, () => {       // (runs in the page)
+            const b = document.querySelector('#callBar'), s = document.querySelector('#surfBar');
+            const r = (e) => { const x = e.getBoundingClientRect(); return { l: Math.round(x.left), t: Math.round(x.top), r: Math.round(x.right), b: Math.round(x.bottom) }; };
+            return { on: b.classList.contains('on'), op: getComputedStyle(b).opacity, bar: r(b), surf: r(s), text: b.innerText.replace(/\n+/g, ' | '), faces: b.querySelectorAll('.cbSurf .face').length };
+          });
+          wc.send('cmd', { type: 'hide-panel' }); await js("document.querySelector('#panel').classList.remove('show', 'open')"); await js("document.querySelector('#surfBar').classList.remove('show')"); await wait(600);
+          await js("document.head.append(Object.assign(document.createElement('style'), { id: 'noAnim', textContent: '* { transition: none !important; animation: none !important; }' }))");       // (a hidden window never runs its transitions)
+          const h0 = await bar(); log.push('surf host: hub bar hidden ' + JSON.stringify(h0));
+          tl('over a Surf page the hub bar is out of sight, showing who is on the Surf stream instead of the page title', h0.on && +h0.op === 0 && /Surf/.test(h0.text) && !/Test one/.test(h0.text) && h0.faces === 1);
+          await js("document.querySelector('#surfEdge').dispatchEvent(new MouseEvent('mouseenter'))"); await wait(500);       // the mouse reaching the top edge
+          const h1 = await bar(); log.push('surf host: hub bar shown ' + JSON.stringify(h1));
+          tl('...and comes back with the Surf bar, centred under it, not over the page top left', +h1.op === 1 && h1.bar.t >= h1.surf.b && Math.abs((h1.bar.l + h1.bar.r) / 2 - (h1.surf.l + h1.surf.r) / 2) <= 2);
+          await js("document.querySelector('#noAnim').remove()");
+        }
         const cpu0 = app.getAppMetrics(); await wait(3000);       // what it costs this PC: every process's processor use while streaming to one
         log.push('surf host: cpu ' + JSON.stringify(app.getAppMetrics().filter((x) => x.cpu.percentCPUUsage > 1).map((x) => `${x.type}:${x.cpu.percentCPUUsage.toFixed(0)}%`)));
         void cpu0;
@@ -3384,15 +3415,15 @@ async function runShots() {
         await step('back');
         srv.close(); lan.close();
       } else {
-        for (let i = 0; i < 240 && !(fs.existsSync(codeFile) && fs.readFileSync(codeFile, 'utf8')); i++) await wait(500);
+        need('the host\'s invite', await until(() => fs.existsSync(codeFile) && !!fs.readFileSync(codeFile, 'utf8'), 120000));
         await js(`document.querySelector('#chCode').value = ${JSON.stringify(fs.readFileSync(codeFile, 'utf8'))}; document.querySelector('#chJoin').click()`);
-        tl('joined the hub', await until(() => !!hubNow(), 60000));
+        need('joined the hub', await until(() => !!hubNow(), 60000));
         await step('ready');
         const [base, lanUrl] = fs.readFileSync(path.join(outDir, 'base.txt'), 'utf8').split('\n');
         surf('new');       // the Surf tab
         tl('the Surf tab is the hub\'s Surf stream', await until(() => surfMode() === 'stream' && surfView().stream && surfView().open, 15000));
         const t = () => js('window.ssTest()');
-        tl('picture and sound arrive, relayed', await until(async () => { const r = await t(); return r.framesIn > 10 && r.audioIn > 0 && /relay/.test(r.path || ''); }, 60000));
+        need('picture and sound arrive, relayed', await until(async () => { const r = await t(); return r.framesIn > 10 && r.audioIn > 0 && /relay/.test(r.path || ''); }, 60000));
         const f0 = await t(); await wait(3000); const f1 = await t();
         log.push('surf guest: ' + JSON.stringify(f1) + ` · ${((f1.framesIn - f0.framesIn) / 3).toFixed(1)} frames a second, ${(((f1.bytesIn - f0.bytesIn) * 8) / 3e6).toFixed(2)} Mb/s`);
         tl('the host\'s certificate checked', await until(() => (chat.info().ss.watching || {}).verdict === 'verified', 40000));       // (room for one reconnect: see ssCert in renderer/app.js)
@@ -3438,14 +3469,17 @@ async function runShots() {
         await chat.disconnect(hubNow().id);
         tl('disconnecting: my own browser is back', await until(() => surfMode() === 'own', 10000));
       }
-    } catch (e) { tl('failed: ' + (e && e.stack || e), false); }
+    } catch (e) {
+      if (!/^stopped early/.test(e && e.message)) { tl('failed: ' + (e && e.stack || e), false); abort('crashed'); }
+      if (aborted()) res.stopped = fs.readFileSync(abortFile, 'utf8');       // (why: the test script prints it)
+    }
     fs.writeFileSync(path.join(outDir, role + '.json'), JSON.stringify(res, null, 1));
     await step('end', 20000);
   }
   if (process.env.DRIFT_TESTBCUI) {     // the Broadcast tab between two copies of Drift (DRIFT_USERDATA apart), pressing the real buttons: =host or =guest.
     // DRIFT_TESTCODE = a file for the invite, DRIFT_TESTBC_OUT = a folder for each step's marker and what each saw (<role>.json).
     const role = process.env.DRIFT_TESTBCUI, codeFile = process.env.DRIFT_TESTCODE, outDir = process.env.DRIFT_TESTBC_OUT, other = role === 'host' ? 'guest' : 'host';
-    const name = role === 'host' ? 'Hosty' : 'Guesty', wc = visWins[0].win.webContents, js = (c) => wc.executeJavaScript(c);
+    const name = role === 'host' ? 'Hosty' : 'Guesty', wc = visWins[0].win.webContents, js = (c) => pageJs(wc, c);
     const until = async (f, ms = 30000) => { for (let t = 0; t < ms; t += 250) { if (await f()) return true; await wait(250); } return !!(await f()); };
     const step = async (s) => { fs.writeFileSync(path.join(outDir, `${role}-${s}`), ''); log.push(`bcui ${role}: at ${s}`); return until(() => fs.existsSync(path.join(outDir, `${other}-${s}`)), 90000); };
     const hubNow = () => chat.info().hubs.find((h) => h.status === 'connected');
@@ -3533,14 +3567,14 @@ async function runShots() {
     // DRIFT_TESTCODE = a file for the invite, DRIFT_TESTBC_OUT = a folder for each step's marker and what each saw (<role>.json).
     // DRIFT_TESTBROADCAST makes the broadcast window send a moving test pattern in place of the screen it was given.
     const role = process.env.DRIFT_TESTBC, codeFile = process.env.DRIFT_TESTCODE, outDir = process.env.DRIFT_TESTBC_OUT;
-    const name = { host: 'Hosty', guest: 'Guesty', third: 'Third' }[role], wc = visWins[0].win.webContents, js = (c) => wc.executeJavaScript(c);
+    const name = { host: 'Hosty', guest: 'Guesty', third: 'Third' }[role], wc = visWins[0].win.webContents, js = (c) => pageJs(wc, c);
     const until = async (f, ms = 30000) => { for (let t = 0; t < ms; t += 250) { if (await f()) return true; await wait(250); } return !!(await f()); };
     const step = async (s, ms = 90000) => { fs.writeFileSync(path.join(outDir, `${role}-${s}`), ''); log.push(`bc ${role}: at ${s}`); return until(() => ['host', 'guest', 'third'].every((r) => fs.existsSync(path.join(outDir, `${r}-${s}`))), ms); };
     const hubNow = () => chat.info().hubs.find((h) => h.status === 'connected');
     const click = (sel) => js(`(() => { const b = document.querySelector(${JSON.stringify(sel)}); if (b) b.click(); return !!b; })()`);
     const btnIn = (sel, label) => js(`(() => { const b = [...document.querySelectorAll(${JSON.stringify(sel)})].find((x) => x.textContent === ${JSON.stringify(label)}); if (b) b.click(); return !!b; })()`);
     const view = () => js('window.bcTest()').catch((e) => ({ error: e.message }));
-    const sendTest = () => (bcWin ? bcWin.webContents.executeJavaScript('window.bcSendTest()').catch((e) => ({ error: e.message })) : null);
+    const sendTest = () => (bcWin ? pageJs(bcWin.webContents, 'window.bcSendTest()').catch((e) => ({ error: e.message })) : null);
     const bar = () => js("document.querySelector('#callBar').innerText.replace(/\\n+/g, ' | ')");
     const res = { role, name, me: chat.myId(), steps: {} }, s0 = (r) => r.steps;
     const keep = (k, v) => { res.steps[k] = v; const t = `bc ${role}: ${k} ${String(JSON.stringify(v)).slice(0, 300)}`; log.push(t); try { fs.appendFileSync(path.join(outDir, role + '.log'), t + '\n'); } catch { /* fine */ } };       // (as it goes, so a stuck copy can be read)
@@ -3613,12 +3647,12 @@ async function runShots() {
       { const v = await view(); keep('hintGone', !v.hint && !v.nudge); }
       const h = chat.info().hubs.find((x) => x.status === 'connected');       // chat over what's being broadcast (games too): it reaches Hosty's overlay
       await chat.send(h.id, h.channels[0].id, 'hi over the game');
-      const over = () => Promise.all(visWins.map((v) => v.win.webContents.executeJavaScript('window.chatUI.overlay()'))).then((a) => a.flat());
+      const over = () => Promise.all(visWins.map((v) => pageJs(v.win.webContents, 'window.chatUI.overlay()'))).then((a) => a.flat());
       keep('chatOverBc', await until(async () => (await over()).some((t) => /over the broadcast/.test(t)), 15000));       // and Hosty's, over the broadcast here
     }
     if (role === 'host') {
       keep('chatOverGame', await until(() => !!(bcOvLast && (bcOvLast.msgs || []).some((x) => x.text === 'hi over the game' && x.name === 'Guesty')), 15000));
-      keep('chatNotInWindows', (await Promise.all(visWins.map((v) => v.win.webContents.executeJavaScript('window.chatUI.overlay()')))).flat().length === 0);
+      keep('chatNotInWindows', (await Promise.all(visWins.map((v) => pageJs(v.win.webContents, 'window.chatUI.overlay()')))).flat().length === 0);
       { const h = chat.info().hubs.find((x) => x.status === 'connected'); await chat.send(h.id, h.channels[0].id, 'hi over the broadcast'); }
       const g = () => bcOvLast && bcOvLast.list.find((p) => p.name === 'Guesty');
       keep('overlayGot', await until(() => !!g(), 15000));
@@ -3690,12 +3724,12 @@ async function runShots() {
   if (process.env.DRIFT_TESTSURF) {     // the README's Surf picture: a new tab on Drift's start page
     const wc = visWins[0].win.webContents;
     ipcMain.emit('cmd', { sender: wc }, { type: 'surf', do: 'new' }); await wait(5000);
-    await wc.executeJavaScript("document.querySelector('#panel').classList.remove('open')"); await wait(800); await snap('surf-home');
+    await pageJs(wc, "document.querySelector('#panel').classList.remove('open')"); await wait(800); await snap('surf-home');
   }
   if (process.env.DRIFT_TESTTUNE) {     // exercise listening to music together, the same way: =host or =guest, DRIFT_TESTCODE as above. The guest's own music is off, so any sound it reports came from the host
     const role = process.env.DRIFT_TESTTUNE, codeFile = process.env.DRIFT_TESTCODE, wc = visWins[0].win.webContents, cmd = (c) => ipcMain.emit('cmd', { sender: wc }, c);
     const heard = () => { const l = lastLevels || {}; lastLevels = null; return 'loudest band=' + Math.max(0, ...(l.s || [0])); };
-    const ui = () => wc.executeJavaScript("JSON.stringify({ now: document.querySelector('#nowName').textContent, play: document.querySelector('#play').textContent, note: document.querySelector('#mShare').textContent.slice(0, 90) })").catch((e) => 'failed: ' + e.message);
+    const ui = () => pageJs(wc, "JSON.stringify({ now: document.querySelector('#nowName').textContent, play: document.querySelector('#play').textContent, note: document.querySelector('#mShare').textContent.slice(0, 90) })").catch((e) => 'failed: ' + e.message);
     patch({ share: { internet: false, wait: true, control: true, quality: 'original', name: role === 'host' ? 'Hosty' : 'Guesty' } });
     wc.send('cmd', { type: 'show-panel', tab: 'music' });
     if (role === 'host') {
@@ -3713,12 +3747,12 @@ async function runShots() {
       await wait(600); cmd({ type: 'share-join', code: fs.readFileSync(codeFile, 'utf8') });
       for (let i = 0; i < 12; i++) {
         await wait(2000); log.push(`tune guest +${i * 2}s: theirs=${JSON.stringify(publicState().p2p.music)} ${heard()} ui=${await ui()}`);
-        if (i === 8) { log.push('guest presses play'); await wc.executeJavaScript("document.querySelector('#play').click()"); }
+        if (i === 8) { log.push('guest presses play'); await pageJs(wc, "document.querySelector('#play').click()"); }
       }
     }
   }
   if (process.env.DRIFT_TESTSHAREUI) {     // press the real buttons in the Together tab and read back what it says
-    const wc = visWins[0].win.webContents, js = (c) => wc.executeJavaScript(c);
+    const wc = visWins[0].win.webContents, js = (c) => pageJs(wc, c);
     const dump = async (tag) => log.push('shareui ' + tag + ': ' + await js("JSON.stringify({ off: getComputedStyle(document.querySelector('#shOff')).display, host: getComputedStyle(document.querySelector('#shHost')).display, title: document.querySelector('#shTitle').textContent, sub: document.querySelector('#shSub').textContent, note: document.querySelector('#shNote').textContent, lives: document.querySelector('#chLives').innerText, toast: document.querySelector('#toast').className + '|' + document.querySelector('#toast').textContent, tab: (document.querySelector('#content section.active') || {}).dataset && document.querySelector('#content section.active').dataset.tab })"));
     patch({ music: { source: 'off' } });
     wc.send('cmd', { type: 'show-panel', tab: 'share' }); await wait(1000); await dump('before');
@@ -3727,9 +3761,9 @@ async function runShots() {
     await js("document.querySelector('#shStop').click()"); await wait(2500); await dump('stopped');
   }
   if (process.env.DRIFT_TESTQUIT) {     // exercise the "Close Drift?" question: Esc asks, Esc again stays, closing the window asks too
-    const v = visWins[0], wc = v.win.webContents, up = () => wc.executeJavaScript("document.querySelector('#confirm').classList.contains('on')");
+    const v = visWins[0], wc = v.win.webContents, up = () => pageJs(wc, "document.querySelector('#confirm').classList.contains('on')");
     const key = (keyCode) => { wc.sendInputEvent({ type: 'keyDown', keyCode }); wc.sendInputEvent({ type: 'keyUp', keyCode }); };
-    key('Escape'); await wait(2000); log.push('quit: after Esc, asking=' + await up() + ' note=' + await wc.executeJavaScript("document.querySelector('#confirmNote').textContent")); await snap('quit-ask');
+    key('Escape'); await wait(2000); log.push('quit: after Esc, asking=' + await up() + ' note=' + await pageJs(wc, "document.querySelector('#confirmNote').textContent")); await snap('quit-ask');
     key('Escape'); await wait(500); log.push('quit: after a second Esc, asking=' + await up());
     v.win.close(); await wait(500); log.push('quit: after closing the window, asking=' + await up() + ' window still there=' + !v.win.isDestroyed());
     key('Escape'); await wait(300);
@@ -3767,7 +3801,7 @@ async function runShots() {
     const page = webContents.getAllWebContents().find((w) => w.getURL() === url);
     if (!page) log.push('guard: the test page never loaded');
     else {
-      const js = (code) => page.executeJavaScript(code);
+      const js = (code) => pageJs(page, code);
       await js("document.querySelector('#eye').click()");                                     // a site's eye button
       await js("document.querySelector('#late').type = 'password'");                         // a box that becomes a password box later...
       await wait(100);
@@ -3806,7 +3840,7 @@ async function runShots() {
     await press('t', ['control', 'shift']); await wait(1500); log.push('Ctrl+Shift+T: ' + tabs());
     await press('=', ['control']); await press('=', ['control']); log.push('Ctrl+= twice: zoom ' + (front() && front().getZoomFactor()));
     await press('0', ['control']); log.push('Ctrl+0: zoom ' + (front() && front().getZoomFactor()));
-    if (!gpuRun) { await press('l', ['control']); log.push('Ctrl+L: focus in ' + await sw.executeJavaScript('document.activeElement.id')); }
+    if (!gpuRun) { await press('l', ['control']); log.push('Ctrl+L: focus in ' + await pageJs(sw, 'document.activeElement.id')); }
     if (gpuRun) {
       const pw = front() && BrowserWindow.fromWebContents(front()), hb = visWins[0].win.getBounds();
       log.push(`offscreen window: onTop=${pw && pw.isAlwaysOnTop()} visible=${pw && pw.isVisible()} at ${pw && JSON.stringify(pw.getBounds())}, Surf monitor at ${JSON.stringify(hb)}`);
@@ -3823,13 +3857,13 @@ async function runShots() {
     const srv = http.createServer((_q, r) => { loads++; r.writeHead(200, { 'Content-Type': 'text/html' }); r.end('<!DOCTYPE html><title>park</title><body>park</body>'); });
     await new Promise((r) => srv.listen(0, '127.0.0.1', r));
     const url = `http://127.0.0.1:${srv.address().port}/`, sw = visWins[0].win.webContents;
-    const click = (t) => sw.executeJavaScript(`document.querySelector('.tabs button[data-tab=${t}]').click()`);
+    const click = (t) => pageJs(sw, `document.querySelector('.tabs button[data-tab=${t}]').click()`);
     web.act({ do: 'go', text: url }, visWins[0].key); await wait(4000);
     const front = () => webContents.getAllWebContents().find((x) => !x.isDestroyed() && x.getURL() === url);
-    const see = async () => { const pg = front(); return `info.open=${web.info().open} parked=${web.info().parked || '-'} marker=${pg ? await pg.executeJavaScript('window.mark || "none"') : 'no page'} loads=${loads} ` + await sw.executeJavaScript("`body.web=${document.body.classList.contains('web')} views=${document.querySelectorAll('webview').length} shown=${document.querySelectorAll('webview.on').length} gpu=${!!document.querySelector('#webGpu')}`"); };
+    const see = async () => { const pg = front(); return `info.open=${web.info().open} parked=${web.info().parked || '-'} marker=${pg ? await pageJs(pg, 'window.mark || "none"') : 'no page'} loads=${loads} ` + await pageJs(sw, "`body.web=${document.body.classList.contains('web')} views=${document.querySelectorAll('webview').length} shown=${document.querySelectorAll('webview.on').length} gpu=${!!document.querySelector('#webGpu')}`"); };
     for (let i = 0; i < 20 && !front(); i++) await wait(500);
     if (!front()) throw new Error('the page never loaded: ' + JSON.stringify(web.info()));
-    await front().executeJavaScript('window.mark = "kept"');
+    await pageJs(front(), 'window.mark = "kept"');
     log.push(`park (${gpuRun ? 'gpu' : 'webview'}) open: ` + await see());
     await click('scenes'); await wait(1500); log.push('park after Scenes: ' + await see());
     await click('surf'); await wait(1500); log.push('park after Surf again: ' + await see());
@@ -3852,28 +3886,28 @@ async function runShots() {
     const raw = "Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'volume').get";       // read in a world of its own: what is really applied
     const see = async () => {
       const f = pg.mainFrame.frames[0];
-      const said = await pg.executeJavaScript('[a.volume, n.volume].join("/")');
+      const said = await pageJs(pg, '[a.volume, n.volume].join("/")');
       const real = await pg.executeJavaScriptInIsolatedWorld(999, [{ code: `${raw}.call(document.getElementById('a')).toFixed(2)` }]).catch((e) => 'err ' + e.message);
-      const fr = f ? (await f.executeJavaScript('b.volume.toFixed(2)').catch(() => '?')) + ' applied '
+      const fr = f ? (await pageJs(f, 'b.volume.toFixed(2)').catch(() => '?')) + ' applied '
         + await pg.executeJavaScriptInIsolatedWorld(999, [{ code: `${raw}.call(document.querySelector('iframe').contentDocument.getElementById('b')).toFixed(2)` }]).catch((e) => 'err ' + e.message) : 'no frame';
       return `page says ${said}, <audio> applied ${real}, frame says ${fr}`;
     };
     log.push('mix start: ' + await see());
     patch({ mixer: { surf: 0.5 } }); await wait(500); log.push('mix surf 50%: ' + await see());
     patch({ mixer: { master: 0.5 } }); await wait(500); log.push('mix + master 50%: ' + await see());
-    await pg.executeJavaScript('a.volume = 1'); log.push('mix page sets 1: ' + await see());
+    await pageJs(pg, 'a.volume = 1'); log.push('mix page sets 1: ' + await see());
     patch({ mixer: { surfMute: true } }); await wait(500); log.push('mix surf muted: ' + await see());
     patch({ mixer: { surfMute: false } }); await wait(300);
     web.hide(); await wait(500);
-    await sw.executeJavaScript("document.querySelector('.tabs button[data-tab=scenes]').click()"); await wait(800);
-    await sw.executeJavaScript("document.querySelector('#panel').classList.remove('open'); document.body.dispatchEvent(new MouseEvent('mousemove', { screenX: 400, screenY: 400, bubbles: true })); document.body.dispatchEvent(new MouseEvent('mousemove', { screenX: 420, screenY: 420, bubbles: true })); document.querySelector('#mixBtn').click()"); await wait(700);
-    log.push('mixer open: ' + await sw.executeJavaScript("(() => { const m = document.querySelector('#mixer'), r = m.getBoundingClientRect(); return m.className + ' ' + getComputedStyle(m).display + ' ' + JSON.stringify([r.x, r.y, r.width, r.height].map(Math.round)); })()"));
+    await pageJs(sw, "document.querySelector('.tabs button[data-tab=scenes]').click()"); await wait(800);
+    await pageJs(sw, "document.querySelector('#panel').classList.remove('open'); document.body.dispatchEvent(new MouseEvent('mousemove', { screenX: 400, screenY: 400, bubbles: true })); document.body.dispatchEvent(new MouseEvent('mousemove', { screenX: 420, screenY: 420, bubbles: true })); document.querySelector('#mixBtn').click()"); await wait(700);
+    log.push('mixer open: ' + await pageJs(sw, "(() => { const m = document.querySelector('#mixer'), r = m.getBoundingClientRect(); return m.className + ' ' + getComputedStyle(m).display + ' ' + JSON.stringify([r.x, r.y, r.width, r.height].map(Math.round)); })()"));
     await snap('mixer');
-    log.push('mixer rows: ' + await sw.executeJavaScript("[...document.querySelectorAll('.mixRow')].filter((r) => r.style.display !== 'none').map((r) => r.dataset.id + '=' + r.querySelector('output').textContent + (r.classList.contains('off') ? '(muted)' : '')).join(' ')"));
-    log.push('mixer over the panel: ' + await sw.executeJavaScript("(() => { const m = document.querySelector('#mixer').getBoundingClientRect(), b = document.querySelector('#mixBtn').getBoundingClientRect(), hit = document.elementFromPoint(m.left + 20, m.top + 20); return `panel ${document.querySelector('#panel').className} opacity ${getComputedStyle(document.querySelector('#panel')).opacity}; mixer bottom ${Math.round(m.bottom)} above speaker top ${Math.round(b.top)}: ${m.bottom <= b.top}, its parent ${document.querySelector('#mixer').parentElement.tagName}, on top: ${!!hit.closest('#mixer')}`; })()"));
-    await sw.executeJavaScript("document.querySelector('.mixRow[data-id=ambient] .mixIco').click()"); await wait(500);
+    log.push('mixer rows: ' + await pageJs(sw, "[...document.querySelectorAll('.mixRow')].filter((r) => r.style.display !== 'none').map((r) => r.dataset.id + '=' + r.querySelector('output').textContent + (r.classList.contains('off') ? '(muted)' : '')).join(' ')"));
+    log.push('mixer over the panel: ' + await pageJs(sw, "(() => { const m = document.querySelector('#mixer').getBoundingClientRect(), b = document.querySelector('#mixBtn').getBoundingClientRect(), hit = document.elementFromPoint(m.left + 20, m.top + 20); return `panel ${document.querySelector('#panel').className} opacity ${getComputedStyle(document.querySelector('#panel')).opacity}; mixer bottom ${Math.round(m.bottom)} above speaker top ${Math.round(b.top)}: ${m.bottom <= b.top}, its parent ${document.querySelector('#mixer').parentElement.tagName}, on top: ${!!hit.closest('#mixer')}`; })()"));
+    await pageJs(sw, "document.querySelector('.mixRow[data-id=ambient] .mixIco').click()"); await wait(500);
     log.push('ambient icon clicked: ambientMute=' + state.mixer.ambientMute);
-    await sw.executeJavaScript("document.querySelector('.mixRow[data-id=media] .mixIco').click()"); await wait(500);
+    await pageJs(sw, "document.querySelector('.mixRow[data-id=media] .mixIco').click()"); await wait(500);
     log.push('media icon clicked: mediaMute=' + state.mixer.mediaMute);
     patch({ mixer: { master: 1, surf: 1, ambientMute: false, mediaMute: false } });
     srv.close(); web.close(); await wait(800);
@@ -3893,36 +3927,36 @@ async function runShots() {
     web.act({ do: 'go', text: url }, visWins[0].key); await wait(4000);
     const page = () => webContents.getAllWebContents().find((w) => w.getURL().startsWith(url));
     // what a window shows of the page: its mirror <video> or offscreen canvas, and the colour in the middle of it
-    const see = (wc) => wc.executeJavaScript(`(() => { const v = document.querySelector('#webMirror') || document.querySelector('#webGpu'), bar = document.body.classList.contains('surfing'), views = document.querySelectorAll('webview').length;
+    const see = (wc) => pageJs(wc, `(() => { const v = document.querySelector('#webMirror') || document.querySelector('#webGpu'), bar = document.body.classList.contains('surfing'), views = document.querySelectorAll('webview').length;
       if (!v) return { shows: 'nothing', bar, views };
       const vw = v.videoWidth || +v.dataset.fw || 0, vh = v.videoHeight || +v.dataset.fh || 0, c = document.createElement('canvas'); c.width = c.height = 1; const g = c.getContext('2d');
       let px = null; if (vw) { if (v.tagName === 'VIDEO') g.drawImage(v, vw / 2, vh / 2, 1, 1, 0, 0, 1, 1); else g.drawImage(v, v.width / 2, v.height * 0.75, 1, 1, 0, 0, 1, 1); px = [...g.getImageData(0, 0, 1, 1).data].slice(0, 3); }
       return { shows: v.id, size: vw + 'x' + vh, px, bar, views, cursor: v.style.cursor || '' }; })()`);
     // a mouse or key event on the window's picture of the page, at page position (x, y) given as fractions
-    const poke = (wc, js) => wc.executeJavaScript(`(() => { const v = document.querySelector('#webMirror') || document.querySelector('#webGpu'); if (!v) return false;
+    const poke = (wc, js) => pageJs(wc, `(() => { const v = document.querySelector('#webMirror') || document.querySelector('#webGpu'); if (!v) return false;
       const r = v.getBoundingClientRect(), vw = v.videoWidth || +v.dataset.fw, vh = v.videoHeight || +v.dataset.fh, k = Math.min(r.width / vw, r.height / vh), pw = vw * k, ph = vh * k;
       const at = (x, y) => ({ clientX: r.left + (r.width - pw) / 2 + x * pw, clientY: r.top + (r.height - ph) / 2 + y * ph, button: 0, detail: 1, bubbles: true });
       const click = (x, y) => { v.dispatchEvent(new MouseEvent('mousedown', at(x, y))); v.dispatchEvent(new MouseEvent('mouseup', at(x, y))); };
       const move = (x, y) => v.dispatchEvent(new MouseEvent('mousemove', at(x, y)));
       const type = (s) => { for (const ch of s) { v.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true })); v.dispatchEvent(new KeyboardEvent('keyup', { key: ch, bubbles: true })); } };
       ${js}; return true; })()`);
-    const pageSays = async () => { const p = page(); return p ? p.executeJavaScript("JSON.stringify({ title: document.title, typed: document.querySelector('#i').value, picked: document.querySelector('#s').value })") : 'no page'; };
+    const pageSays = async () => { const p = page(); return p ? pageJs(p, "JSON.stringify({ title: document.title, typed: document.querySelector('#i').value, picked: document.querySelector('#s').value })") : 'no page'; };
     log.push(`mode=${gpuRun ? 'gpu' : 'webview'} info.gpu=${web.info().gpu}`);
     log.push('surf monitor: ' + JSON.stringify(await see(sw)) + ' mirror monitor (off): ' + JSON.stringify(await see(mw)));
     patch({ surfMirror: true }); await wait(4000);
     log.push('mirror on: ' + JSON.stringify(await see(mw)) + ' page=' + await pageSays());
     {       // the page takes the widest monitor's size; the narrower Surf monitor shows it whole with black bars, and a real click there lands where it should
-      const size = () => page().executeJavaScript('innerWidth + "x" + innerHeight + "@" + devicePixelRatio');
+      const size = () => pageJs(page(), 'innerWidth + "x" + innerHeight + "@" + devicePixelRatio');
       const img = (await sw.capturePage()).toBitmap(), [W, H] = sw.getOwnerBrowserWindow().getContentSize(), px = (x, y) => { const i = (y * W + x) * 4; return [img[i + 2], img[i + 1], img[i]]; };
       log.push(`page size with mirroring: ${await size()} (monitors ${visWins.map((v) => v.win.getContentSize().join('x')).join(', ')}); surf monitor corner=${px(4, 4)} middle=${px(W >> 1, H >> 1)}`);
-      const box = await sw.executeJavaScript(`(() => { const v = document.querySelector('webview.on') || document.querySelector('#webGpu'); const r = v.getBoundingClientRect();
+      const box = await pageJs(sw, `(() => { const v = document.querySelector('webview.on') || document.querySelector('#webGpu'); const r = v.getBoundingClientRect();
         const pw = v.tagName === 'CANVAS' ? +v.dataset.fw : r.width, ph = v.tagName === 'CANVAS' ? +v.dataset.fh : r.height, k = Math.min(r.width / pw, r.height / ph);
         return { l: r.left + (r.width - pw * k) / 2, t: r.top + (r.height - ph * k) / 2, w: pw * k, h: ph * k }; })()`);
       const [pw] = (await size()).split('x').map(parseFloat), k = box.w / pw, x = Math.round(box.l + 100 * k), y = Math.round(box.t + 35 * k);
       if (gpuRun) {       // (a click sent to a Drift window never reaches a <webview> in it, so this is checked with the page drawn offscreen only)
-        await page().executeJavaScript('hits.length = 0');
+        await pageJs(page(), 'hits.length = 0');
         sw.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 }); sw.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 }); await wait(800);
-        log.push(`real click on the surf monitor at ${x},${y}: page saw ${await page().executeJavaScript('hits.join(" ")')}`);
+        log.push(`real click on the surf monitor at ${x},${y}: page saw ${await pageJs(page(), 'hits.join(" ")')}`);
       }
       patch({ surfMirror: false }); await wait(2000);
       log.push(`page size without mirroring: ${await size()}`);
@@ -3932,22 +3966,22 @@ async function runShots() {
     await poke(mw, 'click(0.5, 0.75)'); await wait(1500);
     log.push('after a click on the mirror: ' + JSON.stringify(await see(mw)) + ' page=' + await pageSays());
     if (gpuRun) {       // the Surf monitor itself is a picture of the offscreen page too: typing, a dropdown, the pointer over a link
-      const [W, H] = (await page().executeJavaScript('[innerWidth, innerHeight]'));       // (positions below are fractions of the page)
+      const [W, H] = (await pageJs(page(), '[innerWidth, innerHeight]'));       // (positions below are fractions of the page)
       await poke(sw, `click(100 / ${W}, 35 / ${H}); type('hi!')`); await wait(800);
       await poke(sw, `click(100 / ${W}, 95 / ${H})`); await wait(800);
-      const open = await page().executeJavaScript("(() => { const h = document.body.lastElementChild; return !!h && h.tagName === 'DIV' && h.style.zIndex === '2147483647'; })()");
+      const open = await pageJs(page(), "(() => { const h = document.body.lastElementChild; return !!h && h.tagName === 'DIV' && h.style.zIndex === '2147483647'; })()");
       await snap('mirror-gpu-select');
       await poke(sw, `click(100 / ${W}, (110 + 26 + 13) / ${H})`); await wait(800);       // the list's second row, under the box
       await poke(sw, `move(50 / ${W}, 155 / ${H})`); await wait(800);
       log.push(`surf monitor: dropdown list shown=${open} page=${await pageSays()} pointer over the link=${(await see(sw)).cursor}`);
-      log.push('clicks the page saw: ' + await page().executeJavaScript('hits.join(" ")'));
+      log.push('clicks the page saw: ' + await pageJs(page(), 'hits.join(" ")'));
     }
     ipcMain.emit('cmd', { sender: mw }, { type: 'surf', do: 'new' }); await wait(4000);       // a new tab, from the mirror's bar: it opens where the browser is, and the mirror follows it
     log.push('new tab from the mirror: browser on ' + web.info().key + ', tabs=' + web.info().tabs.length + ' ' + JSON.stringify(await see(mw)));
-    { const f = web.frame(sw), pg = f && webContents.fromFrame(f); log.push('new tab (made while mirroring) size: ' + (pg ? await pg.executeJavaScript('innerWidth + "x" + innerHeight') : 'no page')); }
+    { const f = web.frame(sw), pg = f && webContents.fromFrame(f); log.push('new tab (made while mirroring) size: ' + (pg ? await pageJs(pg, 'innerWidth + "x" + innerHeight') : 'no page')); }
     patch({ surfMirror: false }); await wait(1500);
     log.push('mirror stopped: ' + JSON.stringify(await see(mw)) + ' surf monitor: ' + JSON.stringify(await see(sw)));
-    const layout = (v) => mw.executeJavaScript(`document.querySelector('#mode [data-v=${v}]').click()`);       // Settings' Span / Mirror / Mix buttons
+    const layout = (v) => pageJs(mw, `document.querySelector('#mode [data-v=${v}]').click()`);       // Settings' Span / Mirror / Mix buttons
     await layout('mirror'); await wait(3000);
     log.push(`layout Mirror: surfMirror=${state.surfMirror} mirror monitor: ${JSON.stringify(await see(mw))}`);
     await layout('span'); await wait(1500);
@@ -3957,9 +3991,9 @@ async function runShots() {
     } catch (e) { log.push('mirror test failed: ' + (e && e.stack || e)); web.close(); }
   }
   if (process.env.DRIFT_TESTREFOCUS && visWins.length > 1) {       // turning a monitor off and on: each screen keeps its tab, Surf included
-    const tabs = () => Promise.all(visWins.map(async (v) => `${v.key}=${await v.win.webContents.executeJavaScript("document.querySelector('.tabs button.active').dataset.tab + (document.querySelectorAll('webview.web').length ? '+browser' : '')")}`));
-    if (!process.env.DRIFT_REFOCUS_NOSURF) await visWins[0].win.webContents.executeJavaScript("document.querySelector('.tabs button[data-tab=surf]').click()");
-    await visWins[1].win.webContents.executeJavaScript("document.querySelector('.tabs button[data-tab=settings]').click()");
+    const tabs = () => Promise.all(visWins.map(async (v) => `${v.key}=${await pageJs(v.win.webContents, "document.querySelector('.tabs button.active').dataset.tab + (document.querySelectorAll('webview.web').length ? '+browser' : '')")}`));
+    if (!process.env.DRIFT_REFOCUS_NOSURF) await pageJs(visWins[0].win.webContents, "document.querySelector('.tabs button[data-tab=surf]').click()");
+    await pageJs(visWins[1].win.webContents, "document.querySelector('.tabs button[data-tab=settings]').click()");
     await wait(3000); log.push('refocus before: ' + (await tabs()).join(' '));
     patch({ displaysOff: [1] }); await wait(5000); log.push('refocus monitor 2 off: ' + (await tabs()).join(' '));
     patch({ displaysOff: [] }); await wait(5000); log.push('refocus monitor 2 on: ' + (await tabs()).join(' '));
@@ -3968,22 +4002,22 @@ async function runShots() {
     patch({ displaysOff: [] }); await wait(5000);
   }
   if (process.env.DRIFT_PANEL) {
-    log.push('spotify: ' + JSON.stringify(publicState().spotify) + ' toolbar: ' + await visWins[0].win.webContents.executeJavaScript("document.querySelector('#ctxTag').textContent + ' | ' + document.querySelector('#nowName').textContent"));
+    log.push('spotify: ' + JSON.stringify(publicState().spotify) + ' toolbar: ' + await pageJs(visWins[0].win.webContents, "document.querySelector('#ctxTag').textContent + ' | ' + document.querySelector('#nowName').textContent"));
     for (const tab of ['scenes', 'media', 'settings']) { visWins[0].win.webContents.send('cmd', { type: 'show-panel', tab }); await wait(tab === 'scenes' || tab === 'media' ? 6000 : 1500); await snap('panel-' + tab);
-      if (tab === 'settings') log.push('updates: ' + await visWins[0].win.webContents.executeJavaScript("JSON.stringify({ shown: getComputedStyle(document.querySelector('#updRow')).display, button: document.querySelector('#updBtn').textContent, note: document.querySelector('#updNote').textContent, auto: document.querySelector('#autoUpdate').checked })"));
-      if (tab === 'scenes') { await visWins[0].win.webContents.executeJavaScript("document.querySelector('#presets').scrollIntoView({ block: 'center' })"); await wait(1500); log.push('ambient: ' + await visWins[0].win.webContents.executeJavaScript("JSON.stringify({ top: document.querySelector('#content').scrollTop, presets: [...document.querySelectorAll('.preset')].map((b) => b.textContent + (b.classList.contains('active') ? '*' : '')) })")); await snap('panel-scenes-ambient'); } }
-    await visWins[0].win.webContents.executeJavaScript("document.querySelector('.tabs button[data-tab=surf]').click()"); await wait(5000); await snap('panel-surf');       // Surf: the browser opens on Drift's start page
+      if (tab === 'settings') log.push('updates: ' + await pageJs(visWins[0].win.webContents, "JSON.stringify({ shown: getComputedStyle(document.querySelector('#updRow')).display, button: document.querySelector('#updBtn').textContent, note: document.querySelector('#updNote').textContent, auto: document.querySelector('#autoUpdate').checked })"));
+      if (tab === 'scenes') { await pageJs(visWins[0].win.webContents, "document.querySelector('#presets').scrollIntoView({ block: 'center' })"); await wait(1500); log.push('ambient: ' + await pageJs(visWins[0].win.webContents, "JSON.stringify({ top: document.querySelector('#content').scrollTop, presets: [...document.querySelectorAll('.preset')].map((b) => b.textContent + (b.classList.contains('active') ? '*' : '')) })")); await snap('panel-scenes-ambient'); } }
+    await pageJs(visWins[0].win.webContents, "document.querySelector('.tabs button[data-tab=surf]').click()"); await wait(5000); await snap('panel-surf');       // Surf: the browser opens on Drift's start page
     log.push('surf: ' + JSON.stringify(web.info()));
     {       // Settings' "Forget Surf's sign-ins and history": a cookie set in Surf is gone after two clicks, and so is the browser
       const ws = session.fromPartition('persist:web'), wc = visWins[0].win.webContents;
       await ws.cookies.set({ url: 'https://example.com', name: 'drifttest', value: '1', expirationDate: Date.now() / 1000 + 3600 });
       const before = (await ws.cookies.get({})).length;
-      await wc.executeJavaScript("document.querySelector('.tabs button[data-tab=settings]').click(); document.querySelector('#content').scrollTop = 1e5"); await wait(800);
-      await wc.executeJavaScript("document.querySelector('#forgetSurf').click()"); await wait(300);
-      const asked = await wc.executeJavaScript("document.querySelector('#forgetSurf').textContent");
-      log.push('settings dom: ' + await wc.executeJavaScript("JSON.stringify({ active: document.querySelector('.tabs button.active').dataset.tab, open: document.querySelector('#panel').className, section: (document.querySelector('#content section.active') || {}).dataset, btnVisible: !!document.querySelector('#forgetSurf').offsetParent })"));
+      await pageJs(wc, "document.querySelector('.tabs button[data-tab=settings]').click(); document.querySelector('#content').scrollTop = 1e5"); await wait(800);
+      await pageJs(wc, "document.querySelector('#forgetSurf').click()"); await wait(300);
+      const asked = await pageJs(wc, "document.querySelector('#forgetSurf').textContent");
+      log.push('settings dom: ' + await pageJs(wc, "JSON.stringify({ active: document.querySelector('.tabs button.active').dataset.tab, open: document.querySelector('#panel').className, section: (document.querySelector('#content section.active') || {}).dataset, btnVisible: !!document.querySelector('#forgetSurf').offsetParent })"));
       await snap('forget-ask');
-      await wc.executeJavaScript("document.querySelector('#forgetSurf').click()"); await wait(1500);
+      await pageJs(wc, "document.querySelector('#forgetSurf').click()"); await wait(1500);
       log.push(`forget: cookies ${before} -> ${(await ws.cookies.get({})).length}, asked="${asked}", browser open=${web.info().open} tabs=${web.info().tabs.length}`);
     }
   }
@@ -4007,7 +4041,7 @@ async function runShots() {
         const t0 = Date.now();
         web.act({ do: 'go', text: u }, visWins[0].key); await wait(ms);
         const p = page(host);
-        tl(`block ${what}: ${p ? await p.executeJavaScript(probe).catch((e) => e.message) : 'page not found'} (${Date.now() - t0}ms)`);
+        tl(`block ${what}: ${p ? await pageJs(p, probe).catch((e) => e.message) : 'page not found'} (${Date.now() - t0}ms)`);
       };
       const exts = () => (ws.extensions || ws).getAllExtensions().map((e) => e.name).join(', ');
       tl(`block (${gpuRun ? 'gpu' : 'webview'}) start`);
@@ -4017,7 +4051,7 @@ async function runShots() {
       const hu = `http://127.0.0.1:${srv.address().port}/hints`;
       web.act({ do: 'go', text: hu }); await wait(2500); web.act({ do: 'reload' }); await wait(2500);       // (the detailed ones come on the second visit)
       const hp = page('127.0.0.1');
-      tl('block hints: ' + (hp ? await hp.executeJavaScript("document.querySelector('#h').textContent").catch((e) => e.message) : 'page not found'));
+      tl('block hints: ' + (hp ? await pageJs(hp, "document.querySelector('#h').textContent").catch((e) => e.message) : 'page not found'));
       patch({ share: { adblock: false } }); await wait(500);
       await visit('youtube, blocking off', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'youtube.com');
       tl('block extensions, blocking off (uBO stays loaded, everything trusted): ' + exts());
