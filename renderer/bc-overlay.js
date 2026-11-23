@@ -1,4 +1,4 @@
-/* Drift — viewers' pointers over the broadcaster's real screen (docs/plans/broadcast.md §9.2). main.js keeps this
+/* Drift — viewers' pointers, and the hub's chat, over the broadcaster's real screen (docs/plans/broadcast.md §9.2). main.js keeps this
    window over what's being shown, click-through and out of the capture; this only draws. Names arrive as text and are
    set as text. A pointer that hasn't moved for 6 s fades away. */
 (() => {
@@ -41,5 +41,29 @@
       setTimeout(() => r.remove(), 1200);
     }
   });
+  // Chat from the hub you're broadcasting into, down in the corner as over the video (renderer/chat.js overlayShow). main.js
+  // picks which and drops each after a while; everything is set as text.
+  const box = document.createElement('div'); box.id = 'msgs'; document.body.append(box);
+  const rows = new Map();       // message id -> row
+  function drawMsgs(msgs) {
+    for (const [id, r] of rows) if (!msgs.some((x) => x.id === id)) { r.remove(); rows.delete(id); }
+    for (const x of msgs) {
+      let r = rows.get(x.id);
+      if (!r) {
+        r = document.createElement('div'); r.className = 'msg';
+        const face = document.createElement('span'); face.className = 'face';
+        face.style.setProperty('--hue', [...String(x.from)].reduce((a, ch) => (a * 31 + ch.charCodeAt(0)) % 360, 7));
+        face.textContent = (String(x.name).trim()[0] || '?').toUpperCase();
+        const body = document.createElement('div'); body.className = 'body';
+        const b = document.createElement('b'); b.textContent = x.name;
+        body.append(b);
+        if (x.ch) { const em = document.createElement('em'); em.textContent = '#' + x.ch; body.append(em); }
+        body.append(document.createTextNode(x.text));
+        r.append(face, body); box.append(r); rows.set(x.id, r);
+      }
+      r.classList.toggle('old', !!x.old);
+    }
+  }
+  window.bcOverlay.on((m) => drawMsgs(Array.isArray(m.msgs) ? m.msgs : []));
   setInterval(() => { for (const q of els.values()) q.el.classList.toggle('idle', Date.now() - q.at > 6000); }, 1000);
 })();

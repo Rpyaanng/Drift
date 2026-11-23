@@ -1208,6 +1208,39 @@
     bcRipple({ x: q.x, y: q.y, name: myPtrName() });
   });
   bcBarEl.addEventListener('mouseleave', () => bcBarShow());
+  // "Share my cursor" is off for each broadcast until you turn it on, and the bar hides itself, so once the picture
+  // arrives the bar stays out for a moment with a note under it pointing at the button. Once for each time you start
+  // watching a broadcast; turning it on (here or in the Broadcast tab) puts it away at once.
+  const bcHintEl = Object.assign(document.createElement('div'), { id: 'bcHint' });
+  bcEl.appendChild(bcHintEl);
+  let bcHintFor = '', bcHintTimer = null;
+  function bcHintOff() {
+    clearTimeout(bcHintTimer);
+    if (!bcHintEl.classList.contains('on')) return;
+    bcHintEl.classList.remove('on'); bcBarEl.classList.remove('hint');
+    for (const el of bcBarEl.querySelectorAll('.nudge')) el.classList.remove('nudge');
+    bcBarShow();       // (then it hides as usual)
+  }
+  function bcHintPlace() {       // under the bar, its arrow on the button (the bar wraps on a narrow screen)
+    const bar = bcBarEl.getBoundingClientRect(), s = bcBarEl.querySelector('.bcShare'), w = bcHintEl.offsetWidth;
+    const sx = s ? (({ left, width }) => left + width / 2)(s.getBoundingClientRect()) : innerWidth / 2;
+    const left = Math.max(16, Math.min(innerWidth - w - 16, sx - w / 2));
+    bcHintEl.style.left = Math.round(left) + 'px';
+    bcHintEl.style.top = Math.round(bar.bottom + 16) + 'px';
+    bcHintEl.style.setProperty('--ax', Math.round(Math.max(14, Math.min(w - 14, sx - left))) + 'px');
+  }
+  function bcHintSync(v) {
+    if (v.share) { bcHintOff(); return; }
+    if (bcHintEl.classList.contains('on')) { const s = bcBarEl.querySelector('.bcShare'); if (s && !s.classList.contains('nudge')) { s.classList.add('nudge'); bcHintPlace(); } return; }       // (the bar may have been rebuilt)
+    if (bcHintFor === v.bc || v.state !== 'connected') return;
+    bcHintFor = v.bc;
+    bcHintEl.textContent = `Press "Share my cursor" to let ${v.who} and everyone watching see where you point`;
+    bcBarEl.classList.add('hint');
+    const s = bcBarEl.querySelector('.bcShare'); if (s) s.classList.add('nudge');
+    bcHintPlace();
+    bcHintEl.classList.add('on');
+    bcHintTimer = setTimeout(bcHintOff, 9000);
+  }
   const myPtrName = () => String((S.share || {}).name || (S.p2p || {}).defaultName || '').replace(/[\x00-\x1f<>]/g, '').trim().slice(0, 24) || 'You';
   // everyone else's pointers over the picture (the broadcaster passes on those who share theirs; main.js names them)
   const bcPtrEls = new Map();
@@ -1239,11 +1272,11 @@
     if (here !== bcOn) {
       bcOn = here;
       document.body.classList.toggle('bc', here);
-      if (here) { bcAsked = Date.now(); bcBarShow(); } else { bcHang(); bcKey = ''; bcBarKey = ''; }
+      if (here) { bcAsked = Date.now(); bcBarShow(); } else { bcHang(); bcKey = ''; bcBarKey = ''; bcHintOff(); bcHintFor = ''; }
     }
     bcSoundSync();
     if (!here) return;
-    if (v.bc !== bcKey) { bcKey = v.bc; bcHang(); bcAsked = Date.now(); }       // another broadcast: its offer is on its way
+    if (v.bc !== bcKey) { bcKey = v.bc; bcHang(); bcAsked = Date.now(); bcHintOff(); }       // another broadcast: its offer is on its way
     if (!v.share && bcPtrSent) { bcSend({ t: 'ptr', gone: true }); bcPtrSent = false; }
     bcNoteEl.textContent = v.bad ? `Couldn't check that this broadcast is really from ${v.who}. The hub may be interfering.`
       : v.paused ? `${v.who} paused the broadcast` : v.stalled ? `${v.who}'s picture stopped (the window may be minimised)` : v.state !== 'connected' ? `Connecting to ${v.who}…` : '';
@@ -1251,7 +1284,7 @@
     const k = JSON.stringify([v.bc, v.who, v.title, v.share, v.verdict, v.others, v.audio]);
     const slider = bcBarEl.querySelector('.bcVol input');
     if (slider && document.activeElement !== slider) slider.value = Math.round((+v.level || 0) * 100);
-    if (k === bcBarKey) return;
+    if (k === bcBarKey) { bcHintSync(v); return; }
     bcBarKey = k;
     const b = (cls, text, title, fn) => { const el = document.createElement('button'); el.className = cls; el.textContent = text; el.title = title; el.addEventListener('click', fn); return el; };
     const where = document.createElement('span'); where.className = 'bcWho';
@@ -1260,7 +1293,7 @@
     lock.title = v.verdict === 'verified' ? `End-to-end encrypted, and checked that it's really from ${v.who}` : '';
     where.append(dot, lock, `${v.who} · ${v.title || (v.kind === 'window' ? 'A window' : 'A screen')}`);
     where.title = 'The name of what they show is what they called it: the hub passes it on and can\'t vouch for it';
-    const share = b('bcBtn' + (v.share ? ' on' : ''), v.share ? 'Sharing my cursor' : 'Share my cursor',
+    const share = b('bcBtn bcShare' + (v.share ? ' on' : ''), v.share ? 'Sharing my cursor' : 'Share my cursor',
       v.share ? `${v.who} and everyone watching see your cursor over the picture. Click to stop` : `Let ${v.who} and everyone watching see where your cursor is over the picture. It's only a picture: you can't click or type anything on their PC`,
       () => bcCmd('cursor', { on: !v.share }));
     share.setAttribute('aria-pressed', v.share ? 'true' : 'false');
@@ -1275,10 +1308,12 @@
     const others = (v.others || []).map((o) => b('bcBtn', `${o.who} · ${o.title}`, `Watch ${o.who}'s broadcast instead`, () => bcCmd('switch', { id: o.id })));
     const sep = others.length ? Object.assign(document.createElement('span'), { className: 'bcSep', textContent: 'Also live:' }) : null;
     bcBarEl.replaceChildren(...[where, vol, share, sep, ...others, b('bcBtn stop', 'Stop watching', 'Stop watching (Esc)', () => bcCmd('stop'))].filter(Boolean));
+    bcHintSync(v);
   }
   addEventListener('keydown', (e) => { if (bcOn && e.key === 'Escape' && !panel.classList.contains('open')) { e.preventDefault(); e.stopImmediatePropagation(); bcCmd('stop'); } }, true);
   window.bcTest = async () => {       // (for main.js's checks)
-    const r = { on: bcOn, video: bcVid.videoWidth + 'x' + bcVid.videoHeight, state: bcPc ? bcPc.connectionState : '', dc: bcDc ? bcDc.readyState : '', framesIn: 0, ptrs: [...bcPtrEls.keys()], bar: bcBarEl.innerText.replace(/\n+/g, ' | '), note: bcNoteEl.textContent };
+    const r = { on: bcOn, video: bcVid.videoWidth + 'x' + bcVid.videoHeight, state: bcPc ? bcPc.connectionState : '', dc: bcDc ? bcDc.readyState : '', framesIn: 0, ptrs: [...bcPtrEls.keys()], bar: bcBarEl.innerText.replace(/\n+/g, ' | '), note: bcNoteEl.textContent,
+      hint: bcHintEl.classList.contains('on') ? bcHintEl.textContent : '', nudge: !!bcBarEl.querySelector('.bcShare.nudge'), barOut: bcBarEl.classList.contains('show') || bcBarEl.classList.contains('hint') };
     const st = bcPc ? await bcPc.getStats() : new Map();
     for (const x of st.values()) {
       if (x.type === 'inbound-rtp' && x.kind === 'video') { r.framesIn = x.framesDecoded; r.bytesIn = x.bytesReceived; }
@@ -1497,7 +1532,7 @@
       el.title = `${k} ${k === 1 ? 'person is' : 'people are'} on this tab`;
     }
     $('#shQuality').value = sh.quality || 'original';
-    $('#shOverlay').value = sh.overlay || 'unheard';
+    $('#shOverlay').value = sh.overlay || 'all';
     $('#shQNote').textContent = p.role === 'guest' && sh.quality !== p.quality ? `${p.host || 'Your friend'} is sending ${QNAME[p.quality] || p.quality} at most.` : '';
   }
   let peopleKey = '';

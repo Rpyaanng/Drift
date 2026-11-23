@@ -75,10 +75,15 @@ function check(mode, R) {
   ok(so.helper === false && so.hub === false && so.live === 'off' && so.sending === false, `${mode}: Hosty turns Sound off while live: the helper stops, and the hub hears of it (${JSON.stringify(so)})`);
   ok(so.sameConn, `${mode}: ...without anyone watching reconnecting`);
   ok(Array.isArray(H.ptrsBeforeOptIn) && H.ptrsBeforeOptIn.length === 0, `${mode}: before Guesty turns "Share my cursor" on, no pointer reaches Hosty`);
+  const hi = G.hint || {};
+  ok(/Share my cursor/.test(hi.hint || '') && /Hosty/.test(hi.hint) && hi.nudge && hi.barOut, `${mode}: once the picture arrives, Guesty's bar stays out with a note pointing at "Share my cursor" (${JSON.stringify(hi)})`);
+  ok(G.hintGone, `${mode}: ...and it goes as soon as Guesty turns sharing on`);
   ok(G.shareOn && H.overlayGot, `${mode}: Guesty turns it on, and Guesty's pointer reaches Hosty's overlay`);
   const at = H.overlayAt || {};
   ok(Math.abs(at.x - 0.25) < 0.02 && Math.abs(at.y - 0.4) < 0.02, `${mode}: ...at the right spot (${at.x}, ${at.y})`);
   ok(!!H.overlayRect && H.overlayRect.width > 0 && H.overlayProtected, `${mode}: the overlay sits over the screen being shown (${JSON.stringify(H.overlayRect)})`);
+  ok(H.chatOverGame && H.chatNotInWindows, `${mode}: Guesty's message goes over what Hosty broadcasts (the overlay above games), not into Drift's windows`);
+  ok(G.chatOverBc, `${mode}: ...and Hosty's message goes over the broadcast on Guesty's screen`);
   if (!tampered) ok(T.thirdSeesGuesty, `${mode}: Third sees Guesty's pointer over the picture`);
   const send = H.send || { peers: {} }, ps = Object.values(send.peers);
   ok(ps.length === (tampered ? 1 : 2) || (tampered && ps.length <= 2), `${mode}: Hosty's broadcast window has a connection per viewer (${ps.length})`);

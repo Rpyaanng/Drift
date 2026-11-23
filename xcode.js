@@ -86,9 +86,12 @@ module.exports = function createXcoder(ffmpegPath) {
     if (!info.hdr) tms.push('none');
     else {
       const z = f.has('zscale') && f.has('tonemap'), p = f.has('libplacebo');
-      if (info.dv === 5 && p) tms.push('placebo');       // Dolby Vision without an HDR10 layer needs libplacebo to get the colours right
+      // libplacebo first: it tone maps on the graphics card. zscale does it on the processor in 32-bit float, and at 4K that only just
+      // kept up (1.3x real time on a 20-core PC): a second conversion beside it (a friend's copy while sharing) put both below real
+      // time, and the picture froze once the head start ran out. libplacebo stayed near 1.4x with two. Where it can't run (no
+      // Vulkan), it never gives a frame, so that plan is marked bad and zscale takes over. (It also gets Dolby Vision's colours right.)
+      if (p) tms.push('placebo');
       if (z) tms.push('zscale');
-      if (p && !tms.includes('placebo')) tms.push('placebo');
       if (!tms.length) tms.push('none');
     }
     const encs = [];

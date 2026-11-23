@@ -69,7 +69,7 @@ const DEFAULTS = {
     hdr: 'auto', tone: 'hable', enc: 'auto', xq: 'auto', progress: {} },
   // watch together: internet = ask the router to let friends outside the home in; control = friends may play / pause / seek;
   // wait = pause for everyone while someone is loading; quality = picture size sent to (and asked from) friends
-  share: { name: '', internet: true, control: true, wait: true, quality: 'original', port: 47800, adblock: true, overlay: 'unheard' },       // overlay: whose chat messages go over the video (unheard / all / off)
+  share: { name: '', internet: true, control: true, wait: true, quality: 'original', port: 47800, adblock: true, overlay: 'all' },       // overlay: whose chat messages go over what you're watching (all / unheard / off)
   // voice: direct = connect straight to the others (lower delay, but they see this PC's address) instead of through the
   // hub's relay; ptt = hold a key to talk (pttKey, see VOICE_KEYS); talk = your microphone is open (closed at every start
   // unless keepMic); deaf = out of the voice room (set at every start; Join voice clears it); pin = the hub whose voice room you stay in ('' = whichever is open in
@@ -87,7 +87,7 @@ const DEFAULTS = {
   subs: { on: true, lang: 'en', size: 1, color: '#ffffff', bg: 'outline', lift: 0, perFile: {} },
   prevScene: 'aurora',
   frozen: false,           // scene animation paused
-  settingsVersion: 6,
+  settingsVersion: 7,
   music: {
     playing: true,
     source: 'generative',  // generative (Ambient) | files (music from the library) | off
@@ -148,8 +148,9 @@ function loadSettings() {
       state.music.folders = []; state.music.foldersInit = true; state.video.foldersInit = true;
       state.music.ambientOff = state.music.source === 'off' || state.music.source === 'spotify';
     }
+    if ((s.settingsVersion || 1) < 7 && state.share.overlay === 'unheard') state.share.overlay = 'all';       // typed messages from people in the call go over the video too now (hiding them read as broken)
     if (!['generative', 'files', 'off'].includes(state.music.source)) state.music.source = 'off';
-    state.settingsVersion = 6;
+    state.settingsVersion = 7;
     // Drift opens where it was left, but quietly: a video or a song from the library comes back paused, ready to carry on with play.
     state.video.paused = state.video.files.length > 0;
     const known = (id) => id === 'video' || SCENES.includes(id);
@@ -168,7 +169,7 @@ function loadSettings() {
 const QUALITY = { original: { h: 0, kbps: 0 }, 1080: { h: 1080, kbps: 6000 }, 720: { h: 720, kbps: 3000 }, 480: { h: 480, kbps: 1200 } };
 function cleanShare(q) {
   return { name: String(q.name || '').replace(/[\x00-\x1f<>]/g, '').slice(0, 24), internet: !!q.internet, control: !!q.control, wait: !!q.wait, adblock: !!q.adblock,
-    quality: QUALITY[q.quality] ? String(q.quality) : 'original', overlay: ['unheard', 'all', 'off'].includes(q.overlay) ? q.overlay : 'unheard', port: q.port >= 1024 && q.port <= 65535 ? Math.round(q.port) : DEFAULTS.share.port };
+    quality: QUALITY[q.quality] ? String(q.quality) : 'original', overlay: ['unheard', 'all', 'off'].includes(q.overlay) ? q.overlay : 'all', port: q.port >= 1024 && q.port <= 65535 ? Math.round(q.port) : DEFAULTS.share.port };
 }
 const VOICE_KEYS = { backquote: 0xc0, rctrl: 0xa3, mouse4: 0x05, mouse5: 0x06 };       // hold-to-talk keys, as Windows virtual-key codes
 function cleanVoice(q) {
@@ -395,9 +396,11 @@ function xcRestart(from, wait) {
   };
   if (wait) xcTimer = setTimeout(go, wait); else go();
 }
+// q: a friend's copy (QUALITY). Their "Original" is no bigger than this PC converts for its own screens: full 4K beside our own
+// stream left neither keeping up.
 function xcSpec(key, input, start, q) {
   return { key, input, start, info: videoInfo, tone: state.video.tone, enc: encFallback ? 'auto' : state.video.enc,
-    height: q ? QUALITY[q].h : xcHeight(), rate: q ? QUALITY[q].kbps : 0 };
+    height: (q && QUALITY[q].h) || xcHeight(), rate: q ? QUALITY[q].kbps : 0 };
 }
 
 // ---- subtitles ---------------------------------------------------------------------------------------
@@ -1300,12 +1303,15 @@ function startChat() {
       if ((m.t === 'bc-off' || m.t === 'bc-watch-off') && m.why && m.why !== 'ended') say(m.why);       // e.g. the host stopped your broadcast
       if (String(m.t).startsWith('bc-')) onBcEvent(hub, m);       // for the broadcast window and the screen showing one (the panels hear of it too)
       broadcast('chat', { type: 'event', hub, m }, false);
-      // A new message pops up on one screen: over the video, while watching together in that hub (yours too, so the
-      // conversation reads in order), or as a note at the top for anyone else's.
-      const over = m.t === 'msg' && m.msg && !m.msg.edited && hub === sessionHub();
-      if (m.t === 'msg' && m.msg && !m.msg.edited && (over || m.msg.from !== chat.myId())) {
-        const f = BrowserWindow.getFocusedWindow(), v = visWins.find((x) => x.win === f) || visWins[0];
-        if (v && !v.win.isDestroyed()) v.win.webContents.send('chat', { type: 'notify', hub, msg: m.msg, overlay: over });
+      // A new message pops up on one screen: over what you're watching from that hub (yours too, so the conversation
+      // reads in order), over what you're broadcasting into it (games too), or as a note at the top for anyone else's.
+      if (m.t === 'msg' && m.msg && !m.msg.edited) {
+        const o = overFor(hub);
+        if (o && o.game) bcMsgAdd(hub, m.msg);
+        else if (o || m.msg.from !== chat.myId()) {
+          const f = BrowserWindow.getFocusedWindow(), v = (o && o.win) || visWins.find((x) => x.win === f) || visWins[0];
+          if (v && !v.win.isDestroyed()) v.win.webContents.send('chat', { type: 'notify', hub, msg: m.msg, overlay: !!o });
+        }
       }
     },
     log: chatLog,
@@ -1391,6 +1397,46 @@ function sessionHub() {
   if (p2p.role() === 'host') return liveHub;
   const h = chat.info().hubs.find((x) => (x.lives || []).some((l) => l.code === joinedCode));
   return h ? h.id : '';
+}
+// Where a new message from `hub` goes over what you're watching from it: the monitor showing its watch-together video, its
+// Surf stream or a broadcast in it ({ win }; the focused one first when several do), else, while you broadcast into it, the
+// overlay over what you're showing ({ game }: games too). null: nothing of that hub's is on, so it's a note at the top.
+function overFor(hub) {
+  if (!chat || !hub) return null;
+  const keys = [], add = (k) => { const v = k && visWins.find((x) => x.key === k && !x.win.isDestroyed()); if (v && !keys.includes(v)) keys.push(v); };
+  if (bcView && bcView.hub === hub) add(bcViewKey());
+  const sh = surfHub();
+  if (sh && sh.id === hub && surfMode() !== 'own') { const sv = surfView(); if (sv.open) add(sv.key); }
+  if (hub === sessionHub()) {
+    for (const v of visWins) if (showsVideo(v.key)) add(v.key);
+    if (!keys.length) { const f = BrowserWindow.getFocusedWindow(); add((visWins.find((x) => x.win === f) || visWins[0] || {}).key); }       // (music only: any screen)
+  }
+  const f = BrowserWindow.getFocusedWindow(), win = keys.find((v) => v.win === f) || keys[0];
+  if (win) return { win };
+  const mine = chat.info().bc.mine;
+  return bcWin && mine && mine.hub === hub ? { game: true } : null;
+}
+// Messages over what you're broadcasting, in the pointer overlay (bcOvSync): it's on top of everything, games too, and kept
+// out of the capture, so viewers don't see them twice. The panel's setting decides which, as over the video (renderer/chat.js).
+let bcMsgs = [], bcMsgTimer = null;
+function bcMsgAdd(hub, msg) {
+  const set = state.share.overlay, I = chat.info(), me = I.me.id;
+  if (set === 'off') return;
+  const heard = msg.from !== me && I.call && I.call.hub === hub && (I.call.peers || []).includes(msg.from) && ((I.hubs.find((x) => x.id === hub) || {}).voice || []).some((v) => v.id === msg.from && v.talk && v.mic);
+  if (set === 'unheard' && heard) return;
+  const h = I.hubs.find((x) => x.id === hub), c = h && h.channels.find((y) => y.id === msg.ch);
+  bcMsgs = [...bcMsgs, { id: String(msg.id), from: String(msg.from), name: msg.from === me ? (I.me.name || 'You') : memberName(hub, msg.from), ch: h && h.channels.length > 1 && c ? c.name : '',
+    text: String(msg.text || '').slice(0, 600), at: Date.now() }].slice(-6);
+  if (msg.from !== me) sfxPlay(['message']);
+  bcMsgTick();
+  bcOvSync();
+}
+function bcMsgTick() {       // each one stays 12 s; the overlay hides once nothing is left on it
+  clearTimeout(bcMsgTimer);
+  const now = Date.now(), n = bcMsgs.length;
+  bcMsgs = bcMsgs.filter((x) => now - x.at < 13000);
+  if (bcMsgs.length !== n) bcOvSync();
+  if (bcMsgs.length) bcMsgTimer = setTimeout(bcMsgTick, 1000);
 }
 function shareTitle() {
   const c = cur();
@@ -1765,8 +1811,10 @@ function bcOvSync(ping) {
   const mine = chat && chat.info().bc.mine, blocked = new Set(chat ? chat.info().blocked : []);
   const list = !mine || !bcWin || !state.broadcast.pointers ? [] : bcPtrs.filter((p) => !bcHidden.has(p.id) && !blocked.has(p.id)).map((p) => ({ ...p, name: memberName(mine.hub, p.id) }));
   const r = bcTarget(), pin = ping && mine && state.broadcast.pointers && !bcHidden.has(ping.id) && !blocked.has(ping.id) ? { ...ping, name: memberName(mine.hub, ping.id) } : null;
-  bcOvLast = { list, ping: pin, rect: r };       // (tests read it)
-  if ((!list.length && !pin) || !r) {
+  if (!mine || !bcWin) bcMsgs = [];
+  const msgs = bcMsgs.map((x) => ({ ...x, old: Date.now() - x.at > 12000 }));
+  bcOvLast = { list, ping: pin, rect: r, msgs };       // (tests read it)
+  if ((!list.length && !pin && !msgs.length) || !r) {
     if (bcOv && !bcOv.isDestroyed()) { if (!bcWin) { bcOv.destroy(); bcOv = null; } else if (bcOv.isVisible()) bcOv.hide(); }
     return;
   }
@@ -1782,7 +1830,7 @@ function bcOvSync(ping) {
   }
   const b = bcOv.getBounds();
   if (b.x !== r.x || b.y !== r.y || b.width !== r.width || b.height !== r.height) bcOv.setBounds(r);
-  if (bcOvUp) bcOv.webContents.send('bc-overlay', { list, ping: pin });
+  if (bcOvUp) bcOv.webContents.send('bc-overlay', { list, ping: pin, msgs });
   if (!bcOv.isVisible() && !process.env.DRIFT_HIDDEN) bcOv.showInactive();
 }
 
@@ -3530,6 +3578,8 @@ async function runShots() {
       await btnIn('#bcLive .bcCard button', 'Watch'); await wait(500);
       await click(`.bcWhere button[data-key="${visWins[0].key}"]`);
       keep('viewOn', await until(async () => { const v = await view(); return v.on && v.state === 'connected' && v.framesIn > 20; }, 45000));
+      await wait(3500);       // (longer than the bar stays out by itself)
+      { const v = await view(); keep('hint', { hint: v.hint, nudge: v.nudge, barOut: v.barOut }); }
       const a = await view(); await wait(2000); const b = await view();
       keep('frames', { first: a.framesIn, later: b.framesIn, video: b.video, path: b.path, dtls: b.dtls, signed: b.signed, bar: b.bar, note: b.note });
       await until(() => (publicState().bcView || {}).verdict === 'verified', 10000);
@@ -3560,8 +3610,16 @@ async function runShots() {
       await until(() => (publicState().bcView || {}).share, 5000);
       for (let i = 0; i < 20; i++) { await js('window.bcTestPoint(0.25, 0.4)'); await wait(100); }
       keep('shareOn', (publicState().bcView || {}).share);
+      { const v = await view(); keep('hintGone', !v.hint && !v.nudge); }
+      const h = chat.info().hubs.find((x) => x.status === 'connected');       // chat over what's being broadcast (games too): it reaches Hosty's overlay
+      await chat.send(h.id, h.channels[0].id, 'hi over the game');
+      const over = () => Promise.all(visWins.map((v) => v.win.webContents.executeJavaScript('window.chatUI.overlay()'))).then((a) => a.flat());
+      keep('chatOverBc', await until(async () => (await over()).some((t) => /over the broadcast/.test(t)), 15000));       // and Hosty's, over the broadcast here
     }
     if (role === 'host') {
+      keep('chatOverGame', await until(() => !!(bcOvLast && (bcOvLast.msgs || []).some((x) => x.text === 'hi over the game' && x.name === 'Guesty')), 15000));
+      keep('chatNotInWindows', (await Promise.all(visWins.map((v) => v.win.webContents.executeJavaScript('window.chatUI.overlay()')))).flat().length === 0);
+      { const h = chat.info().hubs.find((x) => x.status === 'connected'); await chat.send(h.id, h.channels[0].id, 'hi over the broadcast'); }
       const g = () => bcOvLast && bcOvLast.list.find((p) => p.name === 'Guesty');
       keep('overlayGot', await until(() => !!g(), 15000));
       keep('overlayAt', g() || null);

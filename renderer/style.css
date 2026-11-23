@@ -56,7 +56,7 @@ body.bc #bcView { display: block; }
 #bcNote.on { display: block; }
 #bcBar { position: absolute; left: 50%; top: 14px; transform: translate(-50%, -8px); display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 14px; border-radius: 999px; max-width: calc(100vw - 32px); flex-wrap: wrap; justify-content: center;
   background: rgba(10,12,18,.66); backdrop-filter: blur(24px) saturate(150%); border: 1px solid var(--line); opacity: 0; pointer-events: none; transition: opacity .3s ease, transform .3s ease; }
-#bcBar.show, #bcBar:hover, #bcBar:focus-within { opacity: 1; pointer-events: auto; transform: translate(-50%, 0); }
+#bcBar.show, #bcBar.hint, #bcBar:hover, #bcBar:focus-within { opacity: 1; pointer-events: auto; transform: translate(-50%, 0); }
 #bcBar .bcWho { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; }
 #bcBar .spdot { width: 8px; height: 8px; border-radius: 50%; background: #ff4d4d; box-shadow: 0 0 8px #ff4d4d; flex: none; }
 #bcBar .bcSep { font-size: 11px; color: var(--dim); margin-left: 4px; }
@@ -66,6 +66,14 @@ body.bc #bcView { display: block; }
 .bcBtn:hover { background: rgba(255,255,255,.16); }
 .bcBtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .bcBtn.on { background: color-mix(in srgb, var(--accent) 30%, transparent); border-color: var(--accent); }
+.bcBtn.nudge { border-color: var(--accent); animation: bcNudge 1.6s ease-in-out infinite; }
+@keyframes bcNudge { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); } 50% { box-shadow: 0 0 0 6px transparent; } }
+/* under the bar, pointing up at "Share my cursor" (app.js bcHintSync) */
+#bcHint { position: absolute; left: 16px; top: 66px; transform: translateY(-6px); padding: 8px 16px; border-radius: 12px; background: rgba(10,12,18,.78); backdrop-filter: blur(20px); border: 1px solid var(--accent);
+  color: var(--ink); font-size: 13px; max-width: calc(100vw - 64px); text-align: center; pointer-events: none; opacity: 0; transition: opacity .3s ease, transform .3s ease; }
+#bcHint::before { content: ''; position: absolute; left: var(--ax, 50%); top: -6px; width: 10px; height: 10px; margin-left: -5px; background: inherit; border: 1px solid var(--accent); border-right: 0; border-bottom: 0; transform: rotate(45deg); }
+#bcHint.on { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) { .bcBtn.nudge { animation: none; } #bcHint { transition: none; } }
 .bcBtn.stop { background: rgba(255,77,77,.18); border-color: rgba(255,77,77,.45); }
 .ptr { position: absolute; left: 0; top: 0; display: flex; align-items: flex-start; transition: left .09s linear, top .09s linear, opacity .15s; }
 .ptr.idle { opacity: 0; transition: left .09s linear, top .09s linear, opacity .8s; }       /* a pointer that has stopped fades away, and comes straight back when it moves */

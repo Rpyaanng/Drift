@@ -519,7 +519,7 @@
   let toastTimer = null;
   function toast(text) { const t = $('#toast'); t.textContent = text; t.classList.add('on'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('on'), 3500); }
   function onNotify(hub, msg, over) {
-    if (over && overlaySetting !== 'off') {       // watching together in this hub: over the video, if it's for the overlay
+    if (over && overlaySetting !== 'off') {       // watching something of this hub's: over it, if it's for the overlay
       const x = info.hubs.find((y) => y.id === hub);
       if ((overlaySetting === 'all' || !canBeHeard(x, msg.from)) && !(hub === sel.hub && msg.ch === sel.ch && looking())) { overlayShow(x, msg); if (msg.from !== info.me.id) api.cmd({ type: 'sfx', name: 'message' }); }
       return;
@@ -666,7 +666,7 @@
     const was = p2p.role;
     p2p = s.p2p || { role: 'off' };
     shareSet = s.share || {}; drawHelp();
-    overlaySetting = (s.share && s.share.overlay) || 'unheard';
+    overlaySetting = (s.share && s.share.overlay) || 'all';
     const vs = JSON.stringify(s.voice || {});
     if (vs !== JSON.stringify(voiceSet)) { voiceSet = s.voice || {}; drawVoiceOpts(); drawSide(); drawCall(); }
     if (s.sfx && JSON.stringify(s.sfx) !== JSON.stringify(sfxSet)) { sfxSet = s.sfx; drawSfxOpts(); }
@@ -675,10 +675,11 @@
     if (was !== p2p.role) drawLives();
     const pk = JSON.stringify([p2p.role, p2p.host, (p2p.peers || []).length]);
     if (pk !== p2pKey) { p2pKey = pk; drawCall(); }
+    bcViewHub = s.bcView ? s.bcView.hub : '';
     const bv = s.bcView ? { bc: s.bcView.bc, who: s.bcView.who } : null;
     if (JSON.stringify(bv) !== JSON.stringify(bcViewS)) { bcViewS = bv; drawCall(); }
   });
-  let p2pKey = '';
+  let p2pKey = '', bcViewHub = '';
 
   // ---- your picture (Options) ----
   function drawMe() {
@@ -714,14 +715,14 @@
   checkMic();
   if (navigator.mediaDevices) navigator.mediaDevices.addEventListener('devicechange', checkMic);
 
-  // ---- chat over the video, while watching together ----
-  // Messages from the session's hub show in a corner of the screen main.js picks and fade after a while. Enter opens a
-  // box to answer in, without opening the panel. Which messages: from people who can't be heard (the setting's default)
-  // or all of them. Someone in the hub's voice room who pressed Talk and has a working microphone counts as heard, so what
-  // they type stays in the tab (they can just say it). Someone who hasn't pressed Talk is "unheard".
-  let overlaySetting = 'unheard', coTarget = null, coTyped = 0;
+  // ---- chat over what you're watching: a video together, the hub's Surf stream, or a broadcast ----
+  // Messages from that hub show in a corner of the screen main.js picks (the one showing it) and fade after a while. Enter
+  // opens a box to answer in, without opening the panel. Which messages: all of them (the setting's default), or only from
+  // people you can't hear: someone counts as heard only while you're connected to them in the hub's voice room and they
+  // pressed Talk with a working microphone, so what they type stays in the tab (they can just say it).
+  let overlaySetting = 'all', coTarget = null, coTyped = 0;
   const co = $('#chatOverlay'), coList = $('#coList'), coInput = $('#coInput');
-  const canBeHeard = (x, id) => { const v = vEntry(x, id); return !!v && v.listen && v.talk && !!v.mic; };
+  const canBeHeard = (x, id) => { const v = vEntry(x, id), c = info.call; return !!v && v.listen && v.talk && !!v.mic && !!c && !!x && c.hub === x.id && (c.peers || []).includes(id); };
   function overlayShow(x, msg) {
     const c = x && x.channels.find((y) => y.id === msg.ch);
     const row = h('div.coMsg', {}, face(x, msg.from, '.co'),
@@ -730,8 +731,11 @@
     while (coList.children.length > 8) coList.firstChild.remove();
     setTimeout(() => row.classList.add('old'), 12000);
   }
+  // The hub to answer in: the watch-together session's, else that of the broadcast this screen shows. (Over the Surf stream,
+  // Enter belongs to the page.)
+  const composeHub = () => p2p.chatHub || (document.body.classList.contains('bc') && bcViewHub) || '';
   function openCompose() {
-    const x = info.hubs.find((y) => y.id === p2p.chatHub);
+    const x = info.hubs.find((y) => y.id === composeHub());
     if (!x || x.status !== 'connected' || !x.channels.length) return false;
     const ch = sel.hub === x.id && x.channels.some((c) => c.id === sel.ch) ? sel.ch : x.channels[0].id;
     coTarget = { hub: x.id, ch };
@@ -742,8 +746,8 @@
   }
   function closeCompose() { co.classList.remove('typing'); coTarget = null; if (document.activeElement === coInput) coInput.blur(); }
   addEventListener('keydown', (e) => {       // Enter while watching (and not typing anywhere else): answer over the video
-    if (e.key !== 'Enter' || e.defaultPrevented || (document.activeElement && document.activeElement !== document.body) || $('#confirm').classList.contains('on')) return;
-    if (p2p.role === 'off' || !p2p.chatHub) return;
+    if (e.key !== 'Enter' || e.defaultPrevented || (document.activeElement && document.activeElement !== document.body && document.activeElement.id !== 'bcVideo') || $('#confirm').classList.contains('on')) return;
+    if (!composeHub()) return;
     if (openCompose()) e.preventDefault();
   });
   coInput.addEventListener('keydown', async (e) => {
