@@ -282,12 +282,20 @@ input[type=range]::-webkit-slider-thumb { appearance: none; width: 14px; height:
 .mixRow.off .mixMain { opacity: .45; }
 .mixRow.off input[type=range]::-webkit-slider-runnable-track { background: rgba(255,255,255,.14); }
 #bar { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 8px 10px 8px 8px; }
-.tabs { display: flex; gap: 2px; }
+.tabs { display: flex; align-items: center; gap: 2px; }
+/* what can be on screen: Scenes, Media, Surf and Broadcast; the one on screen now is lit */
+.tabs .tabGroup { position: relative; display: flex; gap: 2px; }
+.tabs .tabGroup button.showing { color: var(--accent); }
+/* the underline under the one on screen: one mark that slides along to it (placed by app.js placeInk) */
+.tabs .tabInk { position: absolute; left: 0; bottom: 2px; width: 14px; height: 2px; border-radius: 1px; background: var(--accent); pointer-events: none;
+  transition: transform .38s cubic-bezier(.22, 1, .36, 1), opacity .2s; }
+.tabs .tabInk.still { transition: none; }
 .tabs button.active { background: rgba(255,255,255,.12); color: var(--ink); }
 .quick { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .quick .sep { width: 1px; height: 18px; background: var(--line); margin: 0 6px; }
 .icon { all: unset; cursor: pointer; width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; color: var(--ink); font-size: 15px; transition: background .2s; }
 .icon:hover { background: rgba(255,255,255,.12); }
+.icon:disabled { opacity: .3; cursor: default; background: none; }
 .icon.exit { color: var(--dim); font-size: 13px; }
 .icon.exit:hover { background: rgba(255,90,90,.3); color: #fff; }
 #ctxTag { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); padding: 0 6px 0 2px; min-width: 44px; text-align: right; }

@@ -263,8 +263,13 @@
   const spLead = () => !!(S.spotify || {}).lead;
   const mediaCtx = () => (videoOn() ? 'video' : musicPlaying() ? 'music' : spLead() ? 'spotify' : musicOn() ? 'music' : 'video');
   const ctx = () => {
-    if (tab === 'share') { if (lastCtx !== 'surf') lastCtx = mediaCtx(); }
-    else if (tab !== 'settings') lastCtx = tab === 'media' ? mediaCtx() : tab === 'surf' ? 'surf' : spLead() ? 'spotify' : 'scene';
+    // Together, Broadcast and Settings: the bar stays on what's on screen. A video or music that's up (a shared one, say) takes
+    // it, and a Media context with nothing left in it goes back to the scene
+    if (tab === 'share' || tab === 'settings' || tab === 'broadcast') {
+      if (lastCtx === 'surf') { /* the page stays */ }
+      else if (videoOn() || musicOn()) { if (tab === 'share' || lastCtx === 'scene') lastCtx = mediaCtx(); }
+      else if (lastCtx === 'video' || lastCtx === 'music') lastCtx = spLead() ? 'spotify' : 'scene';
+    } else lastCtx = tab === 'media' ? mediaCtx() : tab === 'surf' ? 'surf' : spLead() ? 'spotify' : 'scene';
     return lastCtx;
   };
   // watching with a friend who has music on: theirs plays here in place of ours, and the Music controls are for theirs
@@ -700,6 +705,20 @@
   const base = (p) => p.split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
   let plKey = '';
 
+  // The underline in the tabs' pill slides along to the one on screen. It goes straight there (no slide) the first time, after
+  // the pill wasn't laid out, and when the pill itself changes size (Broadcast comes or goes, a badge)
+  let inkAt = null;
+  function placeInk(still) {
+    const ink = $('.tabInk'), b = $('.tabGroup button.showing');
+    if (!b || !b.offsetWidth) { ink.style.opacity = '0'; inkAt = null; return; }
+    const x = Math.round(b.offsetLeft + (b.offsetWidth - ink.offsetWidth) / 2);
+    ink.style.opacity = '1';
+    if (x === inkAt) return;
+    if (still || inkAt === null) { ink.classList.add('still'); ink.style.transform = `translateX(${x}px)`; void ink.offsetWidth; ink.classList.remove('still'); }
+    else ink.style.transform = `translateX(${x}px)`;
+    inkAt = x;
+  }
+  new ResizeObserver(() => placeInk(true)).observe($('.tabGroup'));
   function syncUI() {
     document.documentElement.style.setProperty('--accent', accentHex());
     $('#cycleSecs').value = String(S.cycleSecs); $('#cycleSecs').disabled = S.palette !== 'cycle';
@@ -775,8 +794,15 @@
     $('#qvol').title = volIsSurf() ? 'Surf volume (every web page)' : volIsVideo() ? 'Media volume (videos and your music)' : !volIsSpotify() ? 'Ambient volume (music and nature sounds)' : sp.volMode === 'app' ? 'Spotify volume' : sp.volMode === 'system' ? 'PC volume (Spotify is not playing yet)' : 'Spotify volume is not available';
     const c = ctx();
     $('#ctxTag').textContent = { scene: 'Scene', video: 'Video', music: 'Music', surf: 'Surf', spotify: 'Spotify' }[c];
+    // in the tabs' pill, the one on this screen now: a broadcast being watched here, else what the bar's controls are for
+    const onScreen = S.bcView && S.bcView.key === me.key ? 'broadcast' : c === 'surf' ? 'surf' : c === 'scene' && cur !== 'video' ? 'scenes' : 'media';
+    $$('.tabGroup button').forEach((x) => x.classList.toggle('showing', x.dataset.tab === onScreen));
+    placeInk();
     $('#play').style.display = c === 'surf' ? 'none' : '';
     $('#prevTrack').title = c === 'surf' ? 'Back (←)' : 'Previous (←)'; $('#nextTrack').title = c === 'surf' ? 'Forward (→)' : 'Next (→)';
+    const noStep = c === 'scene' && cur === 'video';       // on Scenes with a video on screen: no scene playing to step from
+    const wb = S.web || {};       // (on Surf: Back and Forward, when the page has somewhere to go)
+    $('#prevTrack').disabled = noStep || (c === 'surf' && !wb.back); $('#nextTrack').disabled = noStep || (c === 'surf' && !wb.fwd);
     const tm = theirMusic(), tmName = tm ? (tm.src === 'files' ? tm.title || 'Music' : (PRESETS.find((x) => x.id === tm.preset) || { name: 'Ambient' }).name) : '';
     const playing = c === 'scene' ? !S.frozen : c === 'video' ? videoOn() && !S.video.paused : c === 'surf' ? false : spOn ? sp.status === 'playing' : musicPlaying();
     $('#play').textContent = playing ? '⏸' : '▶';
@@ -1569,7 +1595,7 @@
     const si = S.subsInfo || { tracks: [] }, sb = S.subs || {}, box = $('#subBox'), tracks = si.tracks || [];
     box.classList.toggle('on', videoOn());
     const vcc = $('#vcc');
-    vcc.style.display = videoOn() ? '' : 'none'; vcc.classList.toggle('on', !!si.sel);
+    vcc.style.display = videoOn() && tab === 'media' ? '' : 'none'; vcc.classList.toggle('on', !!si.sel);       // (subtitles are the Media tab's)
     if (si.file !== subFor) {       // a different video: start the online search over with its name filled in
       subFor = si.file; subRes = null; subJob++; renderSubResults();
       const g = si.guess || {};
@@ -1951,7 +1977,7 @@
   };
   const ctxStep = (dir) => {
     const c = ctx();
-    if (c === 'scene') stepScene(dir);
+    if (c === 'scene') { if (sceneFor(S) !== 'video') stepScene(dir); }       // (a video on screen: no scene to step from)
     else if (c === 'surf') { if ((S.web || {}).open) surf(dir < 0 ? 'back' : 'fwd'); }
     else if (c === 'video') {
       if (!videoOn()) toast('Pick a video in the Media tab first', 1800);

@@ -362,7 +362,9 @@ module.exports = function createWeb(hooks, opts = {}) {
     wc.setZoomFactor(to);
     hooks.say(`Zoom ${Math.round(to * 100)}%`);
   }
-  function nav(dir) { if (!alive()) return; const h = cur().wc.navigationHistory; if (dir < 0) { if (h.canGoBack()) h.goBack(); } else if (h.canGoForward()) h.goForward(); }
+  // A tab's page starts blank and then loads what it's for (see host()): that blank start isn't somewhere Back goes
+  const canBack = (h) => { if (!h.canGoBack()) return false; const e = h.getEntryAtIndex(h.getActiveIndex() - 1); return !(e && /^about:blank\b/i.test(e.url)); };
+  function nav(dir) { if (!alive()) return; const h = cur().wc.navigationHistory; if (dir < 0) { if (canBack(h)) h.goBack(); } else if (h.canGoForward()) h.goForward(); }
 
   // ---- Surf's extensions (in this window's session only) ----
   const exts = () => sess().extensions || sess();       // (session.extensions came in Electron 36; before, the session itself)
@@ -571,7 +573,7 @@ module.exports = function createWeb(hooks, opts = {}) {
 
   // ---- sharing ----
   const label = (t) => t.title || (isHome(t.url || t.pending) ? 'New tab' : site(t.url || t.pending)) || 'New tab';
-  const hist = (d) => { if (!alive()) return false; const h = cur().wc.navigationHistory; return d < 0 ? h.canGoBack() : h.canGoForward(); };
+  const hist = (d) => { if (!alive()) return false; const h = cur().wc.navigationHistory; return d < 0 ? canBack(h) : h.canGoForward(); };
   const view = () => { const t = cur() || {}; return { sid, out: out ? out.name : '', url: out ? '' : t.url || t.pending || '', title: out ? out.title || out.name : t.title || '', tabs: tabs.map((x) => ({ id: x.id, title: label(x) })), active, back: hist(-1), fwd: hist(1) }; };
   // What friends are told about the browser. The picture and sound of the tab in front reach them as a stream, named by `sid`.
   const shared = () => (on && !parked && (alive() || (out && out.id)) && sid ? view() : null);

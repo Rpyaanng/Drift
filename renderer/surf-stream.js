@@ -32,7 +32,28 @@
     }
     return null;
   }
-  function capture() { if (!cap) { const g = ++capGen; cap = grab().then((st) => { if (g !== capGen && st) { st.getTracks().forEach((t) => t.stop()); return null; } return st; }); } return cap; }
+  function capture() {
+    if (!cap) {
+      const g = ++capGen;
+      cap = grab().then((st) => { if (g !== capGen && st) { st.getTracks().forEach((t) => t.stop()); return null; } return st; });
+      cap.then(hear);
+    }
+    return cap;
+  }
+  // ---- the host's own ears: while this captures, the hub's browser is silent on the host's PC (so the watchers get it at full
+  // level) and the host hears this capture instead, at their Surf level (main.js sends 'hear'; 0 when they aren't in the hub) ----
+  const ear = new Audio();
+  let earVol = 0, earSt = null, earOn = false;
+  async function hear() {
+    const c = cap, st = c ? await c : null;
+    if (c !== cap) return;       // (a newer capture is on its way: it calls this when it comes)
+    const on = !!(st && st.getAudioTracks().length);
+    if (on !== earOn) { earOn = on; api.send('ear', { on }); }
+    if (!on || !(earVol > 0)) { ear.pause(); ear.srcObject = null; earSt = null; return; }
+    if (earSt !== st) { earSt = st; ear.srcObject = new MediaStream(st.getAudioTracks()); }
+    ear.volume = Math.min(1, earVol);
+    ear.play().catch(() => {});
+  }
   // Another tab came to the front (or its page came in): capture again, and swap the new tracks in everywhere.
   async function recapture() {
     const old = cap; cap = null;
@@ -68,7 +89,7 @@
     peers.delete(id);
     try { p.pc.close(); } catch { /* closed */ }
     api.send('peer', { id, state: '' });
-    if (!peers.size) { const c = cap; cap = null; capGen++; if (c) c.then((st) => st && st.getTracks().forEach((t) => t.stop())); }       // nobody left: the capture stops
+    if (!peers.size) { const c = cap; cap = null; capGen++; if (c) c.then((st) => st && st.getTracks().forEach((t) => t.stop())); hear(); }       // nobody left: the capture stops (and the host hears the pages again)
   }
   async function offer(id, iceServers) {
     close(id);
@@ -111,6 +132,7 @@
   const sendTo = (p, m) => { if (p.dc && p.dc.readyState === 'open') { try { p.dc.send(JSON.stringify(m)); } catch { /* closing */ } } };
 
   api.on((m) => {
+    if (m.t === 'hear') { earVol = +m.v || 0; hear(); return; }
     if (m.t === 'start') {
       cfg = m;
       RTCPeerConnection.generateCertificate({ name: 'ECDSA', namedCurve: 'P-256' }).then((c) => { cert = c; startedOk(); }, (e) => log('no certificate: ' + e.message));       // fresh for each time the stream window opens

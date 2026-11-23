@@ -999,7 +999,7 @@ function surfModeCheck() {
   if (m === 'own') { if (surfShown && surfBack()) web.show(surfKey); surfShown = false; }
   else if (m === 'hub') { if (surfShown) hubShow(surfKey); }
   else if (m === 'stream') { if (surfShown) ssStart(); }
-  if (hubWeb) hubWeb.audioChanged();
+  hubSound();
   ptrClear();
   pushState();
 }
@@ -1019,8 +1019,10 @@ function hubBrowser() {
       say: (t) => { if (surfMode() === 'hub' && surfShown) say(t); ssNote(t); },       // to whoever is looking at it
       blockAds: () => state.share.adblock,
       ublockDir: () => path.join(app.getPath('userData'), 'ublock'),
-      gain: () => 1,       // (the members' own mixers set what they hear; here its sound is on or off, muted())
-      muted: () => surfMode() !== 'hub' || mixGain().surf === 0,       // silent here unless the host is in the hub (the capture keeps its sound: spike S1)
+      // The members' own mixers set what they hear, so while the stream is captured the pages play at full level and are silent
+      // here; the host hears the capture instead, at their Surf level (ssEar). Otherwise the pages play here at that level.
+      gain: () => (ssEar ? 1 : mixGain().surf),
+      muted: () => ssEar || hubHear() === 0,       // (setAudioMuted doesn't silence the capture: spike S1)
       held: hubHeld,
       holdDir: () => path.join(app.getPath('userData'), 'hub-downloads'),
       allowLan: () => state.hubSurf.allowLan,
@@ -1085,7 +1087,13 @@ function heldAnswer(id, yes) {
 // A hidden window, made while anyone watches and closed when nobody does. It captures the hub's browser (main.js answers its
 // getDisplayMedia with the browser's own frame), holds one connection per watcher, all fed by that one capture, and their data
 // channels. It never sees a key or the hub: chat.js signs what it sends and checks what arrives before it sees it.
-let ssWin = null, ssUp = false, ssQueue = [], ssSid = '';
+let ssWin = null, ssUp = false, ssQueue = [], ssSid = '', ssEar = false;       // ssEar: the stream window is capturing, and plays its sound here
+// What the host hears of their hub's browser: their Surf level while they're in the hub, else nothing
+const hubHear = () => (surfMode() === 'hub' ? mixGain().surf : 0);
+function hubSound() {
+  if (hubWeb) { hubWeb.gainChanged(); hubWeb.audioChanged(); }
+  toSs({ t: 'hear', v: hubHear() });
+}
 const ssPeers = {};       // watcher -> connection state (tests read it)
 const ssWatchers = () => { const x = chat && chat.info().ss.host; return x ? x.watchers : []; };
 function toSs(m) { if (!ssWin) return; if (ssUp && !ssWin.isDestroyed()) ssWin.webContents.send('surf-stream', m); else ssQueue.push(m); }
@@ -1093,15 +1101,14 @@ function ssWinSync() {
   const need = !!(hubWeb && hubWeb.running() && ssWatchers().length);
   if (need && !ssWin) {
     ssUp = false; ssSid = hubWeb.info().sid;
-    ssQueue = [{ t: 'start', policy: state.voice.direct ? 'all' : 'relay' }];
+    ssQueue = [{ t: 'start', policy: state.voice.direct ? 'all' : 'relay' }, { t: 'hear', v: hubHear() }];
     const w = ssWin = new BrowserWindow({ show: false, width: 240, height: 120, skipTaskbar: true, title: 'Drift Surf stream',
       webPreferences: { preload: path.join(__dirname, 'surf-stream-preload.js'), sandbox: true, contextIsolation: true, backgroundThrottling: false } });
-    w.webContents.setAudioMuted(true);       // (it only sends)
-    w.on('closed', () => { if (ssWin === w) { ssWin = null; ssUp = false; ssQueue = []; for (const k of Object.keys(ssPeers)) delete ssPeers[k]; } });
+    w.on('closed', () => { if (ssWin === w) { ssWin = null; ssUp = false; ssQueue = []; for (const k of Object.keys(ssPeers)) delete ssPeers[k]; if (ssEar) { ssEar = false; hubSound(); } } });
     w.loadFile(path.join(__dirname, 'renderer', 'surf-stream.html')).catch(() => {});
   } else if (!need && ssWin) ssWinClose();
 }
-function ssWinClose() { const w = ssWin; ssWin = null; ssUp = false; ssQueue = []; for (const k of Object.keys(ssPeers)) delete ssPeers[k]; if (w && !w.isDestroyed()) w.destroy(); }
+function ssWinClose() { const w = ssWin; ssWin = null; ssUp = false; ssQueue = []; for (const k of Object.keys(ssPeers)) delete ssPeers[k]; if (w && !w.isDestroyed()) w.destroy(); if (ssEar) { ssEar = false; hubSound(); } }
 function ssState() {       // what the watchers' Surf bar shows
   if (!hubWeb) return;
   const i = hubWeb.info();
@@ -1134,6 +1141,7 @@ ipcMain.on('surf-stream', (e, type, d) => {
   else if (type === 'cert') chat.ssCert(String(d.peer || ''), String(d.alg || ''), String(d.fp || ''));       // a mismatch comes back as ss-verdict and closes it
   else if (type === 'data') onSsData(String(d.from || ''), d.m);
   else if (type === 'peer') { if (d.state) ssPeers[String(d.id)] = String(d.state); else delete ssPeers[String(d.id)]; }
+  else if (type === 'ear') { if (ssEar !== !!d.on) { ssEar = !!d.on; hubSound(); } }       // the capture started or stopped: the host's sound comes from it, or from the pages
 });
 // What chat.js says about the Surf stream (all of it already checked there).
 async function onSsEvent(hub, m) {
@@ -2283,7 +2291,7 @@ function patch(p) {
   // Settings' Mirror layout takes a page open in our own Surf along with it: Mirror shows it on every monitor, Span and Mix put it back on its own one
   if (prev.mode !== state.mode && !('surfMirror' in p) && !remote && web.info().open) state.surfMirror = state.mode === 'mirror';
   applySideEffects(prev);
-  if (JSON.stringify(prev.mixer) !== JSON.stringify(state.mixer)) { web.gainChanged(); toVoice({ t: 'master', v: mixGain().master }); }       // (a voice room not open yet takes it as it starts)
+  if (JSON.stringify(prev.mixer) !== JSON.stringify(state.mixer)) { web.gainChanged(); hubSound(); toVoice({ t: 'master', v: mixGain().master }); }       // (a voice room not open yet takes it as it starts)
   if (prev.surfGpu !== state.surfGpu) web.gpuChanged();       // the browser goes up again the other way
   else if (prev.surfMirror !== state.surfMirror) web.resized();       // the page's size follows the widest monitor it is on
   const pv = prev.video, nv = state.video;
