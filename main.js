@@ -78,6 +78,8 @@ const DEFAULTS = {
   // broadcast (docs/plans/broadcast.md §5): quality = auto | detail (text and detail) | motion (smooth); pointers = show
   // viewers' pointers on this screen while live
   broadcast: { quality: 'auto', pointers: true, sound: false },
+  // Together's sounds (renderer/sfx.js): on, and how loud (under the mixer's master)
+  sfx: { on: true, volume: 0.7 },
   // the Surf stream of the hub this PC hosts (docs/plans/streams.md): its tabs (kept with the hub they belong to), whether every
   // download on it is refused, the local addresses it may open (surf-lan.js), and whether the host was told pages load from their connection
   hubSurf: { hub: '', urls: [], active: 0, noDownloads: false, allowLan: [], told: false },
@@ -123,6 +125,7 @@ function loadSettings() {
     state.share = cleanShare({ ...DEFAULTS.share, ...(s.share || {}) });
     state.voice = cleanVoice({ ...DEFAULTS.voice, ...(s.voice || {}) });
     state.broadcast = cleanBroadcast({ ...DEFAULTS.broadcast, ...(s.broadcast || {}) });
+    state.sfx = cleanSfx({ ...DEFAULTS.sfx, ...(s.sfx && typeof s.sfx === 'object' ? s.sfx : {}) });
     state.hubSurf = cleanHubSurf({ ...DEFAULTS.hubSurf, ...(s.hubSurf && typeof s.hubSurf === 'object' ? s.hubSurf : {}) });
     if (!state.voice.keepMic) state.voice.talk = false;       // nobody is ever live by surprise: the microphone starts closed
     state.voice.deaf = true;       // and nobody is in a voice room by surprise either: Join voice puts you in
@@ -174,6 +177,7 @@ function cleanVoice(q) {
     pin: /^[A-Za-z0-9_-]{20,64}$/.test(String(q.pin || '')) ? String(q.pin) : '',
     volumes: Object.fromEntries(vols.map(([id, v]) => [id, Math.max(0, Math.min(1, +v))])) };
 }
+const cleanSfx = (q) => ({ on: q.on !== false, volume: unitVol(q.volume, 0.7) });
 const unitVol = (v, d) => (isFinite(v) && v !== null && v !== '' ? Math.max(0, Math.min(1, +v)) : d);
 const cleanMixer = (q) => ({ master: unitVol(q.master, 1), mute: !!q.mute, surf: unitVol(q.surf, 1), surfMute: !!q.surfMute, ambientMute: !!q.ambientMute, mediaMute: !!q.mediaMute });
 // What the mixer makes of Drift's own sound (master) and of the Surf pages' (surf)
@@ -739,7 +743,7 @@ function broadcast(channel, payload, includeAudio = true) {
   for (const v of visWins) if (!v.win.isDestroyed()) v.win.webContents.send(channel, payload);
   if (includeAudio && audioWin && !audioWin.isDestroyed()) audioWin.webContents.send(channel, payload);
 }
-function pushState() { broadcast('state', publicState()); p2p.sync(); syncLive(); }
+function pushState() { broadcast('state', publicState()); p2p.sync(); syncLive(); sfxTick(); }
 
 // ---- the cats (Summon the cats) --------------------------------------------------------------------
 // Where each cat is lives here, so every screen agrees. Now and then a cat wanders to another screen; opening or closing the
@@ -1282,6 +1286,7 @@ function startChat() {
       const sh = sessionHub();       // the session's hub is known once that hub lists the share: the panels need it to chat over the video
       if (sh !== shownSessionHub) { shownSessionHub = sh; pushState(); }
       bcNews();
+      sfxTick();
       mediaCheck();
       surfModeCheck();
       if (hubWeb || chat.hostedHub()) { hubBrowser(); ssWinSync(); }
@@ -1309,6 +1314,60 @@ function startChat() {
   chat.setName(shareName());
   if (!SHOT_DIR || process.env.DRIFT_TESTCHAT || process.env.DRIFT_TESTSTREAM || process.env.DRIFT_TESTSS) chat.start().catch((e) => console.log('chat: ' + e.message));
   publicIp().then((ip) => { chatPub = ip; }).catch(() => {});
+}
+// ---- Together's sounds (renderer/sfx.js makes them, in the hidden audio window, so they never double across monitors) ----
+// Each one is a change this PC can see: a small picture of Together is taken whenever something may have changed, and
+// compared with the last one. The first picture only sets the scene, so starting Drift is quiet.
+const SFX_NAMES = new Set(['join', 'leave', 'peerJoin', 'peerLeave', 'mute', 'unmute', 'connect', 'disconnect', 'lost',
+  'liveOn', 'liveOff', 'viewerJoin', 'viewerLeave', 'bcStart', 'shareOn', 'shareOff', 'message']);
+let sfxWas = null, sfxJoinedAt = 0;
+function sfxPlay(names, preview = false) {
+  if ((!state.sfx.on && !preview) || !audioWin || audioWin.isDestroyed()) return;
+  const vol = mixGain().master * state.sfx.volume * state.sfx.volume;       // (squared, like the mixer's sliders: the slider feels even)
+  if (vol > 0) audioWin.webContents.send('cmd', { type: 'sfx', names, vol });
+}
+function sfxSnap() {
+  const I = chat.info(), me = chat.myId(), act = activeHub(), h = I.hubs.find((x) => x.id === act && x.status === 'connected');
+  const inVoice = !!(h && !state.voice.deaf && h.room && h.room.in), mine = I.bc && I.bc.mine, p = p2p.info();
+  return { act: h ? h.id : '', status: new Map(I.hubs.map((x) => [x.id, x.status])), inVoice, talk: inVoice && !!state.voice.talk,
+    voice: new Set(inVoice ? (h.voice || []).filter((v) => v.listen && v.id !== me).map((v) => v.id) : []),
+    bcs: new Set(h ? (h.bcs || []).filter((b) => b.from !== me).map((b) => b.id) : []),
+    live: mine ? mine.id : '', viewers: new Set(mine ? Object.keys(mine.viewers || {}) : []),
+    share: p.role || 'off', friends: new Set(p.role === 'host' ? (p.peers || []).map((x) => (x && x.name) || String(x)) : []) };
+}
+const sfxDiff = (a, b) => [[...b].some((x) => !a.has(x)), [...a].some((x) => !b.has(x))];       // [someone came, someone went]
+function sfxTick() {
+  if (!chat) return;
+  let now;
+  try { now = sfxSnap(); } catch { return; }       // (chat not started yet)
+  const was = sfxWas; sfxWas = now;
+  if (!was) return;
+  const out = [];
+  // your hubs: online, offline because you chose it (Disconnect, Leave hub), or dropped
+  let hub = '';
+  for (const [id, st] of now.status) { const w = was.status.get(id); if (st !== w && st === 'connected') hub = 'connect'; else if (w === 'connected' && st !== 'connected') hub = hub || (st === 'away' ? 'disconnect' : 'lost'); }       // (away: you pressed Disconnect; offline or gone: dropped, or removed)
+  for (const [id, w] of was.status) if (w === 'connected' && !now.status.has(id)) hub = hub || 'disconnect';
+  if (hub) out.push(hub);
+  // your voice room: in, out, or moved to another hub's
+  const moved = was.inVoice && now.inVoice && was.act !== now.act;
+  if (now.inVoice !== was.inVoice || moved) {
+    if (now.inVoice) { out.push('join'); sfxJoinedAt = Date.now(); } else if (!hub) out.push('leave');       // (dropped with the hub: its sound says it)
+  } else if (now.inVoice) {
+    if (was.talk !== now.talk) out.push(now.talk ? 'unmute' : 'mute');
+    if (Date.now() - sfxJoinedAt > 1500) {       // (the room's list catching up just after you joined isn't people arriving)
+      const [came, went] = sfxDiff(was.voice, now.voice);
+      if (came) out.push('peerJoin'); else if (went) out.push('peerLeave');
+    }
+  }
+  // your broadcast, and who watches it
+  if (now.live !== was.live) out.push(now.live ? 'liveOn' : 'liveOff');
+  else if (now.live) { const [came, went] = sfxDiff(was.viewers, now.viewers); if (came) out.push('viewerJoin'); else if (went) out.push('viewerLeave'); }
+  // someone else going live in your hub
+  if (now.act && now.act === was.act && [...now.bcs].some((id) => !was.bcs.has(id))) out.push('bcStart');
+  // watching together: started or over, and friends joining what you share
+  if ((now.share === 'off') !== (was.share === 'off')) out.push(now.share === 'off' ? 'shareOff' : 'shareOn');
+  else if (now.share === 'host' && was.share === 'host') { const [came, went] = sfxDiff(was.friends, now.friends); if (came) out.push('peerJoin'); else if (went) out.push('peerLeave'); }
+  if (out.length) sfxPlay([...new Set(out)]);
 }
 // A broadcast that starts in your active hub is a toast ("Sam started broadcasting"), never something opening by itself (§6).
 let bcSeen = null;
@@ -1580,6 +1639,7 @@ function bcPush() {
   if (k === bcPushed) return;
   bcPushed = k;
   broadcast('chat', { type: 'bclive', live }, false);
+  sfxTick();
 }
 ipcMain.on('bc-send', (e, type, d) => {
   if (!bcWin || bcWin.isDestroyed() || e.sender !== bcWin.webContents) return;
@@ -2150,6 +2210,7 @@ function patch(p) {
       if (state.broadcast.sound !== was.sound && bcWin) { bcSoundFail = ''; chat.bcUpdate({ audio: bcSoundWanted() }); bcSoundSync(); bcPush(); }
     }
     else if (k === 'hubSurf') { const q = p.hubSurf || {}; state.hubSurf = cleanHubSurf({ ...state.hubSurf, ...(q.noDownloads !== undefined ? { noDownloads: q.noDownloads } : {}), ...(q.allowLan !== undefined ? { allowLan: q.allowLan } : {}) }); }       // (only these two are the panel's to set)
+    else if (k === 'sfx') state.sfx = cleanSfx({ ...state.sfx, ...(p.sfx && typeof p.sfx === 'object' ? p.sfx : {}) });
     else if (k === 'mixer') state.mixer = cleanMixer({ ...state.mixer, ...(p.mixer && typeof p.mixer === 'object' ? p.mixer : {}) });
     else if (k === 'share') { state.share = cleanShare({ ...state.share, ...(p.share || {}) }); p2p.setOptions({ wait: state.share.wait, name: shareName() }); if (chat && p.share && p.share.name !== undefined) chat.setName(shareName()); web.blockChanged(); }
     else if (k === 'music') {
@@ -2600,6 +2661,11 @@ ipcMain.on('cmd', async (e, c) => {
       const was = strain;
       strain = Math.max(0, Math.min(STRAIN.length - 1, strain + (c.more ? 1 : -1)));
       if (strain !== was) { strainAt = Date.now(); pushState(); }
+      break;
+    }
+    case 'sfx': {       // a panel's: a new message it showed (one screen gets those), or a sound tried in Options
+      const names = (Array.isArray(c.names) ? c.names : [c.name]).filter((n) => SFX_NAMES.has(n));
+      if (names.length) sfxPlay(names, !!c.preview);
       break;
     }
     case 'tab-focus': {       // the panel tab a window is on: kept for a rebuild, and friends see how many are on each

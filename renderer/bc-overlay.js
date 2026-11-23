@@ -1,6 +1,6 @@
 /* Drift — viewers' pointers over the broadcaster's real screen (docs/plans/broadcast.md §9.2). main.js keeps this
    window over what's being shown, click-through and out of the capture; this only draws. Names arrive as text and are
-   set as text. A pointer that hasn't moved for 6 s fades. */
+   set as text. A pointer that hasn't moved for 6 s fades away. */
 (() => {
   const els = new Map();       // member id -> { el, x, y, at }
   // a person's colour comes from their name, as everywhere else in Drift (renderer/app.js ptrColor)
@@ -31,7 +31,7 @@
       q.el.lastChild.textContent = String(x.name || '');
       if (q.x !== x.x || q.y !== x.y) { q.x = x.x; q.y = x.y; q.at = now; }
       q.el.style.transform = `translate(${(x.x * W()).toFixed(1)}px, ${(x.y * H()).toFixed(1)}px)`;
-      q.el.classList.remove('idle');
+      q.el.classList.toggle('idle', now - q.at > 6000);       // only its own movement wakes it, not someone else's
     }
     if (m.ping) {       // "look here": a ripple, only a picture
       const r = document.createElement('div'); r.className = 'ping';

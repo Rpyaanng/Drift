@@ -885,7 +885,7 @@
       q.el.classList.toggle('idle', now - q.at > 6000);
     }
   }
-  setInterval(() => {       // a pointer that has stopped fades; one whose page has gone is taken away
+  setInterval(() => {       // a pointer that has stopped fades away; one whose page has gone is taken away
     if (!ptrEls.size) return;
     if (!pageBox()) { showPtrs([]); return; }
     for (const q of ptrEls.values()) q.el.classList.toggle('idle', Date.now() - q.at > 6000);

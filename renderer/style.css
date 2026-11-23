@@ -67,8 +67,8 @@ body.bc #bcView { display: block; }
 .bcBtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .bcBtn.on { background: color-mix(in srgb, var(--accent) 30%, transparent); border-color: var(--accent); }
 .bcBtn.stop { background: rgba(255,77,77,.18); border-color: rgba(255,77,77,.45); }
-.ptr { position: absolute; left: 0; top: 0; display: flex; align-items: flex-start; transition: left .09s linear, top .09s linear, opacity .8s; }
-.ptr.idle { opacity: .35; }
+.ptr { position: absolute; left: 0; top: 0; display: flex; align-items: flex-start; transition: left .09s linear, top .09s linear, opacity .15s; }
+.ptr.idle { opacity: 0; transition: left .09s linear, top .09s linear, opacity .8s; }       /* a pointer that has stopped fades away, and comes straight back when it moves */
 .ptr svg { flex: none; margin: -3px 0 0 -3px; overflow: visible; filter: drop-shadow(0 0 .6px rgba(0,0,0,.55)) drop-shadow(0 1px 3px rgba(0,0,0,.45)); }       /* the point sits 3px in from the box; a faint dark edge and a soft shadow keep it clear on white pages */
 .ptr path { fill: var(--c); stroke: #fff; stroke-width: 2.6; stroke-linejoin: round; paint-order: stroke; }       /* the person's colour, with a white edge */
 .ptr b { margin: 17px 0 0 -6px; padding: 2px 9px 3px; border-radius: 999px; background: var(--c); color: #0b0d13; font: 600 11.5px/1.3 "Segoe UI Variable Text", "Segoe UI", system-ui; white-space: nowrap;
@@ -782,6 +782,7 @@ body.idle #callBar:not(.hot):not(:hover):not(:focus-within) .cbBtn:not(.off) { b
 .slideRow { padding: 8px 0; }
 .slideRow b output { float: none; margin-left: 8px; color: var(--dim); font-weight: 400; font-variant-numeric: tabular-nums; }
 .slideRow input[type=range] { flex: none; width: 50%; margin: 0; }
+.sfxTry { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 0 12px; }
 .ambNote { margin: -6px 0 10px; }
 .ambNote:empty { display: none; }
 [data-tab="scenes"] #presets { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; margin-bottom: 8px; }

@@ -419,6 +419,23 @@
   $('#vcKey').addEventListener('change', (e) => api.patch({ voice: { pttKey: e.target.value } }));
   $('#vcKeep').addEventListener('change', (e) => api.patch({ voice: { keepMic: e.target.checked } }));
 
+  // ---- Together's sounds (renderer/sfx.js plays them; main.js decides when) ----
+  let sfxSet = { on: true, volume: 0.7 };
+  const SFX_TRY = [['connect', 'Online'], ['disconnect', 'Offline'], ['lost', 'Dropped'], ['join', 'Join voice'], ['leave', 'Leave voice'],
+    ['peerJoin', 'Friend joins'], ['peerLeave', 'Friend leaves'], ['mute', 'Mute'], ['unmute', 'Unmute'], ['liveOn', 'Go live'], ['liveOff', 'Stop live'],
+    ['viewerJoin', 'Viewer joins'], ['viewerLeave', 'Viewer leaves'], ['bcStart', 'Friend goes live'], ['shareOn', 'Watch together'], ['shareOff', 'Stop watching'], ['message', 'Message']];
+  $('#sfxTry').replaceChildren(...SFX_TRY.map(([name, label]) => h('button.mini', { title: 'Play this sound', onclick: () => api.cmd({ type: 'sfx', name, preview: true }) }, '▶ ' + label)));
+  function drawSfxOpts() {
+    const r = $('#sfxVol');
+    $('#sfxOn').checked = sfxSet.on !== false;
+    if (document.activeElement !== r) r.value = sfxSet.volume;
+    r.style.setProperty('--fill', sfxSet.volume * 100 + '%');
+    $('#o-sfxVol').textContent = Math.round(sfxSet.volume * 100) + '%';
+  }
+  $('#sfxOn').addEventListener('change', (e) => api.patch({ sfx: { on: e.target.checked } }));
+  $('#sfxVol').addEventListener('input', (e) => api.patch({ sfx: { volume: +e.target.value } }));
+  $('#sfxVol').addEventListener('change', () => api.cmd({ type: 'sfx', name: 'join', preview: true }));       // let go: hear how loud that is
+
   // ---- loading and keeping up ----
   async function load(hub, ch) {
     const k = keyOf(hub, ch);
@@ -504,12 +521,13 @@
   function onNotify(hub, msg, over) {
     if (over && overlaySetting !== 'off') {       // watching together in this hub: over the video, if it's for the overlay
       const x = info.hubs.find((y) => y.id === hub);
-      if ((overlaySetting === 'all' || !canBeHeard(x, msg.from)) && !(hub === sel.hub && msg.ch === sel.ch && looking())) overlayShow(x, msg);
+      if ((overlaySetting === 'all' || !canBeHeard(x, msg.from)) && !(hub === sel.hub && msg.ch === sel.ch && looking())) { overlayShow(x, msg); if (msg.from !== info.me.id) api.cmd({ type: 'sfx', name: 'message' }); }
       return;
     }
     if (msg.from === info.me.id || (hub === sel.hub && msg.ch === sel.ch && looking())) return;
     const x = info.hubs.find((y) => y.id === hub), c = x && x.channels.find((y) => y.id === msg.ch);
     toast(`${nameOf(x, msg.from)} in #${c ? c.name : '?'}: ${msg.text.replace(/\s+/g, ' ').slice(0, 90)}`);
+    api.cmd({ type: 'sfx', name: 'message' });       // (main.js sends a new message to one screen only, so it's heard once)
   }
 
   // ---- writing ----
@@ -651,6 +669,7 @@
     overlaySetting = (s.share && s.share.overlay) || 'unheard';
     const vs = JSON.stringify(s.voice || {});
     if (vs !== JSON.stringify(voiceSet)) { voiceSet = s.voice || {}; drawVoiceOpts(); drawSide(); drawCall(); }
+    if (s.sfx && JSON.stringify(s.sfx) !== JSON.stringify(sfxSet)) { sfxSet = s.sfx; drawSfxOpts(); }
     if (p2p.role !== 'guest') joined = '';
     if (p2p.role === 'off' && was !== 'off') { coList.replaceChildren(); closeCompose(); }       // the session is over: so is its chat over the video
     if (was !== p2p.role) drawLives();
