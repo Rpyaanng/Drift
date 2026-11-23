@@ -859,7 +859,20 @@ body.idle #callBar:not(.hot):not(:hover):not(:focus-within) .cbBtn:not(.off) { b
 @media (max-width: 760px) { .bcNow { flex-direction: column; } .bcNow img { width: 100%; } }
 .btn[disabled], .btn[disabled]:hover { opacity: .45; cursor: default; }
 .btn.primary[disabled]:hover { background: var(--accent); }
-#callBar .cbSurf { max-width: 30ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* the Surf stream: a globe and who's on it (no page title: that's Surf's own bar) */
+#callBar .cbSurf { padding: 3px 6px 3px 9px; white-space: nowrap; }
+#callBar .cbSurf .cbFaces { gap: 0; padding: 0; }
+#callBar .cbSurf .face.small { width: 18px; height: 18px; font-size: 9px; box-shadow: 0 0 0 1.5px rgba(10,12,18,.9); }
+#callBar .cbSurf .cbFaces > * + * { margin-left: -5px; }
+#callBar .cbMore { font-size: 10.5px; color: var(--dim); }
+/* over a page in Surf, or a broadcast: out of the way (it sat on sites' logos), back only with that view's own bar when the
+   mouse reaches the top edge. In Surf it hangs centred under the browser's tabs and address (beside them it ran into them on
+   narrower screens); over a broadcast it stays at the left, level with the view's bar. Hovered or focused, it stays */
+body.surfing #callBar, body.bc #callBar { transition: opacity .3s ease, transform .3s ease; }
+body.surfing #callBar { left: 50%; top: 98px; transform: translateX(-50%); max-width: calc(100vw - 32px); box-sizing: border-box; }
+body.bc:not(.surfing) #callBar { top: 16px; }
+body.surfing:not(:has(#surfBar.show)) #callBar:not(:hover):not(:focus-within) { opacity: 0; transform: translate(-50%, -14px); pointer-events: none; }
+body.bc:not(.surfing):not(:has(#bcBar.show, #bcBar.hint, #bcBar:hover, #bcBar:focus-within)) #callBar:not(:hover):not(:focus-within) { opacity: 0; transform: translateY(-14px); pointer-events: none; }
 /* the Broadcast tab: which monitor to watch on, and who's watching you */
 .bcWhere { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: -2px 0 4px 44px; font-size: 12px; color: var(--dim); }
 .bcWhere .btn { padding: 4px 10px; font-size: 12px; }
