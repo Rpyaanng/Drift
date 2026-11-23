@@ -108,6 +108,88 @@ async function until(pred, what, ms = 8000) {
   dev.chat.leave(H);
   await until(() => !(ben.hub(H).lives || []).length, 'the card goes when the sharer disconnects');
 
+  // ---- the media stream: one share at a time; putting something else on takes a vote of everyone online (Ana, Ben, Cat) ----
+  const votesOf = (p) => p.events.filter((e) => e.t === 'media-vote').map((e) => e.vote);
+  const lastVote = (p) => votesOf(p).slice(-1)[0] || {};
+  const livesOf = (p) => (p.hub(H).lives || []).map((l) => l.from);
+  ok((await ben.chat.mediaAsk(H, 'B')).free, 'with nothing on, asking needs no vote');
+  ana.chat.announce(H, { code: 'drift:ana', title: 'A', watching: [] });
+  await until(() => livesOf(cat).join() === ana.chat.myId(), 'Ana puts something on');
+  ben.chat.announce(H, { code: 'drift:ben', title: 'B', watching: [] });
+  await until(() => ben.seen((e) => e.t === 'live-no'), 'Ben sharing without a vote is refused');
+  ok(livesOf(cat).join() === ana.chat.myId(), '...and only Ana\'s is listed');
+  const asked = await ben.chat.mediaAsk(H, 'B');
+  ok(asked.id, 'Ben asks to switch');
+  await until(() => lastVote(cat).id === asked.id && !lastVote(cat).result, 'everyone sees the vote');
+  ok(lastVote(cat).voters.length === 3 && lastVote(cat).yes.join() === ben.chat.myId() && lastVote(cat).title === 'B', 'three can vote, and the asker counts as a yes');
+  ok((await cat.chat.mediaAsk(H, 'C')).error, 'only one vote at a time');
+  ok((await ben.chat.mediaVote(H, asked.id, true)).error, 'the asker can\'t vote again');
+  await ana.chat.mediaVote(H, asked.id, false);
+  await until(() => lastVote(cat).no.length === 1, 'Ana says no');
+  ok(!lastVote(cat).result, 'one yes and one no of three: not decided yet');
+  await cat.chat.mediaVote(H, asked.id, true);
+  await until(() => lastVote(ana).result === 'yes', 'Cat says yes: two of three, it passes');
+  ben.chat.announce(H, { code: 'drift:ben', title: 'B', watching: [] });
+  await until(() => livesOf(cat).join() === ben.chat.myId(), 'the winner\'s share replaces Ana\'s');
+  ana.events.length = 0;
+  ana.chat.announce(H, { code: 'drift:ana2', title: 'A again', watching: [] });
+  await until(() => ana.seen((e) => e.t === 'live-no'), 'Ana can\'t put hers back without a vote');
+  const c1 = await cat.chat.mediaAsk(H, 'C');
+  await ana.chat.mediaVote(H, c1.id, false); await ben.chat.mediaVote(H, c1.id, false);
+  await until(() => lastVote(cat).id === c1.id && lastVote(cat).result === 'no', 'two of three say no: it fails');
+  ok(livesOf(ana).join() === ben.chat.myId(), '...and Ben\'s stays on');
+  const c2 = await cat.chat.mediaAsk(H, 'C');
+  ok(!(await cat.chat.mediaCancel(H, c2.id)).error, 'the asker can call it off');
+  await until(() => lastVote(ana).id === c2.id && lastVote(ana).result === 'cancel', 'everyone hears it\'s off');
+  const c3 = await cat.chat.mediaAsk(H, 'C');
+  ben.chat.announce('', null);
+  await until(() => lastVote(ana).id === c3.id && lastVote(ana).result === 'yes', 'what\'s on stops during a vote: the asker wins');
+  ana.chat.announce('', null);
+
+  // ---- the Surf stream (docs/plans/streams.md §7): the host's browser, streamed to members who watch; signed setup messages ----
+  const A = ana.chat.myId(), B = ben.chat.myId();
+  const sdpOf = (fp) => `v=0\r\no=- 1 1 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\na=fingerprint:sha-256 ${fp}\r\n`;
+  const ssEv = (p, t) => p.events.filter((e) => e.t === t);
+  const w1 = await ben.chat.ssWatch(H);
+  ok(!w1.error && w1.on === false, 'Ben opens Surf: he watches, though it isn\'t running yet');
+  await until(() => ssEv(ana, 'ss-wake').length > 0, 'the host is asked to start it');
+  ok((await ana.chat.ssWatch(H)).error, 'the host can\'t watch their own (it\'s on their PC)');
+  const on1 = await ana.chat.ssSet({ on: true, title: 'Drift start page' });
+  ok(!on1.error, 'the host starts the Surf stream');
+  await until(() => (cat.hub(H).surf || {}).on && cat.hub(H).surf.title === 'Drift start page', 'everyone sees it running, with its front tab\'s title');
+  await until(() => ssEv(ana, 'ss-viewer').some((e) => e.id === B), 'Ben\'s signed request reaches the host');
+  ok(ana.chat.info().ss.host.watchers.includes(B) && ana.chat.info().ss.host.names[B] === 'Ben', 'the host knows Ben is watching');
+  ana.chat.ssSignal(B, { sdp: { type: 'offer', sdp: sdpOf('AA:AA') } });
+  await until(() => ssEv(ben, 'ss-sdp').some((e) => e.sdp.type === 'offer'), 'the host\'s signed offer reaches Ben, checked');
+  ben.chat.ssSignal(A, { sdp: { type: 'answer', sdp: sdpOf('BB:BB') } });
+  await until(() => ssEv(ana, 'ss-sdp').some((e) => e.from === B && e.sdp.type === 'answer'), 'Ben\'s signed answer reaches the host, checked');
+  ok(ben.chat.ssCert(A, 'sha-256', 'AA:AA').ok, 'the certificate the host used matches the signed one');
+  ok(ana.chat.ssCert(B, 'sha-256', 'BB:BB').ok, '...and Ben\'s');
+  const cur = ben.chat.info().ss.watching;
+  ok(cur && cur.from === A, 'Ben\'s watch names the host');
+  // the host disconnects from their own hub: the stream carries on (the service line is in-process)
+  ana.chat.disconnect(H);
+  await until(() => !ben.hub(H).members.find((m) => m.id === A).online, 'the host shows offline');
+  ok((ben.hub(H).surf || {}).on, '...but the Surf stream still runs');
+  const n1 = ssEv(ana, 'ss-viewer').length;
+  await ben.chat.ssWatch(H);
+  await until(() => ssEv(ana, 'ss-viewer').length > n1, 'Ben asking again still reaches the host');
+  ana.chat.reconnect(H);
+  await until(() => ana.hub(H).status === 'connected', 'the host comes back');
+  // a forged offer: for Ben's real request, but signed by a key that isn't the host's (a hub sitting in the middle)
+  await ben.chat.ssWatch(H);
+  await until(() => !!ben.chat._ssWant(), 'Ben asks again');
+  const n2 = ben.chat._ssWant();
+  const forged = createChat.signSs(require('crypto').generateKeyPairSync('ed25519').privateKey, { pin: H, room: ben.hub(H).surf.room, type: 'offer', from: A, to: B, nonce: n2, sdp: sdpOf('CC:CC') });
+  const offers = ssEv(ben, 'ss-sdp').length;
+  ben.chat._fromHub(H, { t: 'surf-signal', from: A, d: { sdp: { type: 'offer', sdp: sdpOf('CC:CC') }, nonce: n2, sig: forged } });
+  ok(ssEv(ben, 'ss-refused').length === 1 && ssEv(ben, 'ss-sdp').length === offers, 'an offer signed by anyone but the host is refused, and never reaches the window');
+  ok(!!(await ben.chat.ssWatch(H)).refused, '...and Ben\'s Drift won\'t show that stream');
+  await ana.chat.ssSet({ on: false });
+  await until(() => ssEv(ben, 'ss-paused').length > 0, 'the host\'s browser stops: Ben hears');
+  ben.chat.ssUnwatch();
+  await until(() => !(ana.chat.info().ss.host.watchers || []).length, 'Ben stops watching');
+
   // ---- an invite pointing at the right address but a different hub (someone answering in its place) ----
   const inv = decodeInvite(code);
   const fake = encodeInvite({ ...inv, pin: Buffer.alloc(32, 7) });
@@ -164,7 +246,22 @@ async function until(pred, what, ms = 8000) {
   ok(again.myId() === n, 'the identity key is kept');
   await again.start();
   await until(() => again.info().hubs.some((h) => h.id === H && h.status === 'connected' && h.host), 'Ana\'s Drift restarts, hosts again and reconnects');
+  ok(!(await again.history(H, general)).msgs.length, 'messages last one session: closing Drift wiped them');
+  await until(() => again.info().hubs.find((h) => h.id === H).members.some((m) => m.id === ben.chat.myId() && m.online), '...but members are kept: Ben gets back in by himself, without a new invite');
   await again.stop();
+  // As Drift runs it (connectOnStart false): her hub doesn't run until she presses Host, which starts it and puts her online in it.
+  const third = createChat({ dir: path.join(root, 'Ana'), addrs: () => ['127.0.0.1'], changed: () => {}, connectOnStart: false });
+  await third.start();
+  await wait(1500);
+  const rest = third.info().hubs.find((h) => h.id === H);
+  ok(rest && rest.status === 'offline' && !third.info().hosting && third.info().canHost, `with connectOnStart off, her hub isn't running on start (${rest && rest.status})`);
+  ok(third.info().hostName === 'Test hub', '...and Host knows its name');
+  await third.host({ internet: false });
+  ok(third.info().hosting && third.info().hosting.id === H && third.info().hosting.name === 'Test hub', 'Host starts the same hub, with the same name');
+  await until(() => third.info().hubs.some((h) => h.id === H && h.status === 'connected'), '...and she is online in it');
+  await third.unhost();
+  ok(third.info().canHost && third.info().hostName === 'Test hub', 'Stop hosting keeps the hub to host again');
+  await third.stop();
 
   for (const p of [ben, cat, dev]) await p.chat.stop();
   console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');

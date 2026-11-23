@@ -4,11 +4,22 @@
 // delete any message and withdraw every invite. It also passes on who is sharing a video or page right now (Together):
 // a member's Drift announces its watch-together code here, and everyone else gets a Join button in the chat.
 //
-// Voice: one call per hub, up to 8 people, a mesh. The hub keeps who is in the call, passes setup messages between
-// them and relays the media through its TURN server (turn.js) on one UDP port. It is never trusted with the call
-// itself: every setup message carries the sender's signature over their DTLS fingerprint, made and checked by the
+// Voice: one voice room per hub (docs/plans/broadcast.md §1). Being online in a hub, with it as your active hub, puts
+// you in its room, listening; talking is opt-in. Up to 16 people in the room and 8 talking at once, as a mesh. The hub
+// keeps who is in the room (and who talks or listens), passes setup messages between them and relays the media through
+// its TURN server (turn.js) on one UDP port. It is never trusted with the sound itself: every setup message carries the sender's signature over their DTLS fingerprint, made and checked by the
 // members' own Drift (chat.js), so a hub that swaps fingerprints, drops signatures or replays old ones is caught.
 // Member lists carry each member's public key for that check; chat.js makes sure each key hashes to its member id.
+//
+// Broadcast (docs/plans/broadcast.md §2–§4): anyone in the voice room can stream a monitor or a window to the others,
+// one each and two per hub at a time, to up to 7 viewers each. The hub keeps who is broadcasting what and who watches
+// (bc), passes their signed setup messages along (bc-signal) and relays the picture, the same way as voice.
+//
+// The Surf stream (docs/plans/streams.md §7): one web browser for the whole hub, running on the host's PC. The host's Drift
+// says when it runs and what its front tab is (surf-stream), members online say whether they're watching (surf-watch, up to 7
+// at once), and the hub passes the signed setup messages between the host and each watcher (surf-signal) and relays the
+// picture. The host's Drift talks to its own hub for this in-process (service()), apart from its ordinary connection, so the
+// stream carries on for everyone while the host is disconnected from the hub themselves.
 //
 // The connection is TLS 1.3 with the hub's own self-signed certificate (ECDSA P-256: Electron's BoringSSL refuses an
 // Ed25519 one in the handshake, though members' Ed25519 signatures inside the connection are fine). Invite codes carry the certificate's
@@ -24,8 +35,8 @@ const { wire, ipBytes, ipText, localAddrs } = require('./p2p');
 const createTurn = require('./turn');
 
 const VERSION = 1;
-const LIMITS = { line: 16 * 1024, text: 4000, name: 24, channel: 32, channels: 50, page: 100, actions: 10, perSecs: 10, connections: 64, avatar: 14000, voice: 8, signals: 200 };
-const TURN_SECS = 24 * 3600;       // how long a call's relay credentials last (the relay also stops as soon as someone leaves the call)
+const LIMITS = { line: 16 * 1024, text: 4000, name: 24, channel: 32, channels: 50, page: 100, actions: 10, perSecs: 10, connections: 64, avatar: 14000, voice: 16, talkers: 8, signals: 200, broadcasts: 2, viewers: 7, bcTitle: 80, surfWatchers: 7 };
+const TURN_SECS = 24 * 3600;       // how long relay credentials last (the relay also stops as soon as someone leaves the room or stops listening)
 const INVITE_DAYS = 7;
 
 // ---- the hub's certificate: X.509 for a P-256 key, written by hand (Node can read certificates but not make them) ----
@@ -134,6 +145,13 @@ module.exports = function createHub(opts) {
   const owner = Buffer.from(opts.owner), ownerId = memberId(owner);
   let hubName = cleanName(opts.name) || (meta('name') && Buffer.from(meta('name')).toString()) || 'Drift hub';
   setMeta.run('name', hubName);
+  // Messages last one session of the host's Drift: wiped when it closes (clearMessages) and, in case it didn't close
+  // cleanly, when it first hosts again (opts.fresh). Channels, members and invites stay.
+  function clearMessages() {
+    db.exec('DELETE FROM messages');
+    try { db.exec('PRAGMA wal_checkpoint(TRUNCATE); VACUUM'); } catch { /* still wiped; the file shrinks next time */ }
+  }
+  if (opts.fresh) clearMessages();
   if (!q('SELECT 1 FROM channels LIMIT 1').get()) q('INSERT INTO channels (name, made_by, at) VALUES (?, ?, ?)').run('general', ownerId, Date.now());
 
   const S = {
@@ -162,6 +180,30 @@ module.exports = function createHub(opts) {
   const sessions = new Set();
   let server = null, port = 0;
   const everyone = (m, but) => { const line = JSON.stringify(m); for (const s of sessions) if (s.id && s !== but) s.wire.send(line); };
+  // ---- the media stream: one share at a time, changed by a vote ----
+  // While someone is sharing, nobody else's share is listed unless they won a vote: more than half of the people online
+  // when it was asked (the asker counts as a yes) agree within VOTE_MS. Whoever goes offline drops out of the count.
+  // If the share that's on stops meanwhile, the asker wins. granted: who won, for a minute, until their share arrives.
+  const VOTE_MS = opts.voteMs || 30000;
+  let vote = null, granted = null;
+  const sharingBesides = (id) => [...lives.keys()].some((x) => x !== id);
+  const voteOut = () => ({ id: vote.id, from: vote.from, title: vote.title, voters: [...vote.voters], yes: [...vote.yes], no: [...vote.no], ms: Math.max(0, vote.until - Date.now()) });
+  function voteEnd(result) {
+    const v = voteOut();
+    clearTimeout(vote.timer);
+    if (result === 'yes') granted = { id: vote.from, until: Date.now() + 60000 };
+    vote = null;
+    everyone({ t: 'media-vote', vote: { ...v, ms: 0, result } });
+  }
+  function recount() {
+    if (!vote) return;
+    for (const id of [...vote.voters]) if (!online.has(id)) { vote.voters.delete(id); vote.yes.delete(id); vote.no.delete(id); }
+    if (!online.has(vote.from)) return voteEnd('cancel');
+    const n = vote.voters.size;
+    if (!sharingBesides(vote.from) || vote.yes.size * 2 > n) return voteEnd('yes');
+    if (vote.no.size * 2 >= n) return voteEnd('no');
+    everyone({ t: 'media-vote', vote: voteOut() });
+  }
   // key: the member's raw Ed25519 public key, so members can check each other's call signatures (and that it hashes to the id)
   const memberList = () => S.members.all().map((m) => ({ id: m.id, key: Buffer.from(m.key).toString('base64url'), name: m.name, host: m.id === ownerId, online: online.has(m.id), av: m.av || '', mic: online.has(m.id) && mics.has(m.id) ? mics.get(m.id) : null }));
   const membersNews = (but) => { const list = memberList(); for (const s of sessions) if (s.id && s !== but) s.wire.send({ t: 'members', list: bent.list(s, list) }); };
@@ -176,7 +218,7 @@ module.exports = function createHub(opts) {
 
   function onConnection(sock) {
     if (sessions.size >= LIMITS.connections) { sock.destroy(); return; }
-    const s = { id: null, nonce: crypto.randomBytes(24).toString('base64url'), wire: null, acts: { msg: [], other: [], live: [], sig: [] }, typed: 0 };
+    const s = { id: null, nonce: crypto.randomBytes(24).toString('base64url'), wire: null, acts: { msg: [], other: [], live: [], sig: [], bc: [] }, typed: 0 };
     sessions.add(s);
     const login = setTimeout(() => { if (!s.id) s.wire.close(); }, 15000);
     s.wire = wire(sock, null, (m) => { try { onMessage(s, m); } catch (e) { reply(s, m, { error: 'Something went wrong on the hub.' }); if (opts.log) opts.log('hub: ' + (e && e.stack || e)); } }, () => {
@@ -184,9 +226,10 @@ module.exports = function createHub(opts) {
       if (opts.log) opts.log(`hub: ${s.id || 'someone not signed in'} disconnected`);
       if (s.id && online.has(s.id)) {
         const set = online.get(s.id); set.delete(s);
-        if (!set.size) { online.delete(s.id); mics.delete(s.id); membersNews(); if (lives.delete(s.id)) everyone({ t: 'lives', list: liveList() }); }
+        if (!set.size) { online.delete(s.id); mics.delete(s.id); membersNews(); if (lives.delete(s.id)) everyone({ t: 'lives', list: liveList() }); recount(); }
       }
-      if (s.id && voice.get(s.id) && voice.get(s.id).s === s) leaveCall(s.id);
+      if (s.id && surfWatch.get(s.id) === s) { surfWatch.delete(s.id); relayCheck(s.id); relayCheck(ownerId); surfNews(); }
+      if (s.id && voice.get(s.id) && voice.get(s.id).s === s) leaveRoom(s.id);
     }, LIMITS.line);
     s.wire.send({ t: 'hello', v: VERSION, nonce: s.nonce, name: hubName });
   }
@@ -219,7 +262,7 @@ module.exports = function createHub(opts) {
       s.id = id;
       if (!online.has(id)) online.set(id, new Set());
       online.get(id).add(s);
-      reply(s, m, { me: id, host: id === ownerId, hub: hubName, addrs: opts.addrs ? opts.addrs() : [], members: bent.list(s, memberList()), channels: channelList(), lives: liveList(), voice: voiceList() });       // addrs: so members can still find the hub when its addresses change
+      reply(s, m, { me: id, host: id === ownerId, hub: hubName, addrs: opts.addrs ? opts.addrs() : [], members: bent.list(s, memberList()), channels: channelList(), lives: liveList(), voice: voiceList(), room: roomId, bcs: bcList(), surf: surfOut() });       // addrs: so members can still find the hub when its addresses change
       membersNews(s);
       return;
     }
@@ -301,15 +344,44 @@ module.exports = function createHub(opts) {
         return reply(s, m, { code: invite({ by: s.id, days: m.days, uses: m.uses }) });
       }
       case 'live': {       // this member started, changed or stopped sharing (Together). The code is their PC's watch-together invite.
-        if (!m.on) { if (lives.delete(s.id)) everyone({ t: 'lives', list: liveList() }); return; }
+        if (!m.on) { if (lives.delete(s.id)) everyone({ t: 'lives', list: liveList() }); recount(); return; }
         if (slow(s, 'live')) return;
         const code = String(m.code || '').replace(/[^A-Za-z0-9_:-]/g, '').slice(0, 400);
         if (!code) return;
+        if (sharingBesides(s.id)) {       // someone else's is on: only the winner of a vote takes over, and theirs replaces it
+          if (!granted || granted.id !== s.id || granted.until < Date.now()) { s.wire.send({ t: 'live-no' }); return; }
+          for (const id of [...lives.keys()]) if (id !== s.id) lives.delete(id);
+        }
+        if (granted && granted.id === s.id) granted = null;
         const was = lives.get(s.id);
         lives.set(s.id, { from: s.id, code, title: cleanText(m.title).replace(/\s+/g, ' ').slice(0, 120),
           watching: (Array.isArray(m.watching) ? m.watching : []).slice(0, 8).map(cleanName).filter(Boolean), since: was && was.code === code ? was.since : Date.now() });
         everyone({ t: 'lives', list: liveList() });
         return;
+      }
+      case 'media-ask': {       // put something on while someone else's is on: ask everyone online
+        if (slow(s, 'other')) return reply(s, m, { error: 'Slow down a little.' });
+        if (!sharingBesides(s.id)) return reply(s, m, { free: true });       // nothing else on: just share
+        if (vote) return reply(s, m, { error: vote.from === s.id ? 'Your vote is still going.' : 'Someone else is asking already. Try again once that vote is over.' });
+        vote = { id: crypto.randomBytes(9).toString('base64url'), from: s.id, title: cleanText(m.title).replace(/\s+/g, ' ').slice(0, 120),
+          voters: new Set(online.keys()), yes: new Set([s.id]), no: new Set(), until: Date.now() + VOTE_MS };
+        vote.timer = setTimeout(() => { if (vote) voteEnd('time'); }, VOTE_MS);
+        reply(s, m, { id: vote.id });
+        recount();
+        return;
+      }
+      case 'media-vote': {
+        if (!vote || m.id !== vote.id || !vote.voters.has(s.id) || s.id === vote.from) return reply(s, m, { error: 'That vote is over.' });
+        vote.yes.delete(s.id); vote.no.delete(s.id);
+        (m.yes ? vote.yes : vote.no).add(s.id);
+        reply(s, m, {});
+        recount();
+        return;
+      }
+      case 'media-cancel': {       // the asker changed their mind
+        if (!vote || m.id !== vote.id || s.id !== vote.from) return reply(s, m, { error: 'That vote is over.' });
+        voteEnd('cancel');
+        return reply(s, m, {});
       }
       case 'avatar': {       // set (or with no data, clear) this member's picture
         const data = m.data ? cleanAvatar(m.data) : '';
@@ -342,54 +414,203 @@ module.exports = function createHub(opts) {
         S.ban.run(who.id);
         for (const x of online.get(who.id) || []) { x.wire.send({ t: 'removed' }); setTimeout(() => x.wire.close(), 100); }
         online.delete(who.id);
-        if (voice.has(who.id)) leaveCall(who.id);
+        if (voice.has(who.id)) leaveRoom(who.id);
+        newRoom();       // so nothing they were sent in this room can be replayed into it later
+        surfWatch.delete(who.id);
+        if (surf) surf.room = crypto.randomBytes(16).toString('base64url');       // (the same for the Surf stream's signed messages)
+        surfNews();
         membersNews();
         if (lives.delete(who.id)) everyone({ t: 'lives', list: liveList() });
+        recount();
         return reply(s, m, {});
       }
-      case 'voice-join': return joinCall(s, m);
-      case 'voice-leave': { if (voice.get(s.id) && voice.get(s.id).s === s) leaveCall(s.id); return reply(s, m, {}); }
-      case 'voice-state': {       // muted, deafened, and whether their microphone really opened: shown to everyone in the hub
-        const v = voice.get(s.id);
-        if (!v || v.s !== s) return;
-        Object.assign(v, { muted: !!m.muted, deaf: !!m.deaf, mic: !!m.mic });
-        everyone({ t: 'voice', list: voiceList() });
-        return;
-      }
+      case 'voice-state': return voiceState(s, m);
       case 'voice-signal': {       // a setup message for one other person in the call, passed on as it is: the signature inside is theirs, not the hub's
         const v = voice.get(s.id), to = String(m.to || '');
-        if (!v || v.s !== s || !voice.has(to) || to === s.id || !m.d || typeof m.d !== 'object') return;
+        if (!v || v.s !== s || !v.listen || !voice.has(to) || !voice.get(to).listen || to === s.id || !m.d || typeof m.d !== 'object') return;
         if (slow(s, 'sig', LIMITS.signals)) return;
         for (const [dest, d] of bent.signal(s.id, to, m.d)) { const x = voice.get(dest); if (x) x.s.wire.send({ t: 'voice-signal', from: s.id, d }); }
+        return;
+      }
+      case 'bc-start': return bcStart(s, m);
+      case 'bc-stop': {       // the broadcaster stops, or the host stops someone's (decision §11.6)
+        const b = bcs.get(String(m.id || ''));
+        if (!b || (b.from !== s.id && !isHost)) return reply(s, m, { error: 'No such broadcast.' });
+        endBc(b.id, b.from === s.id ? '' : 'The host stopped this broadcast.');
+        return reply(s, m, {});
+      }
+      case 'bc-watch': return bcWatch(s, m);
+      case 'surf-watch': return surfWatchMsg(s, m);
+      case 'surf-signal': {       // a watcher's setup message for the host, passed on as it is (signed by them)
+        const d = m.d;
+        if (surfWatch.get(s.id) !== s || !surf || String(m.to || '') !== ownerId || !svc || !d || typeof d !== 'object') return;
+        if (slow(s, 'sig', LIMITS.signals)) return;
+        for (const [, dd] of bent.signal(s.id, ownerId, d)) svc.out({ t: 'surf-signal', from: s.id, d: dd });
+        return;
+      }
+      case 'bc-signal': {       // a setup message between a broadcaster and one of their viewers, passed on as it is (it's signed by them)
+        const b = bcs.get(String(m.bc || '')), to = String(m.to || '');
+        if (!b || !inRoom(s) || !voice.has(to) || to === s.id || !m.d || typeof m.d !== 'object') return;
+        if (!(b.from === s.id && b.viewers.has(to)) && !(b.from === to && b.viewers.has(s.id))) return;       // only between the two ends of one broadcast
+        if (slow(s, 'sig', LIMITS.signals)) return;
+        for (const [dest, d] of bent.signal(s.id, to, m.d)) { const x = voice.get(dest); if (x) x.s.wire.send({ t: 'bc-signal', from: s.id, bc: b.id, d }); }
         return;
       }
       default: return reply(s, m, { error: 'The hub doesn\'t know how to do that.' });
     }
   }
 
-  // ---- the call: one per hub, up to 8 people ----
-  const voice = new Map();       // member id -> { s (their session), muted, deaf, mic, since }. Kept in memory only.
-  let callId = '';               // made by whoever starts the call; members sign it into every setup message
+  // ---- the voice room: one per hub, up to 16 people and 8 talking ----
+  // Someone is in the room while their Drift says so (voice-state on): online here, with this as their active hub.
+  // listen: connected to voice at all ("Don't listen" turns it off, and they leave the mesh); talk: their microphone is
+  // open. The room id is signed into every setup message. It is new whenever the room empties and whenever someone is
+  // removed, so an old signed offer can't be replayed into a later room.
+  const voice = new Map();       // member id -> { s (their session), listen, talk, mic, since }. Kept in memory only.
+  let roomId = '';
   let turn = null, relayHost = '';
-  const voiceList = () => [...voice].map(([id, v]) => ({ id, muted: v.muted, deaf: v.deaf, mic: v.mic, since: v.since }));
-  function joinCall(s, m) {
+  const voiceList = () => [...voice].map(([id, v]) => ({ id, listen: v.listen, talk: v.talk, mic: v.mic, since: v.since }));
+  const roster = () => everyone({ t: 'voice', list: voiceList(), room: roomId });
+  function newRoom() { roomId = voice.size ? crypto.randomBytes(16).toString('base64url') : ''; bent.reset(); if (voice.size) roster(); }
+  function voiceState(s, m) {
     const was = voice.get(s.id);
-    if (!was && voice.size >= LIMITS.voice) return reply(s, m, { error: `The call is full: up to ${LIMITS.voice} people can be in it at once.` });
-    if (slow(s, 'other')) return reply(s, m, { error: 'Slow down a little.' });
-    if (was && was.s !== s) was.s.wire.send({ t: 'voice-ended', why: 'You joined the call from another PC.' });       // the same person on two PCs: the newer one wins
-    if (!voice.size) callId = /^[A-Za-z0-9_-]{22,43}$/.test(String(m.call || '')) ? String(m.call) : crypto.randomBytes(16).toString('base64url');
-    voice.set(s.id, { s, muted: !!m.muted, deaf: !!m.deaf, mic: false, since: Date.now() });
-    if (turn) turn.drop(s.id);       // anything left from an earlier time in the call
-    const relay = turn ? { port: turn.port(), ...turn.credentials(s.id, TURN_SECS) } : null;
-    const hosts = [...new Set([...(opts.addrs ? opts.addrs() : []), relayHost])].filter((a) => /^\d+\.\d+\.\d+\.\d+$/.test(a));       // where members can reach the relay (IPv4 only)
-    reply(s, m, { call: callId, peers: [...voice.keys()].filter((id) => id !== s.id), relay, hosts });
-    everyone({ t: 'voice', list: voiceList() });
+    if (!m.on) { if (was && was.s === s) leaveRoom(s.id); return reply(s, m, {}); }
+    const listen = m.listen !== false, talk = listen && !!m.talk;
+    if (!was && voice.size >= LIMITS.voice) return reply(s, m, { error: `The voice room is full: up to ${LIMITS.voice} people can be in it at once. You can still chat.`, full: true });
+    if (talk && !(was && was.s === s && was.talk) && [...voice.values()].filter((v) => v.talk).length >= LIMITS.talkers) return reply(s, m, { error: `${LIMITS.talkers} people are already talking. Wait for one of them to stop.`, talkers: true });
+    if (!was || was.s !== s) {
+      if (slow(s, 'other')) return reply(s, m, { error: 'Slow down a little.' });
+      if (was) { was.s.wire.send({ t: 'voice-ended', why: 'You\'re in this hub\'s voice room on another PC now.' }); bcLeave(s.id, 'They moved to another PC.'); }       // the same person on two PCs: the newer one wins
+      if (!voice.size) roomId = crypto.randomBytes(16).toString('base64url');
+      if (turn) turn.drop(s.id);       // anything left from before
+    }
+    voice.set(s.id, { s, listen, talk, mic: !!m.mic, since: was && was.s === s ? was.since : Date.now() });
+    if (was && was.s === s && was.listen && !listen) relayCheck(s.id);       // stopped listening: out of the mesh now (unless broadcasting or watching)
+    reply(s, m, { room: roomId, list: voiceList(), ...relayFor(s.id) });
+    roster();
   }
-  function leaveCall(id) {
+  function leaveRoom(id) {
     voice.delete(id);
+    bcLeave(id, '');
     if (turn) turn.drop(id);
-    if (!voice.size) { callId = ''; bent.reset(); }
-    everyone({ t: 'voice', list: voiceList() });
+    if (!voice.size) { roomId = ''; bent.reset(); }
+    roster();
+  }
+  const inRoom = (s) => !!(voice.get(s.id) && voice.get(s.id).s === s);
+  // Who the relay is for: in the room and listening, or broadcasting, or watching a broadcast (with listening off).
+  const relayed = (id) => (!!voice.get(id) && (voice.get(id).listen || [...bcs.values()].some((b) => b.from === id || b.viewers.has(id)))) || surfRelayed(id);
+  const relayCheck = (id) => { if (turn && !relayed(id)) turn.drop(id); };
+  function relayFor(id) {
+    const hosts = [...new Set([...(opts.addrs ? opts.addrs() : []), relayHost])].filter((a) => /^\d+\.\d+\.\d+\.\d+$/.test(a));       // where members can reach the relay (IPv4 only)
+    return { relay: turn && relayed(id) ? { port: turn.port(), ...turn.credentials(id, TURN_SECS) } : null, hosts };
+  }
+
+  // ---- broadcasts: one per person, two per hub, up to 7 viewers each (§4, §11.3) ----
+  // The broadcaster's Drift makes the id (fresh for every broadcast, and signed into every setup message for it). The
+  // title is only what the broadcaster called it; the hub can't vouch for it and chat.js says so.
+  const bcs = new Map();       // broadcast id -> { id, from, title, kind ('screen' | 'window'), audio, since, viewers: Set of member ids }. Memory only.
+  const bcList = () => [...bcs.values()].map((b) => ({ id: b.id, from: b.from, title: b.title, kind: b.kind, audio: b.audio, since: b.since, viewers: [...b.viewers] }));
+  const bcNews = () => everyone({ t: 'bc', list: bcList() });
+  const BC_ID = /^[A-Za-z0-9_-]{16,64}$/;
+  const cleanTitle = (t) => cleanText(t).replace(/\s+/g, ' ').trim().slice(0, LIMITS.bcTitle);
+  function bcStart(s, m) {       // start one, or (the same id again) rename it or turn its sound on or off
+    if (!inRoom(s)) return reply(s, m, { error: 'Join this hub\'s voice room to broadcast.' });
+    const id = String(m.id || ''), was = bcs.get(id);
+    if (!BC_ID.test(id) || (was && was.from !== s.id)) return reply(s, m, { error: 'That broadcast id can\'t be used.' });
+    if (slow(s, 'bc')) return reply(s, m, { error: 'Slow down a little.' });
+    const kind = m.kind === 'window' ? 'window' : 'screen', title = cleanTitle(m.title) || (kind === 'window' ? 'A window' : 'A screen');
+    if (!was) {
+      if ([...bcs.values()].some((b) => b.from === s.id)) return reply(s, m, { error: 'You\'re already broadcasting. Stop that one first.', mine: true });
+      if (bcs.size >= LIMITS.broadcasts) return reply(s, m, { error: `${LIMITS.broadcasts} people are already broadcasting in this hub. Wait for one of them to stop.`, full: true });
+    }
+    bcs.set(id, { id, from: s.id, title, kind,       // (Switch source may go from a screen to a window)
+      audio: !!m.audio, since: was ? was.since : Date.now(), viewers: was ? was.viewers : new Set() });
+    bcNews();
+    return reply(s, m, { id, ...relayFor(s.id) });
+  }
+  function bcWatch(s, m) {
+    const b = bcs.get(String(m.id || ''));
+    if (!m.on) {
+      if (b && b.viewers.delete(s.id)) { relayCheck(s.id); bcNews(); }
+      return reply(s, m, {});
+    }
+    if (!inRoom(s)) return reply(s, m, { error: 'Join this hub\'s voice room to watch.' });
+    if (!b) return reply(s, m, { error: 'That broadcast has ended.', ended: true });
+    if (b.from === s.id) return reply(s, m, { error: 'That\'s your own broadcast.' });
+    if (!b.viewers.has(s.id)) {
+      if (b.viewers.size >= LIMITS.viewers) return reply(s, m, { error: `Full: ${LIMITS.viewers} people are already watching.`, full: true });
+      if (slow(s, 'bc')) return reply(s, m, { error: 'Slow down a little.' });
+      b.viewers.add(s.id);
+      bcNews();
+    }
+    return reply(s, m, { id: b.id, ...relayFor(s.id) });
+  }
+  function endBc(id, why) {
+    const b = bcs.get(id);
+    if (!b) return;
+    bcs.delete(id);
+    const owner = voice.get(b.from);
+    if (owner && why) owner.s.wire.send({ t: 'bc-ended', id, why });
+    for (const v of [b.from, ...b.viewers]) relayCheck(v);
+    bcNews();
+  }
+  // Someone left the room (or the hub): their broadcast ends and they stop watching anyone's.
+  function bcLeave(id, why) {
+    let news = false;
+    const left = [];       // their viewers, who may now have no reason to use the relay
+    for (const b of [...bcs.values()]) {
+      if (b.from === id) {
+        bcs.delete(b.id); news = true; left.push(...b.viewers);
+        const o = voice.get(id);
+        if (why && o) o.s.wire.send({ t: 'bc-ended', id: b.id, why });
+      } else if (b.viewers.delete(id)) news = true;
+    }
+    for (const v of left) relayCheck(v);
+    if (news) bcNews();
+  }
+  // ---- the Surf stream (docs/plans/streams.md §7) ----
+  // surf: { title, room (signed into its setup messages: new each time it starts, and whenever someone is removed), since }
+  // while the host's Drift says it runs. surfWatch: member id -> the session watching (a member's Surf tab is open on it).
+  // Watching while it isn't running wakes it: the host's Drift starts the browser (decision §11.3).
+  let surf = null, svc = null;
+  const surfWatch = new Map();
+  const surfOut = () => ({ on: !!surf, title: surf ? surf.title : '', room: surf ? surf.room : '', since: surf ? surf.since : 0, watchers: [...surfWatch.keys()] });
+  // (the host's Drift also gets each watcher's key and name, to check their signed messages while it isn't connected itself)
+  const surfPeople = () => Object.fromEntries([...surfWatch.keys()].map((id) => { const r = S.member.get(id); return [id, r ? { key: Buffer.from(r.key).toString('base64url'), name: r.name } : null]; }).filter(([, v]) => v));
+  const surfNews = () => { everyone({ t: 'surf', s: surfOut() }); if (svc) svc.out({ t: 'surf', s: surfOut(), people: surfPeople() }); };
+  // (a watcher may use the relay while waiting for the stream to start: the credentials they were given at surf-watch must still work then)
+  const surfRelayed = (id) => (id === ownerId && !!surf && surfWatch.size > 0 && !!svc) || (surfWatch.has(id) && online.has(id));
+  function surfWatchMsg(s, m) {
+    if (!m.on) {
+      if (surfWatch.get(s.id) === s) { surfWatch.delete(s.id); relayCheck(s.id); relayCheck(ownerId); surfNews(); }
+      return reply(s, m, {});
+    }
+    if (s.id === ownerId) return reply(s, m, { error: 'Your own Surf stream is on this PC.' });
+    if (surfWatch.get(s.id) !== s) {
+      if (!surfWatch.has(s.id) && surfWatch.size >= LIMITS.surfWatchers) return reply(s, m, { error: `${LIMITS.surfWatchers} people are already watching the Surf stream. Try again when someone stops.`, full: true });
+      if (slow(s, 'other')) return reply(s, m, { error: 'Slow down a little.' });
+      surfWatch.set(s.id, s);       // (the same person on another PC: this one now)
+      surfNews();
+    }
+    if (!surf && svc) svc.out({ t: 'surf-wake' });
+    return reply(s, m, { ...surfOut(), ...relayFor(s.id) });
+  }
+  // What the host's Drift sends its own hub's service session: surf-stream { on, title } and surf-signal { to, d }.
+  function onService(m) {
+    const answer = (out) => svc && svc.out({ t: out.error ? 'err' : 'ok', re: m && m.re, ...out });
+    if (m.t === 'surf-stream') {
+      if (!m.on) { surf = null; surfNews(); return answer({}); }
+      const title = cleanText(m.title).replace(/\s+/g, ' ').trim().slice(0, 120);
+      if (!surf) surf = { title, room: crypto.randomBytes(16).toString('base64url'), since: Date.now() };
+      else surf.title = title;
+      surfNews();
+      return answer({ ...surfOut(), ...relayFor(ownerId) });
+    }
+    if (m.t === 'surf-relay') return answer(relayFor(ownerId));       // fresh relay credentials (watchers came, so the host is relayed now)
+    if (m.t === 'surf-signal') {
+      const to = String(m.to || ''), x = surfWatch.get(to);
+      if (!surf || !x || !m.d || typeof m.d !== 'object') return;
+      for (const [dest, d] of bent.signal(ownerId, to, m.d)) { const y = surfWatch.get(dest); if (y) y.wire.send({ t: 'surf-signal', from: ownerId, d }); }
+    }
   }
   // The voice relay listens on UDP, on the same port number as the hub when it can (one number to forward on the
   // router). Its relay addresses only exist inside this process, so any of this PC's IPv4 addresses will do to name
@@ -397,7 +618,9 @@ module.exports = function createHub(opts) {
   async function startRelay() {
     relayHost = localAddrs().find((a) => /^\d+\.\d+\.\d+\.\d+$/.test(a)) || '127.0.0.1';
     for (const p of [port, 0]) {
-      const t = createTurn({ secret: crypto.randomBytes(32), relayHost, allowed: (id) => voice.has(id), log: (x) => opts.log && opts.log('hub relay: ' + x) });
+      // Allocations are only bookkeeping (no socket each). A full room of 16 with 8 talking, plus two broadcasts to 7
+      // viewers each, is a few hundred; one member broadcasting to 7 while talking to 7 others is about 28.
+      const t = createTurn({ secret: crypto.randomBytes(32), relayHost, allowed: relayed, maxAllocations: 512, perMember: 48, log: (x) => opts.log && opts.log('hub relay: ' + x) });
       try { await t.listen(p, opts.relayBind || '0.0.0.0'); turn = t; return; } catch { try { t.close(); } catch { /* never opened */ } }
     }
     if (opts.log) opts.log('hub: the voice relay could not start');
@@ -456,6 +679,13 @@ module.exports = function createHub(opts) {
     relayStats: () => (turn ? turn.stats() : null),
     name: () => hubName,
     invite: (o = {}) => invite({ by: ownerId, ...o }),
+    // The host's Drift, in this same process, for the Surf stream: what the hub sends it goes to onMsg; send() is what it says.
+    service: (onMsg) => {
+      svc = { out: (m) => { try { onMsg(typeof m === 'string' ? JSON.parse(m) : m); } catch { /* its problem */ } } };
+      setImmediate(() => svc && svc.out({ t: 'surf', s: surfOut(), people: surfPeople() }));
+      return { send: (m) => { if (svc && m && typeof m === 'object') onService(m); }, close: () => { svc = null; surf = null; surfNews(); } };
+    },
+    clearMessages,
     stats: () => ({ online: online.size, sessions: sessions.size, members: S.members.all().length }),
     stop: () => new Promise((resolve) => {
       if (opts.log) opts.log('hub: stopping');

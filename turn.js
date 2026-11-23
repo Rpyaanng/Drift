@@ -233,7 +233,11 @@ module.exports = function createTurn({ secret, realm = 'drift', relayHost = '127
 
   sock.on('message', (buf, from) => { try { fromClient(buf, from); } catch (e) { log('bad packet: ' + e.message); } });
   return {
-    listen: (port, host) => new Promise((ok, no) => { sock.once('error', no); sock.bind(port, host, () => { sock.off('error', no); sock.on('error', (e) => log('udp: ' + e.message)); ok(sock.address()); }); }),
+    listen: (port, host) => new Promise((ok, no) => { sock.once('error', no); sock.bind(port, host, () => {
+      sock.off('error', no);
+      // Windows' default 64 KB socket buffer drops video bursts before they're read (docs/plans/broadcast.md, spike C): 4 MB holds them
+      try { sock.setRecvBufferSize(4 << 20); sock.setSendBufferSize(4 << 20); } catch (e) { log('udp buffers: ' + e.message); }
+      sock.on('error', (e) => log('udp: ' + e.message)); ok(sock.address()); }); }),
     credentials: (member, secs = 3600) => { const username = `${Math.floor(Date.now() / 1000) + secs}:${member}`; return { username, credential: password(username) }; },
     stats: () => ({ ...stats, open: allocs.size }),
     drop: (member) => { for (const a of [...allocs.values()]) if (memberOf(a.user) === member) expire(a); },       // they left the call: stop relaying for them now

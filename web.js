@@ -9,12 +9,19 @@
 //     every Drift window showing the page (the Surf monitor's and any mirroring it: see preload.js), with no video encoding. Their
 //     mouse and keyboard are played back into it (input()). Chromium doesn't draw a <select>'s open list offscreen, so
 //     surf-select.js stands in for it there.
-const { app, session, ipcMain, webContents, BrowserWindow, sharedTexture } = require('electron');
+//
+// It can be made twice (docs/plans/streams.md §3): the host's own browser (persist:web) and, on the PC hosting a hub, the hub's
+// Surf stream, a browser of the whole hub's in a profile of its own (persist:hub-<id>, `headless`). That one always draws offscreen,
+// keeps running whether or not any window of this PC shows it, and is captured from the page itself to stream to the hub's
+// members. Everyone in the hub can drive it, so its profile refuses what would happen on this PC instead of theirs: pop-up
+// windows, file pickers, page dialogs, permissions, this PC's own network (surf-lan.js), and downloads the host hasn't agreed to.
+const { app, session, ipcMain, webContents, BrowserWindow, sharedTexture, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const createOutside = require('./outside');
 const ublock = require('./surf-ublock');
+const createLanGuard = require('./surf-lan');
 const surfKey = require('./renderer/surf-keys');       // the browser's keyboard shortcuts (Ctrl+T, Ctrl+W, Ctrl+Tab…)
 
 const isWeb = (u) => /^https?:\/\//i.test(String(u || ''));
@@ -62,6 +69,16 @@ function learnIdent(wc, then) {
   if (wc.isLoading()) wc.once('did-finish-load', read); else read();
 }
 
+// ---- what is per session but has to be answered once ----
+// A page's preloads ask with a synchronous IPC message, and every session's pages ask on the same channel: two browsers each
+// registering their own handler would answer each other's pages (the last returnValue wins). So the handlers are here, once,
+// and each finds the browser whose session the page is in.
+const browsers = new Map();       // session -> { scriptlets(e, url), gain(), note(wc, what) }
+ipcMain.on('surf-scriptlets', (e, u) => { const b = browsers.get(e.sender.session); if (b) b.scriptlets(e, u); else e.returnValue = ''; });
+ipcMain.on('surf-gain', (e) => { const b = browsers.get(e.sender.session); e.returnValue = b ? b.gain() : 1; });
+ipcMain.on('surf-hub-note', (e, what) => { const b = browsers.get(e.sender.session); if (b && b.note) b.note(e.sender, String(what || '').slice(0, 20)); });       // (surf-hub-guard.js)
+let uaSet = false;
+
 // hooks (all supplied by the main process):
 //   changed()      the browser changed: tell the windows and any friends
 //   screen(key)    the monitor the browser is shown on: `key` if Drift has a window there, otherwise the main one
@@ -76,8 +93,20 @@ function learnIdent(wc, then) {
 //   gpu()          should pages be drawn offscreen and handed to the windows as textures? (read each time the browser is put somewhere)
 //   win(key)       monitor `key`'s Drift window, and display(key) its display (for the offscreen page's size, scale and frame rate)
 //   pageSize(key)  { w, h }: the pixels to draw the page at, with the browser on monitor `key` (the widest monitor showing it)
-module.exports = function createWeb(hooks) {
+//   gain()         the volume mixer's level for the pages' sound, 0..1
+// and for the hub's browser (`headless`) only:
+//   muted()        should its pages be silent on this PC (a capture still has their sound: spike S1)
+//   held(d)        a download is waiting for the host: d = { id, name, size, site, who, save(), refuse() }. Returns false to refuse it now.
+//   holdDir()      the folder downloads wait in (never the Downloads folder itself)
+//   allowLan()     the local addresses the host lets the hub's browser reach (surf-lan.js)
+//   note(what)     a page noticed something: 'password' (someone is typing into a password box)
+// opts: { partition, headless, size: { w, h } (a headless browser's pages, in pixels) }
+module.exports = function createWeb(hooks, opts = {}) {
+  const PART = opts.partition || 'persist:web', headless = !!opts.headless;
+  const SIZE = { w: 1920, h: 1080, ...(opts.size || {}) };
+  let local = false;         // headless: the host's Surf tab shows it (on monitor `key`); its pages run either way while `on`
   let on = false, key = '';  // is the browser showing, and on which monitor
+  let parked = false;        // put away (Scenes or Media chosen) with its pages kept loaded, out of sight: showing it again there is instant
   let gen = 0;               // goes up each time the browser is put somewhere: the window makes new <webview>s for it
   let holder = null;         // the Drift window the pages are in
   const tabs = [];           // { id, wc, url, title, pending, full, ready, seq }: wc is the tab's page, a <webview> in that window (renderer/app.js makes it)
@@ -98,7 +127,7 @@ module.exports = function createWeb(hooks) {
 
   function sess() {
     if (ses) return ses;
-    ses = session.fromPartition('persist:web');       // its own cookies and sign-ins, kept between runs, apart from Drift's own windows
+    ses = session.fromPartition(PART);       // its own cookies and sign-ins, kept between runs, apart from Drift's own windows (and from the other browser)
     widevine();       // fetched in the background if this is the first time
     // Sites turn away browsers they don't recognise, so it says what it is, a Chromium, the way Chrome says it: no app names, and
     // only the major version (Chrome has sent "Chrome/156.0.0.0" for years; the full number is a sign of an embedded browser)
@@ -108,7 +137,7 @@ module.exports = function createWeb(hooks) {
     // the Electron user agent, so the page that came next, saying Chrome, was challenged again, forever. (Drift's own windows say
     // Chrome too from then on, which nothing in them minds.)
     const ua = ses.getUserAgent().replace(/\s(?:Electron|Drift)\/\S+/gi, '').replace(/\bChrome\/(\d+)\.[\d.]+/, 'Chrome/$1.0.0.0');
-    app.userAgentFallback = ua;
+    if (!uaSet) { uaSet = true; app.userAgentFallback = ua; }       // (once: it is the whole app's)
     ses.setUserAgent(ua);
     ses.setPermissionRequestHandler((_wc, perm, cb) => cb(perm === 'fullscreen'));       // no camera, microphone, location, notifications…
     ses.setPermissionCheckHandler((_wc, perm) => perm === 'fullscreen');                 // ...and pages are told so up front (otherwise they read "granted")
@@ -117,32 +146,28 @@ module.exports = function createWeb(hooks) {
     // every Chrome sends, which sites' bot checks look for) is an extension too: surf-net/background.js.
     netReady().catch(() => {});
     // uBlock Origin's scriptlets, for a page or frame that is starting (see surf-scriptlets.js). Its preload waits for them.
-    ipcMain.on('surf-scriptlets', (e, u) => {
-      if (e.sender.session !== ses || !blocking || !loading) { e.returnValue = ''; return; }
+    // (Asked on the module's one handler, at the top, which finds this browser by the page's session.)
+    const scriptlets = (e, u) => {
+      if (!blocking || !loading) { e.returnValue = ''; return; }
       Promise.race([
         loading.then((x) => (x.bg.isDestroyed() ? '' : x.bg.executeJavaScript(`self.driftScriptlets ? self.driftScriptlets(${JSON.stringify(String(u))}) : ''`))),
         new Promise((r) => setTimeout(() => r(''), 3000)),       // (a page isn't held up for long)
       ]).then((c) => { e.returnValue = typeof c === 'string' ? c : ''; }, () => { e.returnValue = ''; });
-    });
+    };
+    browsers.set(ses, { scriptlets, gain, note: headless ? (_wc, what) => { if (hooks.note) hooks.note(what); } : null });
     ses.registerPreloadScript({ type: 'frame', id: 'drift-scriptlets', filePath: path.join(__dirname, 'surf-scriptlets.js') });
     // In every page and frame: password boxes can't be turned into plain text, so nobody watching can read a password (see surf-guard.js)
     ses.registerPreloadScript({ type: 'frame', id: 'drift-password-guard', filePath: path.join(__dirname, 'surf-guard.js') });
     ses.registerPreloadScript({ type: 'frame', id: 'drift-select', filePath: path.join(__dirname, 'surf-select.js') });       // (does nothing outside offscreen pages)
-    // A download goes straight into this PC's Downloads folder, with no Save As box (it would open behind Drift's full-screen window).
-    // Only this PC loads the pages, so a download started by a friend over the shared page lands here too, never on their PC.
-    ses.on('will-download', (_e, item) => {
-      let dir;
-      try { dir = app.getPath('downloads'); } catch { dir = app.getPath('home'); }
-      const name = path.basename(item.getFilename() || 'download'), ext = path.extname(name), stem = name.slice(0, name.length - ext.length) || 'download';
-      let file = path.join(dir, name);
-      for (let n = 1; fs.existsSync(file) && n < 1000; n++) file = path.join(dir, `${stem} (${n})${ext}`);       // never over a file already there
-      item.setSavePath(file);
-      hooks.say(`Downloading ${path.basename(file)} to your Downloads folder…`);
-      item.once('done', (_d, state) => {
-        if (state === 'completed') hooks.say(`Downloaded ${path.basename(file)} to your Downloads folder.`);
-        else if (state === 'interrupted') hooks.say(`The download of ${path.basename(file)} failed.`);
-      });
-    });
+    // The volume mixer's Surf level, in every page and frame (see surf-volume.js): asked for as each one starts, and sent on when it changes
+    ses.registerPreloadScript({ type: 'frame', id: 'drift-volume', filePath: path.join(__dirname, 'surf-volume.js') });
+    if (headless) {
+      // The hub's browser: no file pickers or page dialogs (they'd open on this PC's screen, where nobody else can answer them),
+      // and a note the first time someone types into a password box (see surf-hub-guard.js)
+      ses.registerPreloadScript({ type: 'frame', id: 'drift-hub-guard', filePath: path.join(__dirname, 'surf-hub-guard.js') });
+      lanReady();
+    }
+    ses.on('will-download', (_e, item, wc) => { if (headless) holdDownload(item, wc); else download(item); });
     // The start page, and its search box: drift://home/go?q=… goes on to the address (or the Google search) it stands for,
     // replacing itself so Back returns to the start page.
     ses.protocol.handle('drift', async (req) => {
@@ -156,11 +181,80 @@ module.exports = function createWeb(hooks) {
     });
     return ses;
   }
+  // ---- downloads ----
+  // This PC's own browser: straight into this PC's Downloads folder, with no Save As box (it would open behind Drift's full-screen window).
+  const freeName = (dir, name) => {
+    const ext = path.extname(name), stem = name.slice(0, name.length - ext.length) || 'download';
+    let file = path.join(dir, name);
+    for (let n = 1; fs.existsSync(file) && n < 1000; n++) file = path.join(dir, `${stem} (${n})${ext}`);       // never over a file already there
+    return file;
+  };
+  const downloadsDir = () => { try { return app.getPath('downloads'); } catch { return app.getPath('home'); } };
+  function download(item) {
+    const file = freeName(downloadsDir(), path.basename(item.getFilename() || 'download'));
+    item.setSavePath(file);
+    hooks.say(`Downloading ${path.basename(file)} to your Downloads folder…`);
+    item.once('done', (_d, state) => {
+      if (state === 'completed') hooks.say(`Downloaded ${path.basename(file)} to your Downloads folder.`);
+      else if (state === 'interrupted') hooks.say(`The download of ${path.basename(file)} failed.`);
+    });
+  }
+  // The hub's browser (docs/plans/streams.md §6): someone else chose this file, and it would land on this PC. It goes into a
+  // holding folder, never the Downloads folder, until the host says Save; then, once complete, it moves into Downloads.
+  // Refused (or not answered), it's cancelled and whatever arrived is deleted. (Pausing a download in will-download doesn't
+  // stop its bytes arriving, spike S4 found, so "held" means held in the holding folder.) Drift never opens one.
+  const touchedBy = new WeakMap();       // page -> { who, at }: whose input last reached it (input())
+  let heldSeq = 0;
+  function holdDownload(item, wc) {
+    const name = path.basename(item.getFilename() || 'download').replace(/[\x00-\x1f<>:"/\\|?*]/g, '_').slice(0, 120) || 'download';
+    const t = wc && touchedBy.get(wc), who = t && Date.now() - t.at < 5000 ? t.who : '';
+    const id = ++heldSeq;
+    let dir = '';
+    try { dir = hooks.holdDir(); fs.mkdirSync(dir, { recursive: true }); } catch { item.cancel(); return; }
+    const tmp = path.join(dir, `${run}-${id}-${name}`);
+    item.setSavePath(tmp);
+    let answer = '', ended = '';
+    const gone = () => fs.promises.unlink(tmp).catch(() => {});
+    const finish = () => {
+      if (ended !== 'completed') { hooks.say(`The download of ${name} failed.`); gone(); return; }
+      const file = freeName(downloadsDir(), name);
+      fs.promises.rename(tmp, file).catch(() => fs.promises.copyFile(tmp, file).then(gone))
+        .then(() => hooks.say(`Downloaded ${path.basename(file)} to your Downloads folder.`), () => { hooks.say(`${name} couldn't be put in your Downloads folder.`); gone(); });
+    };
+    item.once('done', (_d, state) => { ended = state; if (answer === 'save') finish(); else if (answer === 'refuse' || state !== 'completed') gone(); });
+    const d = { id, name, size: Math.max(0, item.getTotalBytes() || 0), site: site(item.getURL()), who,
+      save: () => { if (answer) return; answer = 'save'; if (ended) finish(); },
+      refuse: () => { if (answer) return; answer = 'refuse'; if (!ended) item.cancel(); else gone(); } };
+    if (!hooks.held || hooks.held(d) === false) d.refuse();
+  }
+  // ---- the hub's browser can't reach this PC's own network (surf-lan.js): every request goes through a small proxy in this
+  // process that checks the address it really connects to ----
+  let lan = null, lanSet = null;
+  function lanReady() {
+    if (!headless) return Promise.resolve();
+    if (!lanSet) {
+      lan = createLanGuard({ allowed: () => (hooks.allowLan ? hooks.allowLan() : []), refused: (host) => hooks.say(`The Surf stream can't open ${host}: it's on this PC's own network.`) });
+      lanSet = lan.port.then((p) => sess().setProxy({ proxyRules: `http=127.0.0.1:${p};https=127.0.0.1:${p};ws=127.0.0.1:${p};wss=127.0.0.1:${p}`, proxyBypassRules: '<-loopback>' }));
+    }
+    return lanSet;
+  }
+  // ---- the volume mixer's Surf level (0..1): the pages' sound is scaled by it, from inside them (Electron has no volume for a page) ----
+  const gain = () => { const g = +hooks.gain(); return isFinite(g) ? Math.max(0, Math.min(1, g)) : 1; };
+  function gainChanged() {
+    const g = gain(), pages = new Set(tabs.filter(live).map((t) => t.wc));
+    for (const wc of webContents.getAllWebContents()) if (!wc.isDestroyed() && wc.session === ses && wc.getType() !== 'backgroundPage') pages.add(wc);       // (sign-in pop-ups too)
+    for (const wc of pages) {
+      let frames = [];
+      try { frames = wc.mainFrame.framesInSubtree; } catch { /* going */ }
+      for (const f of frames) { try { f.send('surf-gain', g); } catch { /* a frame on its way out */ } }
+    }
+  }
   // Every Drift window may hold the browser. What a page is allowed is decided here, not by the window.
   function host(hostWc) {
     learnIdent(hostWc, tellIdent);
+    if (headless) return;       // (never a <webview>: always offscreen)
     hostWc.on('will-attach-webview', (e, prefs, params) => {
-      if (!on || params.partition !== 'persist:web') { e.preventDefault(); return; }
+      if (!on || params.partition !== PART) { e.preventDefault(); return; }
       delete prefs.preloadURL; delete prefs.preload;
       // nodeIntegrationInSubFrames only lets the password guard run inside frames too (a sign-in box is often in one): pages still get no Node
       Object.assign(prefs, { nodeIntegration: false, nodeIntegrationInSubFrames: true, contextIsolation: true, sandbox: true, backgroundThrottling: false });
@@ -186,7 +280,11 @@ module.exports = function createWeb(hooks) {
   function bind(t, page, hostWc) {
     t.wc = page; t.full = false; t.ready = false; holder = hostWc;
     const mine = () => t.wc === page;
-    if (process.env.DRIFT_MUTE) page.setAudioMuted(true);
+    page.setAudioMuted(!!process.env.DRIFT_MUTE || (headless && !!hooks.muted && !!hooks.muted()));
+    if (headless) {
+      page.setWebRTCIPHandlingPolicy('disable_non_proxied_udp');       // a page's own WebRTC goes through the proxy too, so it can't reach this PC's network either
+      page.on('will-prevent-unload', (e) => e.preventDefault());       // "Leave this site?" would be a box on this PC's screen: just leave
+    }
     // a link that asks for a new tab gets one; a small window a page opens (sign in with Shop, Google, PayPal…) opens as one
     watchInput(page);
     page.setWindowOpenHandler((d) => opened(d, page, hostWc, mine));
@@ -198,14 +296,14 @@ module.exports = function createWeb(hooks) {
     page.on('did-navigate-in-page', (_e, _u, main) => { if (main) moved(); });
     page.on('page-title-updated', (_e, title) => { if (!mine()) return; t.title = String(title || '').slice(0, 200); hooks.changed(); });
     page.on('enter-html-full-screen', () => { if (mine()) t.full = true; });
-    page.on('leave-html-full-screen', () => { if (mine()) t.full = false; hooks.unfull(hostWc); });
+    page.on('leave-html-full-screen', () => { if (mine()) t.full = false; if (hostWc) hooks.unfull(hostWc); });
     page.on('audio-state-changed', () => { if (mine()) hooks.changed(); });       // the visuals listen to the PC's sound while a page plays some (see info().audible)
     page.on('zoom-changed', (_e, dir) => { if (mine() && t.id === active) zoom(dir === 'in' ? 1 : -1); });       // Ctrl + the mouse wheel
     // The browser's shortcuts. They have to be caught here: a key the page leaves alone goes on to the Drift window around it,
     // whose menu shortcuts would reload Drift itself (Ctrl+R), close it (Ctrl+W) or zoom Drift instead of the page.
     page.on('before-input-event', (e, k) => {
       if (k.type !== 'keyDown') return;
-      if (k.key === 'Escape' && !t.full && !k.alt && !k.control) { e.preventDefault(); hooks.escape(); return; }       // Esc leaves the page's full screen first, then asks for Drift's controls
+      if (k.key === 'Escape' && !t.full && !k.alt && !k.control) { e.preventDefault(); if (hooks.escape) hooks.escape(); return; }       // Esc leaves the page's full screen first, then asks for Drift's controls
       const s = mine() && surfKey(k.key, MODS.filter((n) => k[n]));
       if (!s) return;
       e.preventDefault();
@@ -232,6 +330,8 @@ module.exports = function createWeb(hooks) {
   function opened({ url: u, disposition }, page, hostWc, mine) {
     if (!mine() || !isWeb(u)) return { action: 'deny' };
     if (disposition === 'foreground-tab' || disposition === 'background-tab') { setImmediate(() => newTab(u, disposition === 'background-tab')); return { action: 'deny' }; }
+    // The hub's browser opens no windows: one would open on this PC's screen only, where nobody else can see or use it (§8)
+    if (headless) { if (Date.now() - (touched.get(page) || 0) < 5000) setImmediate(() => newTab(u)); return { action: 'deny' }; }
     if (disposition !== 'new-window' || !(Date.now() - (touched.get(page) || 0) < 5000)) return { action: 'deny' };
     const parent = BrowserWindow.fromWebContents(hostWc);
     return { action: 'allow', overrideBrowserWindowOptions: {
@@ -266,7 +366,8 @@ module.exports = function createWeb(hooks) {
 
   // ---- Surf's extensions (in this window's session only) ----
   const exts = () => sess().extensions || sess();       // (session.extensions came in Electron 36; before, the session itself)
-  const bgOf = (id) => webContents.getAllWebContents().find((wc) => !wc.isDestroyed() && wc.getURL().startsWith(`chrome-extension://${id}/`));
+  // (the same extension loaded into both browsers' sessions has the same id: this one's background page is the one in its session)
+  const bgOf = (id) => webContents.getAllWebContents().find((wc) => !wc.isDestroyed() && wc.session === ses && wc.getURL().startsWith(`chrome-extension://${id}/`));
   // The background page of extension `id`, once `test` (run there) says it has started
   async function started(id, test) {
     for (let i = 0; i < 300; i++) {
@@ -340,7 +441,7 @@ module.exports = function createWeb(hooks) {
     if (!live(t) || !t.pending) return;
     const page = t.wc, my = ++t.seq;
     const ready = Promise.all([block(), widevine(), netReady().catch(() => {})]);
-    Promise.race([ready, new Promise((r) => setTimeout(r, 15000))]).then(() => {       // (the first time, uBlock Origin is downloaded: ~6 MB)
+    Promise.race([ready, new Promise((r) => setTimeout(r, 15000))]).then(() => lanReady()).then(() => {       // (the first time, uBlock Origin is downloaded: ~6 MB; the proxy is never skipped)
       if (my !== t.seq || t.wc !== page || page.isDestroyed() || !t.pending) return;
       const u = t.pending; t.pending = '';
       page.loadURL(u).catch(() => {});
@@ -351,9 +452,9 @@ module.exports = function createWeb(hooks) {
     if (!!hooks.blockAds() === blocking || !ses) return;
     block().then(() => { for (const t of tabs) if (live(t) && isWeb(t.url)) t.wc.reload(); });       // (the start page has no adverts)
   }
-  // Takes the pages off the screen. The tabs remember where they were, and load again when they are next shown.
+  // Lets go of the pages (the browser moved, or closed). The tabs remember where they were, and load again when they are next shown.
   function unplace() {
-    endOut(true);
+    endOut(true); parked = false;
     for (const t of tabs) { if (!t.pending) t.pending = t.url || HOME; drop(t); t.full = false; t.ready = false; }
     holder = null; sid = ''; fresh.clear(); gpu = false; frameOut = null;
     if (frameNext) { frameNext.release(); frameNext = null; }
@@ -373,18 +474,41 @@ module.exports = function createWeb(hooks) {
   }
   // Shows the browser on monitor `k` (or where it last was). On a different monitor from now, the pages load again there.
   function show(k) {
+    if (headless) { start(); local = true; if (k || !key) key = hooks.screen(k || key); painting(); hooks.changed(); return; }       // the host's Surf tab shows the hub's browser
     if (!tabs.length) return;
     sess();
     const there = hooks.screen(k || key);
+    if (on && parked && there === hooks.screen(key)) { parked = false; restream(); painting(); hooks.changed(); return; }       // its pages are still there: just shown again
     if (on && there === hooks.screen(key)) return;
     unplace(); on = true; key = there; gen++;
     if (hooks.gpu() && hooks.win(key)) { gpu = true; for (const t of tabs) offscreen(t); }
     hooks.changed();
   }
   // The setting changed while the browser is up: put it up again the other way (its pages load again).
-  function gpuChanged() { if (!on || gpu === !!hooks.gpu()) return; const k = key; on = false; show(k); }
-  function hide() { if (!on) return; on = false; unplace(); hooks.changed(); }       // out of sight, tabs kept
-  function close() { if (!on && !tabs.length) return; on = false; unplace(); tabs.length = 0; active = 0; hooks.changed(); }
+  function gpuChanged() {
+    if (headless || !on || gpu === !!hooks.gpu()) return;
+    if (parked) { on = false; unplace(); hooks.changed(); return; }       // put away: it goes up the new way when next shown
+    const k = key; on = false; show(k);
+  }
+  // Out of sight, its pages kept loaded (a video playing in one goes on playing, as in a background tab). Friends stop seeing it.
+  function hide() {
+    if (headless) { if (!local) return; local = false; painting(); hooks.changed(); return; }       // the host looks away: the hub's members still have it
+    if (!on || parked) return;
+    endOut(true); parked = true; sid = '';
+    for (const t of tabs) if (live(t) && t.wc.drift) t.wc.stopPainting();
+    hooks.changed();
+  }
+  function close() { if (!on && !tabs.length) return; on = false; local = false; unplace(); tabs.length = 0; active = 0; hooks.changed(); }
+  // The hub's browser: its pages, offscreen, running whether or not this PC shows them. Starts on Drift's start page.
+  function start() {
+    if (!headless) return;
+    if (!tabs.length) newTab(HOME);
+    if (on) return;
+    sess(); on = true; gpu = true; gen++;
+    for (const t of tabs) offscreen(t);
+    painting(); hooks.changed();
+  }
+  const up = (k) => (headless ? start() : show(k));       // what a command that opens a page does with the browser itself
 
   function newTab(u, behind) {
     if (tabs.length >= MAX_TABS) { hooks.say(`${MAX_TABS} tabs is the most Drift keeps open. Close one first.`); return; }
@@ -395,19 +519,19 @@ module.exports = function createWeb(hooks) {
     painting(); hooks.changed();
   }
   // ---- kept between runs: the open tabs, the one in front and the monitor ----
-  const saved = () => (on && tabs.length ? { urls: tabs.map((t) => t.url || t.pending || HOME).filter(isPage), active: Math.max(0, tabs.indexOf(cur())), key } : null);
+  const saved = (any) => ((any || headless ? tabs.length : on && !parked && tabs.length) ? { urls: tabs.map((t) => t.url || t.pending || HOME).filter(isPage), active: Math.max(0, tabs.indexOf(cur())), key } : null);
   function restore(s) {
     const urls = (Array.isArray(s.urls) ? s.urls : []).map(String).filter(isPage).slice(0, MAX_TABS);
     if (!urls.length || tabs.length) return;
     for (const u of urls) tabs.push({ id: nextId++, wc: null, url: '', title: '', pending: u, full: false, ready: false, seq: 0, hold: isWeb(u) });
     active = (tabs[Math.min(Math.max(0, s.active | 0), tabs.length - 1)]).id;
-    show(String(s.key || ''));
+    up(String(s.key || ''));
   }
   function select(id) { if (id === active || !tabs.some((t) => t.id === id)) return; active = id; restream(); painting(); hooks.changed(); }
   function closeTab(id) {
     const i = tabs.findIndex((t) => t.id === id);
     if (i < 0) return;
-    if (tabs.length === 1) { close(); return; }       // the last tab takes the browser with it
+    if (tabs.length === 1) { if (!headless) { close(); return; } newTab(HOME); }       // the last tab takes the browser with it (the hub's goes back to its start page: it's everyone's)
     const t = tabs.splice(i, 1)[0]; drop(t);
     const u = t.url || t.pending;
     if (isPage(u)) { closed.push(u); if (closed.length > 20) closed.shift(); }
@@ -430,15 +554,15 @@ module.exports = function createWeb(hooks) {
       const u = m.do === 'home' ? HOME : address(m.text);
       if (!u) return { error: 'That doesn\'t look like a web address.' };
       if (!t) newTab(u); else { t.pending = u; go(t); }
-      show(k);
-    } else if (m.do === 'new') { newTab(HOME); show(k); }
+      up(k);
+    } else if (m.do === 'new') { newTab(HOME); up(k); }
     else if (m.do === 'tab') select(+m.id);
     else if (m.do === 'close') closeTab(+m.id || active);
     else if (m.do === 'back') nav(-1);
     else if (m.do === 'fwd') nav(1);
     else if (m.do === 'reload') { if (alive()) cur().wc.reload(); }
     else if (m.do === 'hard') { if (alive()) cur().wc.reloadIgnoringCache(); }
-    else if (m.do === 'reopen') { const u = closed.pop(); if (u) { newTab(u); show(k); } }
+    else if (m.do === 'reopen') { const u = closed.pop(); if (u) { newTab(u); up(k); } }
     else if (m.do === 'step') { const i = tabs.indexOf(cur()), n = Math.sign(+m.n || 0); if (n && i >= 0) select(tabs[(i + n + tabs.length) % tabs.length].id); }
     else if (m.do === 'nth') { const n = +m.n | 0, x = n === 9 ? tabs[tabs.length - 1] : tabs[n - 1]; if (x) select(x.id); }
     else if (m.do === 'zoom') zoom(Math.sign(+m.n || 0));
@@ -450,16 +574,22 @@ module.exports = function createWeb(hooks) {
   const hist = (d) => { if (!alive()) return false; const h = cur().wc.navigationHistory; return d < 0 ? h.canGoBack() : h.canGoForward(); };
   const view = () => { const t = cur() || {}; return { sid, out: out ? out.name : '', url: out ? '' : t.url || t.pending || '', title: out ? out.title || out.name : t.title || '', tabs: tabs.map((x) => ({ id: x.id, title: label(x) })), active, back: hist(-1), fwd: hist(1) }; };
   // What friends are told about the browser. The picture and sound of the tab in front reach them as a stream, named by `sid`.
-  const shared = () => (on && (alive() || (out && out.id)) && sid ? view() : null);
+  const shared = () => (on && !parked && (alive() || (out && out.id)) && sid ? view() : null);
   // The frame whose picture and sound `hostWc` (the Drift window holding the browser) may capture to send to friends.
-  const frame = (hostWc) => (!out && alive() && holder === hostWc ? cur().wc.mainFrame : null);
+  const frame = (hostWc) => (!headless && !out && !parked && alive() && holder === hostWc ? cur().wc.mainFrame : null);
+  // The hub's browser: the frame of the tab in front, for the Surf stream's capture (main.js answers its getDisplayMedia with it)
+  const captureFrame = () => (headless && on && alive() && cur().ready ? cur().wc.mainFrame : null);
   // ...or, while the page is open in the PC's own browser, that browser's window (a desktop capture source id)
   const source = (hostWc) => (out && out.id && holder === hostWc ? out.id : null);
   // Plays back what a friend did over their picture of the page, or (local) what this PC did over a picture of it on one of its
   // monitors. Positions are fractions of the page's width and height.
-  function input(e, local) {
-    if (out || !alive() || !e || typeof e !== 'object' || !holder || holder.isDestroyed()) return;       // friends can't click in the PC's own browser
+  // `who`: whose input it is (the hub's browser remembers, to name who started a download)
+  function input(e, local, who) {
+    if (out || !alive() || !e || typeof e !== 'object') return;       // friends can't click in the PC's own browser
+    if (!headless && (parked || !holder || holder.isDestroyed())) return;
     const wc = cur().wc, win = BrowserWindow.fromWebContents(wc.drift ? wc : holder);
+    if (who && e.k !== 'move') touchedBy.set(wc, { who: String(who), at: Date.now() });
+    if (headless && e.k !== 'move' && e.k !== 'wheel') touched.set(wc, Date.now());
     if (!win) return;
     const [w, h] = wc.drift ? win.getContentSize() : pageDips();       // the page's own size, which may be bigger than its monitor (see pageSize)
     const x = Math.round(unit(e.x) * w), y = Math.round(unit(e.y) * h);
@@ -498,7 +628,7 @@ module.exports = function createWeb(hooks) {
   // Opens the page in front in this PC's default browser, over the Surf monitor. While that window is open, friends see it in
   // place of Surf's page (and hear the PC's sound), and Surf's own tab keeps quiet. Closing the window brings Surf back.
   async function goOutside() {
-    if (!on || !alive()) return;
+    if (headless || !on || parked || !alive()) return;
     if (out) { hooks.say(`The page is already open in ${out.name}. Close its window to come back to Surf.`); return; }
     const t = cur(), url = isWeb(t.url) ? t.url : '';
     const me = out = { name: outside.name() || 'your browser', id: '', title: '', stop: () => {} };
@@ -529,33 +659,38 @@ module.exports = function createWeb(hooks) {
     if (!quiet) { restream(); hooks.changed(); }
   }
 
-  const info = () => ({ open: on, has: tabs.length > 0, key: on ? hooks.screen(key) : '', gen, gpu: on && gpu, page: on ? hooks.pageSize(hooks.screen(key)) : null, ext: outside.name(), audible: on && tabs.some((t) => live(t) && t.wc.isCurrentlyAudible()), ...view() });
+  // (parked: the monitor whose window keeps the hidden pages)
+  const info = () => (headless ? { open: on && local, has: tabs.length > 0, key: on && local ? hooks.screen(key) : '', parked: '', gen, gpu: on, page: { ...SIZE }, ext: '', hub: true,
+    audible: on && tabs.some((t) => live(t) && t.wc.isCurrentlyAudible()), ...view() } : { open: on && !parked, has: tabs.length > 0, key: on && !parked ? hooks.screen(key) : '', parked: on && parked ? hooks.screen(key) : '', gen, gpu: on && gpu, page: on ? hooks.pageSize(hooks.screen(key)) : null, ext: outside.name(), audible: on && tabs.some((t) => live(t) && t.wc.isCurrentlyAudible()), ...view() });
+  // The hub's pages are silent on this PC unless the host is in the hub (muted() says): the capture has their sound either way
+  function audioChanged() { if (headless) for (const t of tabs) if (live(t)) t.wc.setAudioMuted(!!process.env.DRIFT_MUTE || (!!hooks.muted && !!hooks.muted())); }
   // The page's size in its own units (CSS pixels): drawn at pageSize's pixels, at the scale of the Surf monitor
-  function dips(scale) { const px = hooks.pageSize(key); if (px) return [Math.round(px.w / scale), Math.round(px.h / scale)]; const hw = hooks.win(key); return hw ? hw.getContentSize() : [1280, 720]; }
-  function pageDips() { const d = hooks.display(key) || {}; return dips(d.scaleFactor || 1); }
+  function dips(scale) { if (headless) return [Math.round(SIZE.w / scale), Math.round(SIZE.h / scale)]; const px = hooks.pageSize(key); if (px) return [Math.round(px.w / scale), Math.round(px.h / scale)]; const hw = hooks.win(key); return hw ? hw.getContentSize() : [1280, 720]; }
+  function pageDips() { const d = (!headless && hooks.display(key)) || {}; return dips(d.scaleFactor || 1); }
   // Mirroring started or stopped: an offscreen page takes its new size (a <webview> is sized by its window, from info().page)
   function resized() {
-    if (!on || !gpu) { hooks.changed(); return; }
+    if (headless || !on || !gpu) { hooks.changed(); return; }
     const d = hooks.display(key) || {}, [w, h] = dips(d.scaleFactor || 1);
     for (const t of tabs) if (live(t) && t.wc.drift) { const pw = BrowserWindow.fromWebContents(t.wc); if (pw && !pw.isDestroyed()) pw.setContentSize(w, h); }
     painting(); hooks.changed();
   }
-  outside.detect().then((b) => { if (b) hooks.changed(); });       // the Surf bar's button names it
+  if (!headless) outside.detect().then((b) => { if (b) hooks.changed(); });       // the Surf bar's button names it
   // ---- drawing offscreen (see the top) ----
   // A tab's page as a hidden offscreen window, the size of the Surf monitor's Drift window and drawn at its scale and refresh rate.
+  // The hub's browser draws at SIZE (1080p) at scale 1 and 30 frames a second, the same for everyone watching, wherever this PC shows it.
   function offscreen(t) {
-    const hw = hooks.win(key);
-    if (!hw || hw.isDestroyed() || live(t)) return;
-    const d = hooks.display(key) || {}, [w, h] = dips(d.scaleFactor || 1), at = hw.getBounds();
+    const hw = headless ? null : hooks.win(key);
+    if ((!headless && (!hw || hw.isDestroyed())) || live(t)) return;
+    const d = headless ? { scaleFactor: 1, displayFrequency: 30 } : hooks.display(key) || {}, [w, h] = dips(d.scaleFactor || 1), at = hw ? hw.getBounds() : screen.getPrimaryDisplay().bounds;
     // Over the Surf monitor, and on top, though never shown: a box the page asks for (alert(), confirm(), "leave this site?") is
     // a window of its own over this one. Otherwise it came up behind Drift's window, which stays above everything, while the page
     // waited for it to be answered: nothing could be clicked or typed in the page again. Where the page opens a pop-up goes by
     // where it is, too.
     const win = new BrowserWindow({ show: false, x: at.x, y: at.y, width: w, height: h, useContentSize: true, frame: false, skipTaskbar: true,
-      webPreferences: { partition: 'persist:web', offscreen: { useSharedTexture: true, deviceScaleFactor: d.scaleFactor || 1 },
+      webPreferences: { partition: PART, offscreen: { useSharedTexture: true, deviceScaleFactor: d.scaleFactor || 1 },
         nodeIntegration: false, nodeIntegrationInSubFrames: true, contextIsolation: true, sandbox: true, backgroundThrottling: false,
         additionalArguments: ['--drift-offscreen'] } });       // (surf-select.js looks for it)
-    win.setAlwaysOnTop(true, 'screen-saver');
+    if (!headless) win.setAlwaysOnTop(true, 'screen-saver');       // (the hub's pages have no boxes to show: surf-hub-guard.js)
     win.setFullScreenable(false);       // a page going full screen fills its own picture, not a hidden window
     // Windows makes a new window as big as a whole monitor a little narrower than asked (1920 wide came out 1872), which put bars
     // beside the page on 16:9 monitors. Sized again once it exists, it takes the size asked for.
@@ -563,17 +698,19 @@ module.exports = function createWeb(hooks) {
     fit(); win.webContents.once('did-finish-load', fit);
     const page = win.webContents;
     page.drift = true;
-    page.setFrameRate(Math.max(30, Math.min(240, Math.round(d.displayFrequency) || 60)));
+    page.setFrameRate(headless ? 30 : Math.max(30, Math.min(240, Math.round(d.displayFrequency) || 60)));
     page.on('will-navigate', (e, u) => { if (!isPage(u)) e.preventDefault(); });
     page.on('paint', (e) => { const tex = e.texture; if (tex) paint(t, page, tex); });
     page.on('cursor-changed', (_e, type) => { if (t.wc === page && t.id === active) cursor(type); });
-    bind(t, page, hw.webContents);
+    bind(t, page, hw ? hw.webContents : null);
     painting();
   }
   // Only the tab in front draws; showing it again draws it at once.
+  // (The hub's browser draws only while a window of this PC shows it: its capture pulls frames by itself, spike S1 found, and
+  // with nobody watching and no window showing it, it draws nothing.)
   function painting() {
     if (!gpu) return;
-    for (const t of tabs) if (live(t) && t.wc.drift) { if (t.id === active) repaint(t.wc); else t.wc.stopPainting(); }
+    for (const t of tabs) if (live(t) && t.wc.drift) { if (t.id === active && (!headless || viewers.size)) repaint(t.wc); else t.wc.stopPainting(); }
   }
   // A new frame now, even of a page that is standing still. (invalidate() isn't enough: on a still page its paint comes without a
   // texture. Stopping and starting painting again gives a whole new frame.)
@@ -600,8 +737,8 @@ module.exports = function createWeb(hooks) {
   }
   // A Drift window starts (or stops) drawing the page. It gets a frame straight away.
   function viewer(wc, yes) {
-    if (!yes) { viewers.delete(wc); return; }
-    if (!viewers.has(wc)) { viewers.add(wc); wc.once('destroyed', () => viewers.delete(wc)); }
+    if (!yes) { viewers.delete(wc); if (headless && !viewers.size) painting(); return; }
+    if (!viewers.has(wc)) { viewers.add(wc); wc.once('destroyed', () => { viewers.delete(wc); if (headless && !viewers.size) painting(); }); }
     if (alive() && cur().wc.drift) repaint(cur().wc);
     if (lastCursor) wc.send('cmd', { type: 'web-cursor', c: lastCursor });
   }
@@ -615,5 +752,6 @@ module.exports = function createWeb(hooks) {
     for (const v of viewers) if (!v.isDestroyed()) v.send('cmd', { type: 'web-cursor', c });
   }
 
-  return { host, attached, act, show, hide, close, nav, shared, frame, source, input, info, blockChanged, forget, outside: goOutside, saved, restore, viewer, gpuChanged, resized };
+  return { host, attached, act, show, hide, close, nav, shared, frame, source, input, info, blockChanged, forget, outside: goOutside, saved, restore, viewer, gpuChanged, resized, gainChanged,
+    start, captureFrame, audioChanged, running: () => on, stop: () => { close(); if (lan) lan.close(); } };
 };

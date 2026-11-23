@@ -1,6 +1,7 @@
-// Calls between three real copies of Drift on this PC (each with its own DRIFT_USERDATA), pressing the real buttons:
-// the host's Drift runs the hub, the host starts a call, the guest joins, the third joins last. Each sends a steady
-// test tone instead of a microphone. Run once honestly, then once for each way a hostile hub can interfere
+// A hub's voice room with three real copies of Drift on this PC (each with its own DRIFT_USERDATA), pressing the real
+// buttons: the host's Drift runs the hub, the others join it. Opening the hub doesn't put anyone in voice: each presses
+// Join voice in the hub bar (listening, microphone closed), then Unmute, and sends a steady test tone instead of a
+// microphone, presses Mute, and (all but the host) Leave hub. Run once honestly, then once for each way a hostile hub can interfere
 // (DRIFT_HUB_TAMPER, aimed at what Third sends Guesty), and check what every copy saw:
 //   honest:   every pair connects through the hub's relay (relay -> relay), sound arrives, and the DTLS certificate each
 //             side really used is the one its signed SDP promised. Every lock says verified.
@@ -46,11 +47,21 @@ function check(mode, R) {
       continue;
     }
     ok(me.call.verdict[other] === 'verified', `${mode}: ${pair} verified (signature checked, certificate matches)`);
+    ok(me.before && me.before.peers[other] && me.before.peers[other].state === 'connected', `${mode}: ${pair} connected while both were only listening (a small room pre-connects)`);
+    ok(me.before && me.before.peers[other] && !(me.before.peers[other].bytesOut > 0), `${mode}: ${pair} sent no sound before Talk (${me.before && me.before.peers[other] && me.before.peers[other].bytesOut} bytes)`);
     ok(t.state === 'connected', `${mode}: ${pair} connected`);
     ok(t.path === 'relay -> relay', `${mode}: ${pair} goes through the hub's relay (${t.path})`);
     ok(!!t.dtls && (t.signed || '').split('\n').includes(t.dtls), `${mode}: ${pair} the DTLS certificate is the signed one`);
     ok(t.bytesIn > 2000 && t.level > 0.05, `${mode}: ${pair} sound arrives (${t.bytesIn} bytes, level ${t.level})`);
-    ok(/^Verified/.test(me.panel.locks[R[b].name] || ''), `${mode}: ${label(a)}'s panel shows a lock on ${label(b)}`);
+    ok(/^Verified/.test(me.panel.locks[R[b].name] || me.panel.locks[R[b].name + ' (you)'] || ''), `${mode}: ${label(a)}'s panel shows a lock on ${label(b)}`);
+  }
+  for (const r of ROLES) {
+    const b = R[r].before || {};
+    ok(b.micOpens === 0 && !b.mic && R[r].lightBefore === 'closed', `${mode}: ${label(r)} never opened the microphone before pressing Talk (opened ${b.micOpens} times, light ${R[r].lightBefore})`);
+    ok(R[r].notInVoiceAtFirst === true, `${mode}: ${label(r)} wasn't in voice on opening the hub, until pressing Join voice`);
+    ok(R[r].trayBefore && /Unmute/.test(R[r].barBefore || '') && /Leave voice/.test(R[r].barBefore || ''), `${mode}: ${label(r)} had the tray light, Unmute and Leave voice while only listening ("${R[r].barBefore}")`);
+    ok(R[r].test && R[r].test.micOpens === 1 && R[r].lightTalking === 'live', `${mode}: ${label(r)} pressed Talk: the microphone opened once and the light went red`);
+    if (r !== 'host') ok(R[r].disconnected === true, `${mode}: ${label(r)} pressed Leave hub: the voice window and tray light went, and the hub shows as away`);
   }
   if (target) {
     const g = R.guest, th = R.third;
@@ -58,14 +69,14 @@ function check(mode, R) {
     ok(g.panel.warns.includes('Couldn\'t verify Third. The hub may be interfering.'), `${mode}: Guesty sees "Couldn't verify Third. The hub may be interfering."`);
     ok(th.call.told.includes(id.guest), `${mode}: Third's Drift is told Guesty couldn't verify it`);
     ok(th.panel.warns.some((w) => /Guesty couldn't verify your connection/.test(w)), `${mode}: Third sees that Guesty couldn't verify it`);
-    ok(!/^🔒 End-to-end encrypted/.test(g.panel.note) && !/^🔒 End-to-end encrypted/.test(th.panel.note), `${mode}: neither says the whole call is end-to-end encrypted ("${g.panel.note}")`);
-    ok(/^🔒 End-to-end encrypted in calls of up to 8/.test(R.host.panel.note), `${mode}: the host, whose connections are all verified, does`);
+    ok(!/^🔒 End-to-end encrypted/.test(g.panel.note) && !/^🔒 End-to-end encrypted/.test(th.panel.note), `${mode}: neither says the whole room is end-to-end encrypted ("${g.panel.note}")`);
+    ok(/^🔒 End-to-end encrypted/.test(R.host.panel.note), `${mode}: the host, whose connections are all verified, does`);
     if (mode === 'swapkey') ok(g.suspect.some((s) => s.id === id.third) && g.panel.warns.some((w) => /sent a key for Third/.test(w)), `${mode}: Guesty is told the hub sent a key for Third that isn't theirs`);
   } else {
-    for (const r of ROLES) ok(/^🔒 End-to-end encrypted in calls of up to 8/.test(R[r].panel.note), `${mode}: ${label(r)}'s panel says "${R[r].panel.note}"`);
-    for (const r of ROLES) ok(/🔒/.test(R[r].panel.bar) && /Leave/.test(R[r].panel.bar), `${mode}: ${label(r)} has the call bar, with a lock ("${R[r].panel.bar}")`);
-    for (const r of ROLES) ok(Object.values(R[r].heard).every(Boolean), `${mode}: ${label(r)} counts everyone talking in the call as heard (so their typing stays out of the overlay)`);
-    for (const r of ROLES) ok(R[r].mutedReported && R[r].lightAfterMute === 'open', `${mode}: ${label(r)} mutes: the hub hears of it and the light goes grey`);
+    for (const r of ROLES) ok(/^🔒 End-to-end encrypted/.test(R[r].panel.note), `${mode}: ${label(r)}'s panel says "${R[r].panel.note}"`);
+    for (const r of ROLES) ok(/🔒/.test(R[r].panel.bar) && /Mute/.test(R[r].panel.bar) && /Leave voice/.test(R[r].panel.bar) && /Leave hub/.test(R[r].panel.bar) && R[r].panel.hot, `${mode}: ${label(r)} has the hub bar, with a lock, Mute, Leave voice and Leave hub, kept bright while the mic is open ("${R[r].panel.bar}")`);
+    for (const r of ROLES) ok(Object.values(R[r].heard).every(Boolean), `${mode}: ${label(r)} counts everyone talking in the room as heard (so their typing stays out of the overlay)`);
+    for (const r of ROLES) ok(R[r].closedReported && R[r].lightAfterMute === 'closed' && R[r].afterMute && !R[r].afterMute.mic, `${mode}: ${label(r)} presses Mute: the microphone closes, the hub hears of it and the light goes grey`);
     const relay = R.host.relay;
     ok(relay && relay.allocations >= 6 && relay.packetsIn > 100 && relay.dropped === 0, `${mode}: the hub's relay carried the call (${relay && relay.allocations} allocations, ${relay && relay.packetsIn} packets, ${relay && relay.dropped} dropped)`);
   }

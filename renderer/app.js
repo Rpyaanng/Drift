@@ -20,6 +20,7 @@
   // The cats: main.js decides which screen each one is on (they wander, get shooed, and gather); this shows the ones on this
   // screen. catAt[k] is cat k's screen.
   const CAT_MAX = 12;
+  const CAT_NAMES = ['Miso', 'Pebble', 'Biscuit', 'Mochi', 'Juniper', 'Tofu', 'Pickle', 'Clover', 'Noodle', 'Saffron', 'Ziggy', 'Marble'];       // one each, never shared
   const catCount = () => (S.catsUnlocked ? Math.max(1, Math.min(CAT_MAX, Math.round(+S.catCount || 3))) : 1);       // one cat, till "meow" is typed in Settings
   let catAt = Array.isArray(init.cats) ? init.cats : [];
 
@@ -270,8 +271,14 @@
   const theirMusic = () => ((S.p2p || {}).role === 'guest' && S.p2p.music) || null;
   const hostMusic = (what) => api.cmd({ type: 'share-music', do: what });
   const volIsSpotify = () => ctx() === 'spotify';
-  const volNow = () => (volIsVideo() ? S.video.volume : volIsSpotify() ? ((S.spotify || {}).vol || 0) : S.music.volume);
-  const volIsVideo = () => (ctx() === 'video' ? true : ctx() === 'music' || ctx() === 'spotify' ? false : videoOn() && S.video.sound);
+  const volIsSurf = () => ctx() === 'surf';       // on Surf: the browser's pages, all of them (the mixer's Surf level)
+  const volNow = () => (volIsSurf() ? S.mixer.surf : volIsVideo() ? S.video.volume : volIsSpotify() ? ((S.spotify || {}).vol || 0) : S.music.volume);
+  // the volume mixer (the toolbar's speaker): master scales all of Drift's own sound; surf is the pages' (see web.js and surf-volume.js)
+  const mixMaster = () => (S.mixer.mute ? 0 : S.mixer.master);
+  const mixSurf = () => (S.mixer.surfMute ? 0 : mixMaster() * S.mixer.surf);
+  const mixVideo = () => (S.mixer.mediaMute ? 0 : mixMaster() * S.video.volume);       // a video plays at the Media level
+  const musicIsMedia = () => (theirMusic() ? theirMusic().src === 'files' : S.music.source === 'files');       // music from the Media tab, not Ambient
+  const volIsVideo = () => (ctx() === 'video' ? true : ctx() === 'music' ? musicIsMedia() : ctx() === 'spotify' ? false : videoOn() && S.video.sound);       // (the Media level: video.volume)
   // A video this screen can't show as it is (HDR on an SDR screen, a codec the player lacks, a smaller copy from a friend's PC)
   // arrives converted, as a live stream that begins at S.xc.start. A stream can't be searched: every jump is a new stream.
   const useX = () => { const x = S.xc || {}; return !!x.base && (x.all || (x.sdr && !myHdr())); };
@@ -294,7 +301,7 @@
     video.loop = !xOn && S.video.files.length === 1 && S.video.autoplay !== false;
     const converted = !xOn && S.videoAudio && S.videoAudio.mode === 'transcode' && !!S.audioBase;      // a converted stream carries its own sound
     video.muted = !(lead && S.video.sound) || converted;
-    video.volume = S.video.volume;
+    video.volume = mixVideo();
     // Fit: Auto keeps the whole picture when its shape doesn't match the screen (vertical phone video), and fills when it nearly does.
     const spanIt = S.mode === 'span';
     const ta = spanIt ? me.union.width / me.union.height : innerWidth / innerHeight;
@@ -361,7 +368,7 @@
   video.addEventListener('seeked', () => { vaHold = 0; syncVideo(); });       // the picture jumped: the sound may follow straight away
   function syncSound(want) {
     if (!want) { if (vaUrl) { vaUrl = ''; vaud.pause(); vaud.removeAttribute('src'); vaud.load(); } return; }
-    vaud.volume = S.video.volume;
+    vaud.volume = mixVideo();
     // Not until the picture is where it is going. On start the video is still at 0 until its length is known and it jumps to where
     // it was left: a stream asked for then began at the start of the video, and stayed wrong for the 4 s before it could be asked again.
     if (video.readyState < 1 || video.seeking) { if (!vaud.paused) vaud.pause(); return; }
@@ -480,8 +487,20 @@
       out.push(row.appendChild(t.firstElementChild));
     }
     out.forEach((c, k) => { c.classList.add('coCat'); c.style.animationDelay = `0s, ${(.7 + (k * 1.1) % 3.6).toFixed(1)}s`; });       // they breathe out of step
+    // each has its own name (the same cat k on every screen), shown in a little tag above it while the mouse is on it
+    const tag = document.createElement('span'); tag.id = 'coCatTag'; row.append(tag);
+    out.forEach((c, k) => {
+      c.dataset.name = CAT_NAMES[k]; c.removeAttribute('aria-hidden'); c.setAttribute('role', 'img'); c.setAttribute('aria-label', CAT_NAMES[k]);
+      c.addEventListener('mouseenter', () => {
+        tag.textContent = CAT_NAMES[k]; tag.dataset.for = k;
+        tag.style.left = Math.round((parseFloat(c.style.getPropertyValue('--cat-x')) || 0) + (c.getBoundingClientRect().width || 33) / 2) + 'px';
+        tag.classList.add('on');
+      });
+      c.addEventListener('mouseleave', () => tag.classList.remove('on'));
+    });
     return out;
   })();
+  const catTagOff = (k) => { const t = $('#coCatTag'); if (t.dataset.for === String(k)) t.classList.remove('on'); };
   let catWas = '';
   // spread the cats on this screen at random along the edge, never overlapping (called again when the overlay moves: lift in chat.js)
   // where along the edge the cats can sit (the panel's top while it shows, else the bottom of the screen), and a free spot on it
@@ -510,6 +529,7 @@
   });
   function scatterCats() {       // the edge moved (lift in chat.js): every cat here takes a new spot on it
     const here = catEls.filter((c) => c.classList.contains('here') && !c.classList.contains('leaving'));
+    $('#coCatTag').classList.remove('on');
     here.forEach((c) => c.style.removeProperty('--cat-x'));
     here.forEach((c) => { c.classList.remove('here'); });
     here.forEach((c) => { c.classList.add('here'); placeCat(c); });
@@ -541,8 +561,8 @@
       const was = catWas.split(','); catWas = catKey;
       catEls.forEach((c, k) => {
         if (catsHere[k]) { c.classList.remove('leaving'); if (!c.classList.contains('here')) { c.classList.add('here'); placeCat(c); } }
-        else if (c.classList.contains('here') && was[k] === 'true' && S.cat && k < catCount()) fadeOff(c);
-        else c.classList.remove('here', 'leaving');
+        else if (c.classList.contains('here') && was[k] === 'true' && S.cat && k < catCount()) { fadeOff(c); catTagOff(k); }
+        else { c.classList.remove('here', 'leaving'); catTagOff(k); }
       });
     }
     coEl.classList.toggle('cat', catEls.some((c) => c.classList.contains('here')));       // (one fading away still counts, till it's gone)
@@ -616,7 +636,7 @@
   let hideTimer = null, overPanel = false;
   // After the monitors change, the windows are made again: carry on with the tab this screen was on. Surf if the browser is here;
   // Surf's tab without its browser (that monitor went off and the browser moved) falls back to Scenes.
-  const TAB_IDS = ['scenes', 'media', 'surf', 'share', 'settings'];
+  const TAB_IDS = ['scenes', 'media', 'surf', 'share', 'broadcast', 'settings'];
   const webHere = () => { const w = S.web || {}; return !!w.open && w.key === me.key; };
   let tab = webHere() ? 'surf' : TAB_IDS.includes(init.tab) && init.tab !== 'surf' ? init.tab : 'scenes';
   const tileHtml = (s) => { const i = SCENES.indexOf(s); return `<button class="tile" data-id="${s.id}"><i class="rot" role="checkbox" aria-checked="true" title="Include in automatic scene changes"></i><kbd>${i < 9 ? i + 1 : ''}</kbd><span>${s.name}</span></button>`; };
@@ -638,7 +658,7 @@
     if (panel.classList.contains('open')) makeThumbs();
     armHide();
   }
-  function hidePanel() { panel.classList.remove('show'); document.body.classList.add('idle'); }
+  function hidePanel() { panel.classList.remove('show'); document.body.classList.add('idle'); $('#mixer').classList.remove('open'); $('#mixBtn').classList.remove('lit'); }
   function armHide() {
     clearTimeout(hideTimer);
     hideTimer = setTimeout(() => { if (overPanel || document.activeElement?.tagName === 'SELECT' || document.activeElement?.tagName === 'TEXTAREA') armHide(); else hidePanel(); }, 3500);       // (not while choosing from a list or typing a message)
@@ -654,15 +674,16 @@
   // The browser belongs to the Surf tab. Choosing Surf shows it on this screen, opening a first tab on Drift's start page if there is
   // none yet. Choosing Scenes or Media on its screen puts it away (its tabs are kept) so they can be seen. Together and Settings leave it be.
   function surfFor(t) {
-    const w = S.web || {}, p = S.p2p || {};
+    const w = S.web || {};
     if (t === 'surf') {
       if (w.has) { if (!w.open) surf('show'); else if (w.key !== me.key) surf('move'); }
-      else if (p.role === 'guest') toast(`When ${p.host || 'your friend'} opens a web page, you see it here`, 3200);
       else surf('new');
     }
-    else if (t !== 'settings' && t !== 'share' && w.open && w.key === me.key) surf('hide');
-    else if (t !== 'settings' && t !== 'share' && (mirEl || (gpuEl && !gpuEl.own))) api.patch({ surfMirror: false });       // on a monitor mirroring the page: Scenes or Media is what was asked for here
+    else if (!SIDE_TABS.includes(t) && w.open && w.key === me.key) surf('hide');
+    else if (!SIDE_TABS.includes(t) && (mirEl || (gpuEl && !gpuEl.own))) api.patch({ surfMirror: false });       // on a monitor mirroring the page: Scenes or Media is what was asked for here
   }
+  const SIDE_TABS = ['settings', 'share', 'broadcast'];       // tabs that leave the browser where it is
+  window.appUI = { tab: () => tab, setTab: (t) => { if (panel.classList.contains('open')) setTab(t); else { tab = t; tellTab(); syncUI(); } }, open: () => panel.classList.contains('open'), key: me.key };       // (a closed panel stays closed)       // (broadcast.js: its tab comes and goes)
   panel.addEventListener('mouseenter', () => { overPanel = true; });
   panel.addEventListener('mouseleave', () => { overPanel = false; armHide(); });
   let lastMove = [0, 0];
@@ -671,7 +692,8 @@
     if (Math.abs(e.screenX - lastMove[0]) + Math.abs(e.screenY - lastMove[1]) < 4) return;   // ignore jitter
     lastMove = [e.screenX, e.screenY]; showPanel();
   });
-  addEventListener('mousedown', (e) => { if (e.target === vidEl || e.target === mirEl || (gpuEl && e.target === gpuEl) || surfBar.contains(e.target)) return; if (!panel.contains(e.target) && !confirmEl.contains(e.target)) { if (panel.classList.contains('open')) { panel.classList.remove('open'); } else showPanel(); } });
+  // (the mixer belongs to the panel, though it is drawn apart from it)
+  addEventListener('mousedown', (e) => { if (e.target === vidEl || e.target === mirEl || (gpuEl && e.target === gpuEl) || surfBar.contains(e.target)) return; if (!panel.contains(e.target) && !confirmEl.contains(e.target) && !$('#mixer').contains(e.target)) { if (panel.classList.contains('open')) { panel.classList.remove('open'); } else showPanel(); } });
 
   const fill = (el) => el.style.setProperty('--fill', ((el.value - el.min) / (el.max - el.min)) * 100 + '%');
   const setVal = (el, v) => { if (document.activeElement !== el || el.tagName !== 'INPUT') { el.value = v; } if (el.type === 'range') fill(el); };
@@ -719,7 +741,10 @@
     $('#catCountRow').hidden = !S.catsUnlocked;
     $('#catName').textContent = S.catsUnlocked ? 'Summon the cats' : 'Summon the cat';
     for (const k of ['autoCycle', 'quality', 'fps']) $('#' + k).value = String(S[k]);
-    for (const k of ['cycleShuffle', 'clock', 'breathing', 'cat', 'keepAwake', 'onTop', 'autoUpdate', 'surfGpu']) $('#' + k).checked = !!S[k];
+    for (const k of ['cycleShuffle', 'clock', 'breathing', 'cat', 'keepAwake', 'onTop', 'autoUpdate', 'surfGpu', 'ambientYields']) $('#' + k).checked = !!S[k];
+    $('#hsCard').hidden = !S.hosting;       // the hub's Surf stream: its host's to set
+    if (S.hubSurf) { $('#hsNoDl').checked = !!S.hubSurf.noDownloads; if (document.activeElement !== $('#hsLan')) $('#hsLan').value = S.hubSurf.allowLan || ''; }
+    if (S.hubHeld && JSON.stringify(S.hubHeld.map((d) => d.id)) !== JSON.stringify(heldList.map((d) => d.id))) drawHeld(S.hubHeld);       // (a window that opened while one waits)
     syncUpdate();
     $('#shuffle').checked = !!S.music.shuffle;
     if (!(S.sleepAt > Date.now())) $('#sleep').value = '0';
@@ -745,10 +770,9 @@
       : va.mode === 'none' ? `Now playing: ${S.videoName}${from} — this file has no audio track.` : `Now playing: ${S.videoName}${from}${pp.own ? ' — playing your own copy of this file.' : ''}`;
     renderFolders(); markPlaying();
     panel.classList.toggle('hasvideo', videoOn()); panel.classList.toggle('surf', ctx() === 'surf');
-    $('#vsound').style.display = videoOn() || ctx() === 'video' ? '' : 'none';
-    $('#vsound').textContent = S.video.sound ? '🔊' : '🔇';
+    syncMixer();
     setVal($('#qvol'), volNow());
-    $('#qvol').title = volIsVideo() ? 'Video volume' : !volIsSpotify() ? 'Music volume' : sp.volMode === 'app' ? 'Spotify volume' : sp.volMode === 'system' ? 'PC volume (Spotify is not playing yet)' : 'Spotify volume is not available';
+    $('#qvol').title = volIsSurf() ? 'Surf volume (every web page)' : volIsVideo() ? 'Media volume (videos and your music)' : !volIsSpotify() ? 'Ambient volume (music and nature sounds)' : sp.volMode === 'app' ? 'Spotify volume' : sp.volMode === 'system' ? 'PC volume (Spotify is not playing yet)' : 'Spotify volume is not available';
     const c = ctx();
     $('#ctxTag').textContent = { scene: 'Scene', video: 'Video', music: 'Music', surf: 'Surf', spotify: 'Spotify' }[c];
     $('#play').style.display = c === 'surf' ? 'none' : '';
@@ -769,6 +793,7 @@
   // ---------- a web page on this screen (watching a web page together): main's web.js loads and steers it ----------
   const webEls = new Map(), surfBar = $('#surfBar'), surfEdge = $('#surfEdge');       // one <webview> for each of the browser's tabs
   let webEl = null, webGen = 0, capSid = '';       // webEl: the tab in front
+  let heldList = [], heldTick = 0;       // downloads on the hub's Surf stream waiting for this PC (its host): drawHeld
   let gpuEl = null;       // the canvas a page drawn offscreen is drawn in (web.js), here on its own monitor (gpuEl.own) or mirroring it
   const pageEl = () => webEl || (gpuEl && gpuEl.own ? gpuEl : null);       // what stands for our own page on this screen, for friends' capture
   const edgeHint = () => { if (!init.testMode) toast('Mouse to the top edge for tabs and the address  ·  to the bottom edge for Drift’s controls', 7000); };
@@ -782,10 +807,12 @@
   }
   addEventListener('resize', () => { for (const el of webEls.values()) fitPage(el, (S.web || {}).page); });
   function syncWeb() {
-    const w = S.web || {}, here = !!w.open && w.key === me.key, pages = here && !w.stream && !w.gpu, live = (S.p2p || {}).status === 'connected';
+    const w = S.web || {}, here = !!w.open && w.key === me.key, live = !!w.live;       // live: a hub's Surf stream is running (renderer/surf-stream.js on the host's PC)
+    const parked = !here && !!w.parked && w.parked === me.key;       // put away on this screen: its pages stay loaded, out of sight (web.js hide)
+    const pages = (here || parked) && !w.stream && !w.gpu;
     if (webEls.size && (!pages || w.gen !== webGen)) { for (const el of webEls.values()) el.remove(); webEls.clear(); webEl = null; dropPeers(); }
     if (pages) {
-      const first = !webEls.size, was = webEl;
+      const first = !webEls.size && here, was = webEl;
       webGen = w.gen;
       for (const [id, el] of webEls) if (!(w.tabs || []).some((t) => t.id === id)) { el.remove(); webEls.delete(id); }
       for (const t of w.tabs || []) {
@@ -797,7 +824,8 @@
         document.body.insertBefore(el, $('#webEdge'));
         webEls.set(t.id, el);
       }
-      webEl = webEls.get(w.active) || null;
+      webEl = here ? webEls.get(w.active) || null : null;
+      if (parked && was && document.activeElement === was) { was.blur(); window.focus(); }       // a hidden page keeps no keys
       for (const el of webEls.values()) { el.classList.toggle('on', el === webEl); fitPage(el, w.page); }
       if (webEl && webEl !== was && !surfBar.contains(document.activeElement) && !panel.contains(document.activeElement)) { try { webEl.focus(); } catch { /* not ready to take the keys yet */ } }
       if (first) { edgeHint(); surfPeek(); }
@@ -812,12 +840,17 @@
     if (mirEl && !mirror) { mirHangUp(); mirEl.remove(); mirEl = null; msid = ''; }
     if (mirror && !mirEl) makeMirrorView();
     if (mirEl && w.sid !== msid) { msid = w.sid; mirAsk(); }       // a new page, or another tab came to the front
-    if (vidEl && !(here && w.stream)) { vidEl.meEl.remove(); vidEl.remove(); vidEl = null; hangUp(); gsid = ''; }
-    if (here && w.stream && !vidEl) { makeStreamView(); edgeHint(); surfPeek(); }
+    // (a hub's Surf stream put away on this screen, Scenes or Media chosen: its picture goes, its sound plays on, decision §11.1)
+    const streamHere = !!w.stream && (here || w.parked === me.key);
+    if (vidEl && !streamHere) { vidEl.meEl.remove(); vidEl.remove(); vidEl = null; hangUp(); gsid = ''; }
+    if (streamHere && !vidEl) { makeStreamView(); if (here) { edgeHint(); surfPeek(); } }
+    if (vidEl) { const was = vidEl.classList.contains('parked'); vidEl.classList.toggle('parked', !here); if (was && here) { edgeHint(); surfPeek(); vidEl.focus(); } else if (!here && document.activeElement === vidEl) { vidEl.blur(); window.focus(); } }
+    if (vidEl) vidEl.volume = mixSurf();       // the Surf stream: the mixer's Surf level here (it keeps playing on other tabs: decision §11.1)
     if (vidEl && live && (w.sid !== gsid || !gLive)) { gsid = w.sid; ask(); }       // a new page, or the connection came back
     gLive = live;
-    document.body.classList.toggle('web', !!webEls.size || !!vidEl || !!mirEl || !!gpuEl);
-    document.body.classList.toggle('surfing', (here && (!w.stream || !!(S.p2p || {}).ctrl)) || mirroring);       // the bar is for whoever may steer the browser
+    document.body.classList.toggle('web', (here && !!webEls.size) || (!!vidEl && here) || !!mirEl || !!gpuEl);
+    document.body.classList.toggle('surfing', here || mirroring);       // the bar: everyone can steer a hub's Surf stream
+    syncSsLine(w, here);
     if (!here && !mirroring) surfBar.classList.remove('show');
     syncSurfBar();
   }
@@ -992,34 +1025,306 @@
     else if (d.type === 'ice' && d.c) { if (pc.remoteDescription) await pc.addIceCandidate(d.c); else pc.early.push(d.c); }
   }
 
-  // -- watching: the friend's page is a video here, and this PC's mouse and keyboard over it are sent back --
-  let vidEl = null, gpc = null, gsid = '', gLive = false, gAsked = 0, gGood = 0;
-  function hangUp() { if (gpc) { const pc = gpc; gpc = null; pc.close(); } if (vidEl) vidEl.srcObject = null; }
-  function ask() { hangUp(); gAsked = Date.now(); signal({ type: 'want', sid: gsid }); }
-  setInterval(() => {       // no picture for a while (their capture restarted, the route failed…): ask again
+  // -- watching a hub's Surf stream (docs/plans/streams.md §4): the host's browser is a video here, and this PC's mouse, keyboard and
+  // Surf bar go back over the connection's data channel. Set up from SDPs main.js passes on once chat.js has checked them; this
+  // window's answer goes back to be signed. Relayed through the hub unless "Connect directly" is on. Once connected, the
+  // certificate the host really used goes to chat.js to be checked against the one they signed. --
+  let vidEl = null, gpc = null, gdc = null, gsid = '', gLive = false, gAsked = 0, gGood = 0, gCert = null;
+  function hangUp() { if (gpc) { const pc = gpc; gpc = null; gdc = null; pc.close(); api.cmd({ type: 'ss', do: 'state', state: '' }); } if (vidEl) vidEl.srcObject = null; }
+  function ask() { hangUp(); gAsked = Date.now(); api.cmd({ type: 'surf', do: 'want' }); }
+  setInterval(() => {       // no picture for a while (the host's capture restarted, the route failed…): ask again
     if (!vidEl || !gLive) return;
     const now = Date.now();
     if (gpc && gpc.connectionState === 'connected') gGood = now; else if (now - Math.max(gAsked, gGood) > 6000) ask();
   }, 2000);
-  async function rtcGuest(d) {
+  async function ssCert(pc, tries = 0) {
+    const st = await pc.getStats().catch(() => null);
+    for (const x of st ? st.values() : []) {
+      if (x.type !== 'transport' || !x.remoteCertificateId) continue;
+      const c = st.get(x.remoteCertificateId);
+      if (c) { api.cmd({ type: 'ss', do: 'cert', alg: c.fingerprintAlgorithm, fp: c.fingerprint }); return; }
+    }
+    // Over a relay, now and then the certificate the host used never shows in the stats. A connection that can't be checked isn't kept:
+    // after 10 s it's dropped, and this screen asks again (a fresh connection, which has shown it every time).
+    if (tries < 40) { if (gpc === pc) setTimeout(() => ssCert(pc, tries + 1), 250); return; }
+    if (gpc === pc) { console.log('surf stream: the host\'s certificate never showed: asking again'); ask(); }
+  }
+  async function ssRtc(d) {
+    if (d.type === 'bye') { hangUp(); return; }
     if (!vidEl) return;
     if (d.type === 'offer') {
-      if (d.sid !== gsid) return;
       hangUp();
-      const pc = gpc = new RTCPeerConnection(rtcConf(!!d.stun));
+      if (!gCert) gCert = RTCPeerConnection.generateCertificate({ name: 'ECDSA', namedCurve: 'P-256' });       // fresh each time this window starts watching
+      const cert = await gCert;
+      const pc = gpc = new RTCPeerConnection({ iceServers: Array.isArray(d.iceServers) ? d.iceServers : [], iceTransportPolicy: d.policy === 'all' ? 'all' : 'relay', certificates: [cert] });
       pc.ontrack = (e) => {
         if (gpc !== pc || !vidEl) return;
         try { e.receiver.jitterBufferTarget = 0; } catch { /* older Chromium */ }       // as little delay as the network allows: clicks should feel close
         if (vidEl.srcObject !== e.streams[0]) vidEl.srcObject = e.streams[0];
       };
-      pc.onicecandidate = (e) => { if (e.candidate) signal({ type: 'ice', c: e.candidate.toJSON() }); };
+      pc.ondatachannel = (e) => {
+        if (gpc !== pc) return;
+        const dc = gdc = e.channel;
+        dc.onopen = () => { if (gdc === dc) dc.send(JSON.stringify({ t: 'hello' })); };
+        dc.onmessage = (ev) => { if (gdc !== dc || typeof ev.data !== 'string' || ev.data.length > 65536) return; let m = null; try { m = JSON.parse(ev.data); } catch { return; } api.cmd({ type: 'ss', do: 'dc', m }); };
+      };
+      pc.onicecandidate = (e) => { if (e.candidate && gpc === pc) api.cmd({ type: 'ss', do: 'signal', d: { c: e.candidate.toJSON() } }); };
+      pc.onconnectionstatechange = () => { if (gpc !== pc) return; api.cmd({ type: 'ss', do: 'state', state: pc.connectionState }); if (pc.connectionState === 'connected') ssCert(pc); };
       pc.setRemoteDescription({ type: 'offer', sdp: String(d.sdp) }).catch(() => {});       // candidates that follow wait their turn behind this
       const ans = await pc.createAnswer();
       await pc.setLocalDescription({ type: 'answer', sdp: stereo(ans.sdp) });
-      if (gpc === pc) signal({ type: 'answer', sdp: pc.localDescription.sdp });
-    } else if (d.type === 'ice' && d.c && gpc) await gpc.addIceCandidate(d.c);
+      if (gpc === pc) api.cmd({ type: 'ss', do: 'signal', d: { sdp: { type: 'answer', sdp: pc.localDescription.sdp } } });
+    } else if (d.type === 'ice' && d.c && gpc) await gpc.addIceCandidate(d.c).catch(() => {});
   }
-  const onRtc = (c) => { if (!c.d || typeof c.d !== 'object') return; (c.local ? rtcMirror(c.d) : c.from ? rtcHost(c.from, c.d) : rtcGuest(c.d)).catch((e) => console.log('stream set-up: ' + e.message)); };
+  // To the host, over the data channel: this PC's mouse and keys over the picture, the Surf bar, where the pointer is (main.js sends them here)
+  const ssSend = (m) => { if (gdc && gdc.readyState === 'open') { try { gdc.send(JSON.stringify(m)); } catch { /* closing */ } } };
+  window.ssTest = async () => {       // (for main.js's checks)
+    const r = { video: vidEl ? vidEl.videoWidth + 'x' + vidEl.videoHeight : '', state: gpc ? gpc.connectionState : '', dc: gdc ? gdc.readyState : '', framesIn: 0, audioIn: 0 };
+    const st = gpc ? await gpc.getStats() : new Map();
+    for (const x of st.values()) {
+      if (x.type === 'inbound-rtp' && x.kind === 'video') { r.framesIn = x.framesDecoded; r.bytesIn = x.bytesReceived; }
+      if (x.type === 'inbound-rtp' && x.kind === 'audio') r.audioIn = x.bytesReceived;
+      if (x.type === 'transport') { const pair = st.get(x.selectedCandidatePairId); if (pair) { const l = st.get(pair.localCandidateId), rc = st.get(pair.remoteCandidateId); r.path = `${l && l.candidateType} -> ${rc && rc.candidateType}`; } }
+    }
+    return r;
+  };
+  // -- watching a broadcast (docs/plans/broadcast.md §6): its own full-screen Broadcast view on the monitor picked in the
+  // Broadcast tab. The picture is set up from SDPs main.js passes on once chat.js has checked them, and this window's
+  // answer goes back to be signed. Relayed through the hub unless "Connect directly" is on. Once connected, the
+  // certificate the broadcaster really used goes to chat.js to be checked against the one they signed. A slim bar along
+  // the top switches to someone else's broadcast, turns "Share my cursor" on or off (off until you turn it on, for each
+  // broadcast), and stops watching. Your cursor only ever goes to the broadcaster while it's on, and is only a picture
+  // there: nothing you do over the view clicks or types anything on their PC. --
+  const bcEl = $('#bcView'), bcVid = $('#bcVideo'), bcBarEl = $('#bcBar'), bcNoteEl = $('#bcNote'), bcPtrBox = $('#bcPtrs');
+  let bcPc = null, bcDc = null, bcCertP = null, bcAsked = 0, bcGood = 0, bcOn = false, bcKey = '', bcEarly = [], bcGen = 0;
+  // The certificate the other end really used. Over a relay, Chromium's stats now and then never list it, so the DTLS
+  // transport is asked directly too (its DER certificate, hashed as the SDP's fingerprint is: SHA-256).
+  async function remotePrint(pc) {
+    const st = await pc.getStats().catch(() => null);
+    for (const x of st ? st.values() : []) {
+      if (x.type !== 'transport' || !x.remoteCertificateId) continue;
+      const c = st.get(x.remoteCertificateId);
+      if (c) return { alg: c.fingerprintAlgorithm, fp: c.fingerprint };
+    }
+    const t = ((pc.getReceivers()[0] || pc.getSenders()[0] || {}).transport) || (pc.sctp && pc.sctp.transport);
+    const der = t && t.state === 'connected' && t.getRemoteCertificates ? t.getRemoteCertificates() : [];
+    if (!der.length) return null;
+    const h = new Uint8Array(await crypto.subtle.digest('SHA-256', der[0]));
+    return { alg: 'sha-256', fp: [...h].map((b) => b.toString(16).padStart(2, '0').toUpperCase()).join(':') };
+  }
+  const bcCmd = (d, more) => api.cmd({ type: 'bc', do: d, ...more });
+  function bcHang() { bcVidRx = null; if (bcPc) { const pc = bcPc; bcPc = null; bcDc = null; pc.close(); bcCmd('state', { state: '' }); } bcVid.srcObject = null; bcDrawPtrs([]); }
+  function bcAsk() { console.log(`broadcast: no picture (${bcPc ? bcPc.connectionState : "no connection"}): asking again`); bcHang(); bcAsked = Date.now(); bcCmd('want'); }
+  setInterval(() => {       // no picture for a while (the monitors changed, the route failed…): ask again
+    if (!bcOn) return;
+    const now = Date.now();
+    if (bcPc && bcPc.connectionState === 'connected') bcGood = now; else if (now - Math.max(bcAsked, bcGood) > 6000) bcAsk();
+  }, 2000);
+  async function bcCheckCert(pc, tries = 0) {
+    const c = await remotePrint(pc);
+    if (c) { if (bcPc === pc) bcCmd('cert', c); return; }
+    if (tries < 40) { if (bcPc === pc) setTimeout(() => bcCheckCert(pc, tries + 1), 250); return; }
+    if (bcPc === pc) bcAsk();       // a connection that can't be checked isn't kept
+  }
+  async function bcRtc(d) {
+    if (d.type === 'bye') { bcHang(); return; }
+    if (!bcOn) return;
+    if (d.type === 'offer') {
+      bcHang();
+      const gen = ++bcGen;
+      bcEarly = [];       // its candidates come right behind it: held until the connection is ready for them
+      if (!bcCertP) bcCertP = RTCPeerConnection.generateCertificate({ name: 'ECDSA', namedCurve: 'P-256' });       // fresh each time this window starts watching
+      const cert = await bcCertP;
+      if (gen !== bcGen) return;       // a newer offer came while waiting
+      const pc = bcPc = new RTCPeerConnection({ iceServers: Array.isArray(d.iceServers) ? d.iceServers : [], iceTransportPolicy: d.policy === 'all' ? 'all' : 'relay', certificates: [cert], bundlePolicy: 'max-bundle' });
+      pc.ontrack = (e) => {
+        if (bcPc !== pc) return;
+        if (e.track.kind === 'video') { bcVidRx = e.receiver; bcSoundSync(); }
+        if (bcVid.srcObject !== e.streams[0]) bcVid.srcObject = e.streams[0];
+      };
+      pc.ondatachannel = (e) => {
+        if (bcPc !== pc) return;
+        const dc = bcDc = e.channel;
+        dc.onmessage = (ev) => { if (bcDc !== dc || typeof ev.data !== 'string' || ev.data.length > 8192) return; let m = null; try { m = JSON.parse(ev.data); } catch { return; } bcCmd('dc', { m }); };
+      };
+      pc.onicecandidate = (e) => { if (e.candidate && bcPc === pc) bcCmd('signal', { d: { c: e.candidate.toJSON() } }); };
+      pc.onconnectionstatechange = () => { if (bcPc !== pc) return; bcCmd('state', { state: pc.connectionState }); if (pc.connectionState === 'connected') bcCheckCert(pc); };
+      await pc.setRemoteDescription({ type: 'offer', sdp: String(d.sdp) });
+      for (const c of bcEarly.splice(0)) pc.addIceCandidate(c).catch(() => {});
+      const ans = await pc.createAnswer();
+      await pc.setLocalDescription({ type: 'answer', sdp: bcStereo(ans.sdp) });       // (the answer is signed as set, by chat.js)
+      if (bcPc === pc) bcCmd('signal', { d: { sdp: { type: 'answer', sdp: pc.localDescription.sdp } } });
+    } else if (d.type === 'ice' && d.c) {
+      if (bcPc && bcPc.remoteDescription) await bcPc.addIceCandidate(d.c).catch(() => {}); else bcEarly.push(d.c);
+    }
+  }
+  // A broadcast's sound is music and games, not a voice: ask for stereo Opus at a music bitrate (the receiver's fmtp is
+  // what tells the sender it may send stereo).
+  function bcStereo(sdp) {
+    const pt = (/^a=rtpmap:(\d+) opus\/48000/mi.exec(sdp) || [])[1];
+    if (!pt) return sdp;
+    return sdp.replace(new RegExp(`^(a=fmtp:${pt} )([^\r\n]*)`, 'm'), (_m, a, b) => a + b.split(';').filter((x) => !/^(stereo|sprop-stereo|maxaveragebitrate)=/.test(x)).concat(['stereo=1', 'sprop-stereo=1', 'maxaveragebitrate=128000']).join(';'));
+  }
+  // Its sound plays from the view itself, at the volume set for that person's broadcasts (apart from their voice) and
+  // Drift's master volume. Off for a broadcast without sound.
+  // The sound comes through the broadcaster's helper and arrives about 70–90 ms after the picture (spike A: av-sync.js),
+  // so while there's sound the picture is held back 100 ms to match. Without sound it isn't, so nothing is later than it must be.
+  const BC_AV_MS = 100;
+  let bcVidRx = null;
+  function bcSoundSync() {
+    const v = S.bcView, on = !!(bcOn && v && v.audio);
+    bcVid.muted = !on;
+    if (on) bcVid.volume = Math.max(0, Math.min(1, +v.vol || 0));
+    if (bcVidRx && 'jitterBufferTarget' in bcVidRx) { const want = on ? BC_AV_MS : null; if (bcVidRx.jitterBufferTarget !== want) { try { bcVidRx.jitterBufferTarget = want; } catch { /* closing */ } } }
+  }
+  const bcSend = (m) => { if (bcDc && bcDc.readyState === 'open') { try { bcDc.send(JSON.stringify(m)); } catch { /* closing */ } } };
+  // where the picture is on this screen (it's letterboxed), and the mouse as fractions of the video frame
+  function bcBox() {
+    const vw = bcVid.videoWidth, vh = bcVid.videoHeight;
+    if (!vw || !vh) return null;
+    const r = bcVid.getBoundingClientRect(), k = Math.min(r.width / vw, r.height / vh), w = vw * k, h = vh * k;
+    return { l: r.left + (r.width - w) / 2, t: r.top + (r.height - h) / 2, w, h };
+  }
+  const bcAt = (e) => { const b = bcBox(); if (!b) return null; const x = (e.clientX - b.l) / b.w, y = (e.clientY - b.t) / b.h; return x >= 0 && x <= 1 && y >= 0 && y <= 1 ? { x, y } : null; };
+  let bcPtrAt = 0, bcPtrSent = false, bcPingAt = 0;
+  const bcSharing = () => !!(S.bcView && S.bcView.share);
+  function bcPoint(e) {
+    if (!bcSharing()) return;
+    const q = e && bcAt(e);
+    if (!q) { if (bcPtrSent) { bcSend({ t: 'ptr', gone: true }); bcPtrSent = false; } return; }
+    if (Date.now() - bcPtrAt < 33) return;       // at most 30 a second
+    bcPtrAt = Date.now(); bcPtrSent = true;
+    bcSend({ t: 'ptr', x: +q.x.toFixed(4), y: +q.y.toFixed(4) });
+  }
+  let bcBarTimer = null;
+  const bcBarShow = () => { bcBarEl.classList.add('show'); clearTimeout(bcBarTimer); bcBarTimer = setTimeout(() => { if (!bcBarEl.matches(':hover')) bcBarEl.classList.remove('show'); }, 2600); };
+  bcVid.addEventListener('mousemove', (e) => { bcBarShow(); bcPoint(e); });
+  bcVid.addEventListener('mouseleave', () => bcPoint(null));
+  bcVid.addEventListener('mousedown', (e) => {       // a "look here" ripple where you click, at most one a second (only while sharing your cursor)
+    if (!bcSharing() || e.button !== 0) return;
+    const q = bcAt(e); if (!q || Date.now() - bcPingAt < 1000) return;
+    bcPingAt = Date.now();
+    bcSend({ t: 'ping', x: +q.x.toFixed(4), y: +q.y.toFixed(4) });
+    bcRipple({ x: q.x, y: q.y, name: myPtrName() });
+  });
+  bcBarEl.addEventListener('mouseleave', () => bcBarShow());
+  const myPtrName = () => String((S.share || {}).name || (S.p2p || {}).defaultName || '').replace(/[\x00-\x1f<>]/g, '').trim().slice(0, 24) || 'You';
+  // everyone else's pointers over the picture (the broadcaster passes on those who share theirs; main.js names them)
+  const bcPtrEls = new Map();
+  function bcDrawPtrs(list) {
+    const box = bcBox(), now = Date.now();
+    if (!box) list = [];
+    for (const [id, q] of bcPtrEls) if (!list.some((x) => x.id === id)) { q.el.remove(); bcPtrEls.delete(id); }
+    for (const x of list) {
+      let q = bcPtrEls.get(x.id);
+      if (!q) { const el = document.createElement('div'); el.className = 'ptr'; el.innerHTML = PTR; bcPtrBox.appendChild(el); bcPtrEls.set(x.id, q = { el, x: -1, y: -1, at: now }); }
+      q.el.style.setProperty('--c', ptrColor(x.name)); q.el.lastChild.textContent = x.name;
+      if (q.x !== x.x || q.y !== x.y) { q.x = x.x; q.y = x.y; q.at = now; }
+      q.el.style.left = (box.l + x.x * box.w).toFixed(1) + 'px'; q.el.style.top = (box.t + x.y * box.h).toFixed(1) + 'px';
+      q.el.classList.toggle('idle', now - q.at > 6000);
+    }
+  }
+  setInterval(() => { for (const q of bcPtrEls.values()) q.el.classList.toggle('idle', Date.now() - q.at > 6000); }, 1000);
+  function bcRipple(p) {
+    const box = bcBox(); if (!box) return;
+    const r = document.createElement('div'); r.className = 'bcPing';
+    r.style.setProperty('--c', ptrColor(p.name));
+    r.style.left = (box.l + p.x * box.w).toFixed(1) + 'px'; r.style.top = (box.t + p.y * box.h).toFixed(1) + 'px';
+    bcPtrBox.appendChild(r); setTimeout(() => r.remove(), 1200);
+  }
+  // The view comes and goes with main.js's word (S.bcView), on the monitor it names.
+  let bcBarKey = '';
+  function syncBcView() {
+    const v = S.bcView, here = !!(v && v.key === me.key);
+    if (here !== bcOn) {
+      bcOn = here;
+      document.body.classList.toggle('bc', here);
+      if (here) { bcAsked = Date.now(); bcBarShow(); } else { bcHang(); bcKey = ''; bcBarKey = ''; }
+    }
+    bcSoundSync();
+    if (!here) return;
+    if (v.bc !== bcKey) { bcKey = v.bc; bcHang(); bcAsked = Date.now(); }       // another broadcast: its offer is on its way
+    if (!v.share && bcPtrSent) { bcSend({ t: 'ptr', gone: true }); bcPtrSent = false; }
+    bcNoteEl.textContent = v.bad ? `Couldn't check that this broadcast is really from ${v.who}. The hub may be interfering.`
+      : v.paused ? `${v.who} paused the broadcast` : v.stalled ? `${v.who}'s picture stopped (the window may be minimised)` : v.state !== 'connected' ? `Connecting to ${v.who}…` : '';
+    bcNoteEl.classList.toggle('on', !!bcNoteEl.textContent);
+    const k = JSON.stringify([v.bc, v.who, v.title, v.share, v.verdict, v.others, v.audio]);
+    const slider = bcBarEl.querySelector('.bcVol input');
+    if (slider && document.activeElement !== slider) slider.value = Math.round((+v.level || 0) * 100);
+    if (k === bcBarKey) return;
+    bcBarKey = k;
+    const b = (cls, text, title, fn) => { const el = document.createElement('button'); el.className = cls; el.textContent = text; el.title = title; el.addEventListener('click', fn); return el; };
+    const where = document.createElement('span'); where.className = 'bcWho';
+    const dot = document.createElement('span'); dot.className = 'spdot';
+    const lock = document.createElement('span'); lock.className = 'lock' + (v.verdict === 'verified' ? ' ok' : ''); lock.textContent = v.verdict === 'verified' ? '🔒' : '';
+    lock.title = v.verdict === 'verified' ? `End-to-end encrypted, and checked that it's really from ${v.who}` : '';
+    where.append(dot, lock, `${v.who} · ${v.title || (v.kind === 'window' ? 'A window' : 'A screen')}`);
+    where.title = 'The name of what they show is what they called it: the hub passes it on and can\'t vouch for it';
+    const share = b('bcBtn' + (v.share ? ' on' : ''), v.share ? 'Sharing my cursor' : 'Share my cursor',
+      v.share ? `${v.who} and everyone watching see your cursor over the picture. Click to stop` : `Let ${v.who} and everyone watching see where your cursor is over the picture. It's only a picture: you can't click or type anything on their PC`,
+      () => bcCmd('cursor', { on: !v.share }));
+    share.setAttribute('aria-pressed', v.share ? 'true' : 'false');
+    const vol = v.audio ? document.createElement('label') : null;
+    if (vol) {
+      vol.className = 'bcVol'; vol.title = `The sound of ${v.who}'s broadcast (their voice has its own volume, in Together)`;
+      const r = Object.assign(document.createElement('input'), { type: 'range', min: 0, max: 100, step: 1, value: Math.round((+v.level || 0) * 100) });
+      r.setAttribute('aria-label', `Volume of ${v.who}'s broadcast`);
+      r.addEventListener('input', () => api.patch({ voice: { volumes: { ['bc:' + v.from]: +r.value / 100 } } }));
+      vol.append('🔊', r);
+    }
+    const others = (v.others || []).map((o) => b('bcBtn', `${o.who} · ${o.title}`, `Watch ${o.who}'s broadcast instead`, () => bcCmd('switch', { id: o.id })));
+    const sep = others.length ? Object.assign(document.createElement('span'), { className: 'bcSep', textContent: 'Also live:' }) : null;
+    bcBarEl.replaceChildren(...[where, vol, share, sep, ...others, b('bcBtn stop', 'Stop watching', 'Stop watching (Esc)', () => bcCmd('stop'))].filter(Boolean));
+  }
+  addEventListener('keydown', (e) => { if (bcOn && e.key === 'Escape' && !panel.classList.contains('open')) { e.preventDefault(); e.stopImmediatePropagation(); bcCmd('stop'); } }, true);
+  window.bcTest = async () => {       // (for main.js's checks)
+    const r = { on: bcOn, video: bcVid.videoWidth + 'x' + bcVid.videoHeight, state: bcPc ? bcPc.connectionState : '', dc: bcDc ? bcDc.readyState : '', framesIn: 0, ptrs: [...bcPtrEls.keys()], bar: bcBarEl.innerText.replace(/\n+/g, ' | '), note: bcNoteEl.textContent };
+    const st = bcPc ? await bcPc.getStats() : new Map();
+    for (const x of st.values()) {
+      if (x.type === 'inbound-rtp' && x.kind === 'video') { r.framesIn = x.framesDecoded; r.bytesIn = x.bytesReceived; }
+      if (x.type === 'inbound-rtp' && x.kind === 'audio') { r.audioIn = x.bytesReceived; r.audioLevel = x.audioLevel || 0; }
+      if (x.type === 'transport') { const pair = st.get(x.selectedCandidatePairId); if (pair) { const l = st.get(pair.localCandidateId), rc = st.get(pair.remoteCandidateId); r.path = `${l && l.candidateType} -> ${rc && rc.candidateType}`; } }
+    }
+    r.muted = bcVid.muted; r.volume = +bcVid.volume.toFixed(3); r.avDelay = bcVidRx ? bcVidRx.jitterBufferTarget : null;
+    if (bcPc && bcPc.localDescription) r.stereo = /stereo=1/.test(bcPc.localDescription.sdp);
+    const rp = bcPc && await remotePrint(bcPc); if (rp) r.dtls = `a=fingerprint:${rp.alg} ${rp.fp}`.toLowerCase();
+    if (bcPc && bcPc.remoteDescription) r.signed = (bcPc.remoteDescription.sdp.match(/^a=fingerprint:[^\r\n]*/gm) || []).join('\n').toLowerCase();
+    return r;
+  };
+  let bcTone = null;
+  window.bcTestTone = async (hz) => {       // how loud one frequency is in the broadcast's sound, in dB (for the sound checks)
+    const st = bcVid.srcObject;
+    if (!st || !st.getAudioTracks().length) return null;
+    if (!bcTone || bcTone.st !== st) {
+      const ac = new AudioContext(), an = ac.createAnalyser(); an.fftSize = 8192; an.smoothingTimeConstant = 0;
+      ac.createMediaStreamSource(st).connect(an);
+      bcTone = { st, ac, an };
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    const { ac, an } = bcTone, f = new Float32Array(an.frequencyBinCount);
+    if (ac.state !== 'running') await ac.resume().catch(() => {});
+    an.getFloatFrequencyData(f);
+    const i = Math.round((hz / ac.sampleRate) * an.fftSize);
+    return Math.max(f[i - 1], f[i], f[i + 1]);
+  };
+  window.bcTestPoint =       // a mouse at fractions of the picture, as the real mousemove handler sends it (for the pointer checks)
+    (x, y) => { const b = bcBox(); if (!b) return false; const e = { clientX: b.l + x * b.w, clientY: b.t + y * b.h }; bcPtrAt = 0; bcPoint(e); return true; };
+
+  // The line along the top while the Surf tab is a hub's Surf stream: whose it is, that everyone can steer it, and who's watching
+  let ssLineKey = '';
+  function syncSsLine(w, here) {
+    const el = $('#ssLine'), on = here && !!w.hub;
+    el.classList.toggle('on', on);
+    if (!on) { ssLineKey = ''; return; }
+    const ids = (w.watchers || []).slice(0, 8), k = JSON.stringify([w.hubId, w.hubName, ids, w.waiting, w.note]);
+    if (k === ssLineKey) return;
+    ssLineKey = k;
+    const ui = window.chatUI, faces = ids.map((id) => (ui ? ui.face(w.hubId, id, '.small') : null)).filter(Boolean);
+    const text = document.createElement('span');
+    text.textContent = w.note || (w.waiting ? `Surf stream · ${w.hubName} · starting…` : `Surf stream · ${w.hubName} · everyone can control`);
+    el.replaceChildren(text, ...faces);
+  }
+  const onRtc = (c) => { if (!c.d || typeof c.d !== 'object') return; (c.local ? rtcMirror(c.d) : c.from ? rtcHost(c.from, c.d) : Promise.resolve()).catch((e) => console.log('stream set-up: ' + e.message)); };
 
   // -- mirroring: this PC's own page, held in the window of another monitor, shown here too. It comes over a WebRTC connection
   // between the two windows (on this PC only), fed by the same single capture friends get. Its sound stays on the page's monitor.
@@ -1106,9 +1411,8 @@
     const v = vidEl = document.createElement('video');
     v.id = 'webStream'; v.autoplay = true; v.playsInline = true; v.tabIndex = 0;
     document.body.insertBefore(v, $('#webEdge'));
-    const may = () => !!(S.p2p || {}).ctrl;
-    let told = 0;
-    const refuse = () => { if (Date.now() - told > 8000) { told = Date.now(); toast(`Only ${(S.p2p || {}).host || 'the host'} can control this page`); } };
+    const may = () => true;       // a hub's Surf stream has no owner and no lock: everyone online can steer it
+    const refuse = () => {};
     // where on the page the mouse is, as fractions of its width and height (the picture may have bars beside it)
     const at = (e) => {
       const r = v.getBoundingClientRect(), vw = v.videoWidth, vh = v.videoHeight;
@@ -1153,7 +1457,7 @@
   const QNAME = { original: 'Original', 1080: '1080p', 720: '720p', 480: '480p' };
   function syncShareUI() {
     const p = S.p2p || { role: 'off', peers: [] }, sh = S.share || {}, peers = p.peers || [], n = peers.length;
-    $('#shOff').style.display = p.role === 'off' ? '' : 'none';
+    $('#shBox').style.display = p.role === 'off' && !p.note ? 'none' : '';       // (nothing to show until something is shared: picking it shares it)
     $('#shHost').style.display = p.role === 'host' ? '' : 'none';
     $('#shGuest').style.display = p.role === 'guest' ? '' : 'none';
     $('.tabs button[data-tab="share"]').classList.toggle('live', p.role !== 'off');
@@ -1464,7 +1768,7 @@
   $('#volume').addEventListener('input', (e) => { fill(e.target); P({ music: { volume: +e.target.value } }); });
   $$('[data-nature]').forEach((x) => x.addEventListener('input', () => { fill(x); P({ music: { nature: { [x.dataset.nature]: +x.value } } }); }));
   for (const k of ['autoCycle', 'quality', 'fps']) $('#' + k).addEventListener('change', (e) => P({ [k]: +e.target.value }));
-  for (const k of ['cycleShuffle', 'clock', 'breathing', 'cat', 'keepAwake', 'onTop', 'autoUpdate', 'surfGpu']) $('#' + k).addEventListener('change', (e) => P({ [k]: e.target.checked }));
+  for (const k of ['cycleShuffle', 'clock', 'breathing', 'cat', 'keepAwake', 'onTop', 'autoUpdate', 'surfGpu', 'ambientYields']) $('#' + k).addEventListener('change', (e) => P({ [k]: e.target.checked }));
   $('#shuffle').addEventListener('change', (e) => P({ music: { shuffle: e.target.checked } }));
   // Settings → Updates: what the updater is doing, and the one button that does the next thing
   function syncUpdate() {
@@ -1491,7 +1795,6 @@
   $('#sleep').addEventListener('change', (e) => P({ sleepAt: +e.target.value ? Date.now() + +e.target.value * 60000 : 0 }));
   $('#pickVideo').addEventListener('click', () => api.cmd({ type: 'pick-video', key: me.key }));
   for (const [id, k] of [['#vHdr', 'hdr'], ['#vTone', 'tone'], ['#vEnc', 'enc'], ['#vXq', 'xq']]) $(id).addEventListener('change', (e) => P({ video: { [k]: e.target.value } }));
-  $('#shStart').addEventListener('click', () => api.cmd({ type: 'share-start', hub: window.chatUI ? window.chatUI.hub() : '' }));       // into the hub open in the chat
   $('#shStop').addEventListener('click', () => api.cmd({ type: 'share-stop' }));
   $('#shLeave').addEventListener('click', () => api.cmd({ type: 'share-stop' }));
   $('#shName').addEventListener('change', (e) => P({ share: { name: e.target.value.trim() } }));
@@ -1516,9 +1819,75 @@
     else api.cmd({ type: 'play-videos', files: lib.videos.map((v) => v.path), index: +t.dataset.i, key: me.key });
   });
   $('#vcrumb').addEventListener('click', (e) => { if (e.target.closest('button') && lib && lib.parent) openDir(lib.parent); });
-  const setVol = (v) => { if (volIsSpotify()) { if ((S.spotify || {}).volMode) { S.spotify.vol = v; api.cmd({ type: 'spotify-volume', value: v }); } } else P(volIsVideo() ? { video: { volume: v } } : { music: { volume: v } }); };
+  const setVol = (v) => { if (volIsSurf()) P({ mixer: { surf: v, ...(v > 0 ? { surfMute: false } : {}) } }); else if (volIsSpotify()) { if ((S.spotify || {}).volMode) { S.spotify.vol = v; api.cmd({ type: 'spotify-volume', value: v }); } } else P(volIsVideo() ? { video: { volume: v } } : { music: { volume: v } }); };
   $('#qvol').addEventListener('input', (e) => { fill(e.target); setVol(+e.target.value); });
-  $('#vsound').addEventListener('click', () => P({ video: { sound: !S.video.sound } }));
+
+  // ---------- the volume mixer: the toolbar's speaker opens it, a row for each of Drift's sounds, as Windows' own mixer ----------
+  // Clicking a row's icon mutes it. Drift's row scales all the others but Spotify, which is Spotify's own volume.
+  const svg = (d) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+  const SPK = '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill="currentColor" stroke="none"/>';
+  const speaker = (v) => svg(SPK + (v <= 0 ? '<path d="M16 9.5l5 5M21 9.5l-5 5"/>' : (v > 0.02 ? '<path d="M15.5 9.2a4 4 0 0 1 0 5.6"/>' : '') + (v > 0.5 ? '<path d="M18.3 6.6a7.6 7.6 0 0 1 0 10.8"/>' : '')));
+  const MIX = [
+    { id: 'master', name: 'Drift', label: 'Drift', note: 'Everything Drift plays', icon: () => speaker(mixMaster()), get: () => S.mixer.master, muted: () => S.mixer.mute,
+      set: (v) => P({ mixer: { master: v, ...(v > 0 ? { mute: false } : {}) } }), mute: () => P({ mixer: { mute: !S.mixer.mute } }) },
+    { id: 'ambient', name: 'Ambient (music and nature sounds)', label: 'Ambient', icon: () => svg('<path d="M4 15.5a4 4 0 0 1 1.6-7.7 5.5 5.5 0 0 1 10.6 1.2A3.5 3.5 0 0 1 17.5 16H6"/><path d="M8 19.5l-.8 1.5M12 19.5l-.8 1.5M16 19.5l-.8 1.5"/>'),
+      get: () => S.music.volume, muted: () => S.mixer.ambientMute,
+      set: (v) => P({ music: { volume: v }, ...(v > 0 && S.mixer.ambientMute ? { mixer: { ambientMute: false } } : {}) }), mute: () => P({ mixer: { ambientMute: !S.mixer.ambientMute } }) },
+    { id: 'media', name: 'Media (videos and your music)', label: 'Media', icon: () => svg('<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M10 9.2v5.6l4.8-2.8z" fill="currentColor"/>'),
+      get: () => S.video.volume, muted: () => S.mixer.mediaMute,
+      set: (v) => P({ video: { volume: v }, ...(v > 0 && S.mixer.mediaMute ? { mixer: { mediaMute: false } } : {}) }), mute: () => P({ mixer: { mediaMute: !S.mixer.mediaMute } }) },
+    { id: 'surf', name: 'Surf (every web page)', label: 'Surf', icon: () => svg('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.6 3.8 5.6 3.8 9s-1.2 6.4-3.8 9c-2.6-2.6-3.8-5.6-3.8-9s1.2-6.4 3.8-9z"/>'), get: () => S.mixer.surf, muted: () => S.mixer.surfMute,
+      set: (v) => P({ mixer: { surf: v, ...(v > 0 ? { surfMute: false } : {}) } }), mute: () => P({ mixer: { surfMute: !S.mixer.surfMute } }) },
+    { id: 'spotify', name: 'Spotify', label: 'Spotify', icon: () => svg('<circle cx="12" cy="12" r="9" fill="#1ed760" stroke="none"/><path d="M7.5 9.6c3-.9 6.4-.6 9 .9M8 12.6c2.4-.7 5-.4 7.2.8M8.5 15.3c1.9-.5 3.8-.3 5.5.6" stroke="#0b0d13" stroke-width="1.5"/>'),
+      show: () => !!(S.spotify || {}).volMode, get: () => (S.spotify || {}).vol || 0, muted: () => false, nomute: true,
+      set: (v) => { S.spotify.vol = v; api.cmd({ type: 'spotify-volume', value: v }); } },
+  ];
+  const mixEl = $('#mixer'), mixBtn = $('#mixBtn');
+  for (const r of MIX) {
+    const row = document.createElement('div');
+    row.className = 'mixRow' + (r.id === 'master' ? ' master' : ''); row.dataset.id = r.id;
+    row.title = r.name;
+    row.innerHTML = `<button class="mixIco"></button><div class="mixMain"><div class="mixTop"><b>${r.label}</b>${r.note ? `<em>${r.note}</em>` : ''}<output></output></div><input type="range" min="0" max="1" step="0.01" aria-label="${r.name} volume"></div>`;
+    const ico = row.querySelector('.mixIco'), sl = row.querySelector('input'), out = row.querySelector('output');
+    if (r.nomute) ico.disabled = true; else ico.addEventListener('click', () => r.mute());
+    sl.addEventListener('input', () => { fill(sl); out.textContent = Math.round(sl.value * 100) + '%'; r.set(+sl.value); });
+    Object.assign(r, { row, ico, sl, out });
+    $('#mixRows').append(row);
+  }
+  function syncMixer() {
+    const v = mixMaster();
+    mixBtn.innerHTML = speaker(v);
+    mixBtn.title = S.mixer.mute ? 'Volume mixer (Drift is muted)' : `Volume mixer (Drift ${Math.round(v * 100)}%)`;
+    for (const r of MIX) {
+      r.row.style.display = !r.show || r.show() ? '' : 'none';
+      const off = r.muted();
+      r.ico.innerHTML = r.icon(); r.ico.classList.toggle('muted', off);
+      r.ico.title = r.nomute ? `${r.name} (its own volume)` : `${off ? 'Unmute' : 'Mute'} ${r.name}`;
+      r.row.classList.toggle('off', off);
+      setVal(r.sl, r.get()); if (document.activeElement !== r.sl) r.out.textContent = Math.round(r.get() * 100) + '%';
+    }
+    placeMixer();       // (rows come and go: Spotify's)
+  }
+  // Drawn over everything (not inside the panel, whose blur would show through it): placed above the speaker, its right edge
+  // in line with the volume slider's, and kept on screen
+  function placeMixer() {
+    if (!mixEl.classList.contains('open')) return;
+    const b = mixBtn.getBoundingClientRect(), q = $('#qvol').getBoundingClientRect(), w = mixEl.offsetWidth, h = mixEl.offsetHeight;
+    const right = Math.max(b.right, q.right);
+    mixEl.style.left = Math.round(Math.max(8, Math.min(innerWidth - w - 8, right - w))) + 'px';
+    mixEl.style.top = Math.round(Math.max(8, b.top - 12 - h)) + 'px';
+  }
+  const mixOpen = (on) => { mixEl.classList.toggle('open', on); mixBtn.classList.toggle('lit', on); mixBtn.setAttribute('aria-expanded', String(on)); if (on) { syncMixer(); placeMixer(); } };
+  addEventListener('resize', placeMixer);
+  panel.addEventListener('transitionend', placeMixer);       // (the panel slides a little as it comes up)
+  mixEl.addEventListener('mouseenter', () => { overPanel = true; });       // over the mixer is over the panel: it stays up
+  mixEl.addEventListener('mouseleave', () => { overPanel = false; armHide(); });
+  mixBtn.addEventListener('click', () => mixOpen(!mixEl.classList.contains('open')));
+  addEventListener('mousedown', (e) => { if (mixEl.classList.contains('open') && !mixEl.contains(e.target) && !mixBtn.contains(e.target)) mixOpen(false); }, true);
+  mixEl.addEventListener('keydown', (e) => {       // its keys are its own: arrows move a slider, not the toolbar's volume
+    if (e.key === 'Escape') { mixOpen(false); mixBtn.focus(); }
+    if (['Escape', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) e.stopPropagation();
+  });
   const seekEl = $('#seek');
   seekEl.addEventListener('pointerdown', () => { seeking = true; });
   seekEl.addEventListener('input', () => {
@@ -1564,6 +1933,10 @@
   $('#reset').addEventListener('click', () => api.cmd({ type: 'reset' }));
   // It signs you out everywhere in Surf, so the first click asks and a second click within a few seconds does it.
   let forgetArm = 0;
+  // Settings: the hub's Surf stream, for its host
+  $('#hsNoDl').addEventListener('change', (e) => api.patch({ hubSurf: { noDownloads: e.target.checked } }));
+  $('#hsLan').addEventListener('change', (e) => api.patch({ hubSurf: { allowLan: e.target.value } }));
+  $('#hsClear').addEventListener('click', () => api.cmd({ type: 'hub-surf-clear' }));
   $('#forgetSurf').addEventListener('click', (e) => {
     const b = e.currentTarget;
     if (Date.now() - forgetArm > 4000) {
@@ -1588,6 +1961,28 @@
     else api.cmd({ type: 'step-scene', dir });
   }
   let toastTimer;
+  // A download on the hub's Surf stream, waiting for the host (main.js "held downloads"): a row on every screen of the host's,
+  // whether or not they're in the hub. Only this PC's own windows ever get it; it's never sent over the hub.
+  // (heldList, heldTick: declared at the top)
+  const bytes = (n) => (n >= 1e9 ? (n / 1e9).toFixed(1) + ' GB' : n >= 1e6 ? Math.round(n / 1e6) + ' MB' : n >= 1e3 ? Math.round(n / 1e3) + ' KB' : n > 0 ? n + ' bytes' : '');
+  function drawHeld(list) {
+    heldList = list; clearTimeout(heldTick);
+    const box = $('#heldCard');
+    box.hidden = !list.length;
+    box.replaceChildren(...list.map((d) => {
+      const row = document.createElement('div'); row.className = 'hdRow';
+      const text = document.createElement('div'); text.className = 'hdText';
+      const b1 = document.createElement('b'), b2 = document.createElement('b');
+      b1.textContent = d.name; b2.textContent = d.site || 'a site';
+      text.append(`${d.who === 'You' ? 'You want' : (d.who || 'Someone') + ' wants'} to download `, b1, bytes(d.size) ? ` (${bytes(d.size)})` : '', ' from ', b2);
+      text.title = text.textContent + '. It saves to your Downloads folder.';
+      const left = document.createElement('span'); left.className = 'hdLeft'; left.textContent = Math.max(0, Math.ceil((d.until - Date.now()) / 1000)) + 's';
+      const btn = (label, save, cls) => { const x = document.createElement('button'); x.className = 'btn ' + cls; x.textContent = label; x.addEventListener('click', () => api.cmd({ type: 'hub-held', id: d.id, save })); return x; };
+      row.append(text, left, btn('Save', true, 'primary'), btn('Refuse', false, 'ghost'));
+      return row;
+    }));
+    if (list.length) heldTick = setTimeout(() => drawHeld(heldList), 1000);
+  }
   function toast(msg, ms = 2600) { const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('on'), ms); }
 
   let meow = '';
@@ -1655,7 +2050,7 @@
   // ---------- state sync ----------
   api.on('state', (ns) => {
     const prevPal = S.palette + (S.customColors || []).join('');
-    S = ns; resize(); syncWeb();
+    S = ns; resize(); syncWeb(); syncBcView();
     if (sceneFor(S) !== shown) setScene(sceneFor(S));
     syncVideo();
     syncSubs();
@@ -1675,6 +2070,12 @@
     else if (c.type === 'toast') { if (isCenter || panel.classList.contains('show')) toast(c.text, Math.max(3200, Math.min(9000, c.text.length * 70))); }     // one screen is enough
     else if (c.type === 'ask-quit') { if (confirmEl.classList.contains('on')) api.cmd({ type: 'quit' }); else askQuit(); }
     else if (c.type === 'rtc') onRtc(c);
+    else if (c.type === 'ss-rtc') { if (c.d && typeof c.d === 'object') ssRtc(c.d).catch((e) => console.log('Surf stream set-up: ' + e.message)); }
+    else if (c.type === 'ss-out') ssSend(c.m);
+    else if (c.type === 'bc-rtc') { if (c.d && typeof c.d === 'object') bcRtc(c.d).catch((e) => console.log('broadcast set-up: ' + e.message)); }
+    else if (c.type === 'bc-ptrs') bcDrawPtrs(Array.isArray(c.list) ? c.list : []);
+    else if (c.type === 'bc-ping') { if (c.p) bcRipple(c.p); }
+    else if (c.type === 'hub-held') drawHeld(Array.isArray(c.list) ? c.list : []);
     else if (c.type === 'web-cursor') { if (gpuEl && /^[a-z-]{1,24}$/.test(c.c)) gpuEl.style.cursor = c.c; }       // the pointer the offscreen page wants
     else if (c.type === 'cats') catAt = Array.isArray(c.at) ? c.at : [];
     else if (c.type === 'music-pos') musicPos = { t: +c.t || 0, d: +c.d || 0, at: performance.now() };
@@ -1686,7 +2087,7 @@
   hdrQuery.addEventListener('change', () => { tellHdr(); syncUI(); });
   tellHdr();
 
-  resize(); syncWeb(); syncUI(); syncSubs(); tellTab(); requestAnimationFrame(frame);
+  resize(); syncWeb(); syncBcView(); syncUI(); syncSubs(); tellTab(); requestAnimationFrame(frame);
   if (init.reopen && tab !== 'surf') { showPanel(true); syncUI(); }       // the window in use when the monitors changed: its panel is back where it was
   if (!R) toast('Your graphics driver has WebGL disabled — visuals cannot start.', 10000);
   else if (isCenter && !init.testMode) { toast('Move the mouse for controls  ·  Esc to exit', 5000); }

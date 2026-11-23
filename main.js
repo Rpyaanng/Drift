@@ -56,6 +56,11 @@ const DEFAULTS = {
   onTop: false,
   surfMirror: false,       // the Surf page shows on every other monitor too (see "mirroring" in renderer/app.js)
   surfGpu: false,          // Surf's pages are drawn offscreen and handed to the windows as textures on the graphics card (see web.js)
+  // the volume mixer (the toolbar's speaker): master scales all of Drift's own sound (ambient, media, Surf, voices); surf is the
+  // browser's pages; the mutes are its icons. Its Ambient level (generated music and nature sounds) is music.volume, its Media
+  // level (videos, and music from the Media tab) video.volume.
+  mixer: { master: 1, mute: false, surf: 1, surfMute: false, ambientMute: false, mediaMute: false },
+  ambientYields: true,     // the generated music pauses while a video or a Surf page plays sound (Settings), and carries on underneath when off
   autoUpdate: false,       // download a new release by itself and install it when Drift closes (new releases are looked for either way)
   sleepAt: 0,
   // hdr: auto = convert HDR videos to SDR on screens that aren't showing HDR | always | never; tone = how bright highlights are squeezed in;
@@ -65,9 +70,17 @@ const DEFAULTS = {
   // watch together: internet = ask the router to let friends outside the home in; control = friends may play / pause / seek;
   // wait = pause for everyone while someone is loading; quality = picture size sent to (and asked from) friends
   share: { name: '', internet: true, control: true, wait: true, quality: 'original', port: 47800, adblock: true, overlay: 'unheard' },       // overlay: whose chat messages go over the video (unheard / all / off)
-  // calls: direct = connect straight to the others (lower delay, but they see this PC's address) instead of through the
-  // hub's relay; ptt = hold a key to talk (pttKey, see VOICE_KEYS); volumes = each person's volume, by member id
-  voice: { direct: false, ptt: false, pttKey: 'backquote', muted: false, deaf: false, volumes: {} },
+  // voice: direct = connect straight to the others (lower delay, but they see this PC's address) instead of through the
+  // hub's relay; ptt = hold a key to talk (pttKey, see VOICE_KEYS); talk = your microphone is open (closed at every start
+  // unless keepMic); deaf = out of the voice room (set at every start; Join voice clears it); pin = the hub whose voice room you stay in ('' = whichever is open in
+  // Together); volumes = each person's volume, by member id
+  voice: { direct: false, ptt: false, pttKey: 'backquote', talk: false, keepMic: false, deaf: false, pin: '', volumes: {} },
+  // broadcast (docs/plans/broadcast.md §5): quality = auto | detail (text and detail) | motion (smooth); pointers = show
+  // viewers' pointers on this screen while live
+  broadcast: { quality: 'auto', pointers: true, sound: false },
+  // the Surf stream of the hub this PC hosts (docs/plans/streams.md): its tabs (kept with the hub they belong to), whether every
+  // download on it is refused, the local addresses it may open (surf-lan.js), and whether the host was told pages load from their connection
+  hubSurf: { hub: '', urls: [], active: 0, noDownloads: false, allowLan: [], told: false },
   // subtitles: on = show them when a video has some; perFile remembers the track and timing chosen for each video
   subs: { on: true, lang: 'en', size: 1, color: '#ffffff', bg: 'outline', lift: 0, perFile: {} },
   prevScene: 'aurora',
@@ -109,6 +122,10 @@ function loadSettings() {
     state.subs = { ...DEFAULTS.subs, ...(s.subs || {}) };
     state.share = cleanShare({ ...DEFAULTS.share, ...(s.share || {}) });
     state.voice = cleanVoice({ ...DEFAULTS.voice, ...(s.voice || {}) });
+    state.broadcast = cleanBroadcast({ ...DEFAULTS.broadcast, ...(s.broadcast || {}) });
+    state.hubSurf = cleanHubSurf({ ...DEFAULTS.hubSurf, ...(s.hubSurf && typeof s.hubSurf === 'object' ? s.hubSurf : {}) });
+    if (!state.voice.keepMic) state.voice.talk = false;       // nobody is ever live by surprise: the microphone starts closed
+    state.voice.deaf = true;       // and nobody is in a voice room by surprise either: Join voice puts you in
     if (!state.subs.perFile || typeof state.subs.perFile !== 'object' || Array.isArray(state.subs.perFile)) state.subs.perFile = {};
     state.video.files = (state.video.files || []).filter((p) => { try { return fs.existsSync(p); } catch { return false; } });
     state.video.index = Math.min(state.video.index || 0, Math.max(0, state.video.files.length - 1));
@@ -142,6 +159,7 @@ function loadSettings() {
     if (state.music.source === 'files' && !state.music.playlist.length) state.music.source = state.music.ambientOff ? 'off' : 'generative';
     if (state.music.source === 'files') state.music.playing = false;
     if (!state.surf || typeof state.surf !== 'object' || !Array.isArray(state.surf.urls)) state.surf = null;
+    state.mixer = cleanMixer({ ...DEFAULTS.mixer, ...(state.mixer && typeof state.mixer === 'object' ? state.mixer : {}) });
   } catch { /* first run */ }
 }
 const QUALITY = { original: { h: 0, kbps: 0 }, 1080: { h: 1080, kbps: 6000 }, 720: { h: 720, kbps: 3000 }, 480: { h: 480, kbps: 1200 } };
@@ -151,17 +169,28 @@ function cleanShare(q) {
 }
 const VOICE_KEYS = { backquote: 0xc0, rctrl: 0xa3, mouse4: 0x05, mouse5: 0x06 };       // hold-to-talk keys, as Windows virtual-key codes
 function cleanVoice(q) {
-  const vols = Object.entries(q.volumes && typeof q.volumes === 'object' ? q.volumes : {}).filter(([id, v]) => /^[A-Za-z0-9_-]{6,20}$/.test(id) && isFinite(v)).slice(-200);
-  return { direct: !!q.direct, ptt: !!q.ptt, pttKey: Object.hasOwn(VOICE_KEYS, q.pttKey) ? q.pttKey : 'backquote', muted: !!q.muted, deaf: !!q.deaf,
+  const vols = Object.entries(q.volumes && typeof q.volumes === 'object' ? q.volumes : {}).filter(([id, v]) => /^(bc:)?[A-Za-z0-9_-]{6,20}$/.test(id) && isFinite(v)).slice(-200);
+  return { direct: !!q.direct, ptt: !!q.ptt, pttKey: Object.hasOwn(VOICE_KEYS, q.pttKey) ? q.pttKey : 'backquote', talk: !!q.talk, keepMic: !!q.keepMic, deaf: !!q.deaf,
+    pin: /^[A-Za-z0-9_-]{20,64}$/.test(String(q.pin || '')) ? String(q.pin) : '',
     volumes: Object.fromEntries(vols.map(([id, v]) => [id, Math.max(0, Math.min(1, +v))])) };
 }
+const unitVol = (v, d) => (isFinite(v) && v !== null && v !== '' ? Math.max(0, Math.min(1, +v)) : d);
+const cleanMixer = (q) => ({ master: unitVol(q.master, 1), mute: !!q.mute, surf: unitVol(q.surf, 1), surfMute: !!q.surfMute, ambientMute: !!q.ambientMute, mediaMute: !!q.mediaMute });
+// What the mixer makes of Drift's own sound (master) and of the Surf pages' (surf)
+const mixGain = () => { const x = state.mixer, m = x.mute ? 0 : x.master; return { master: m, surf: x.surfMute ? 0 : m * x.surf }; };
+const cleanHubSurf = (q) => ({ hub: /^[A-Za-z0-9_-]{20,64}$/.test(String(q.hub || '')) ? String(q.hub) : '', urls: (Array.isArray(q.urls) ? q.urls : []).map(String).filter((u) => /^(https?:\/\/|drift:\/\/home\/)/i.test(u)).slice(0, 12),
+  active: Math.max(0, q.active | 0), noDownloads: !!q.noDownloads, told: !!q.told,
+  allowLan: (Array.isArray(q.allowLan) ? q.allowLan : String(q.allowLan || '').split(/[\s,]+/)).map((x) => String(x).trim().toLowerCase()).filter((x) => /^[a-z0-9.:[\]-]{1,80}$/.test(x)).slice(0, 20) });
+const cleanBroadcast = (q) => ({ quality: ['auto', 'detail', 'motion'].includes(q.quality) ? q.quality : 'auto', pointers: q.pointers !== false, sound: !!q.sound });
 function dropVideoScene() {
   if (state.scene === 'video') state.scene = 'aurora';
   for (const k of Object.keys(state.perDisplay)) if (state.perDisplay[k] === 'video') delete state.perDisplay[k];
 }
 // The browser's tabs are kept with the settings too (only while it is open), so it comes back next time.
 function saveNow() {
-  if (!remote) state.surf = web.saved();
+  state.surf = web.saved() || surfKept || null;       // (your own tabs, put away while you're online in a hub, count too)
+  const hs = hubWeb && hubWeb.saved(true);       // the hub's Surf stream keeps its tabs too, with the hub they belong to
+  if (hs) state.hubSurf = { ...state.hubSurf, hub: hubWebId, urls: hs.urls, active: hs.active };
   try { fs.writeFileSync(settingsFile, JSON.stringify(state, null, 1)); } catch { /* ignore */ }
 }
 function saveSoon() {
@@ -702,9 +731,9 @@ function publicState() {
     sceneFps: sceneFps(), screens: visWins.length, spotify: { ...spotify, lead: spotifyLead() }, videoAudio, videoInfo, audioBase: audioPort && c ? local(`/a?i=${c.index}`) : '',
     xc: { ...xc, ...xcWant(), base: xcBase() }, encoders: xcoder.list(), canTonemap: !xcoder.ready() || xcoder.canTonemap(),
     p2p: { ...p2p.info(), ctrl: !remote || !!remote.ctrl, own: !!(c && c.remote && c.path), viaHost: viaHost(), quality: shareQuality(), waitingFor: heldFor || [], defaultName: shareName(true), file: remote ? remote.file || '' : '', music: remote ? remote.music : null, chatHub: sessionHub(), lan: createP2P.localAddrs().find((a) => a.includes('.')) || '' },       // music: a friend's, playing here in place of ours; chatHub: the hub this session is in; lan: this PC's address on its network (Help)
-    // a friend's page arrives as a stream; our own is a page in one of our windows
     update: updater ? updater.info() : null,
-    web: remote ? { open: !!remote.web && streamShown, has: !!remote.web, stream: true, key: remote.web && streamShown ? screenFor(streamKey) : '', ...(remote.web || {}) } : web.info() };
+    // this PC's own browser, or a hub's Surf stream (here on the hub's host; a picture from the host's PC elsewhere)
+    web: surfView(), bcView: bcViewInfo(), hosting: !!(chat && chat.hostedHub()), hubHeld: heldView(), hubSurf: { noDownloads: state.hubSurf.noDownloads, allowLan: state.hubSurf.allowLan.join(', ') } };
 }
 function broadcast(channel, payload, includeAudio = true) {
   for (const v of visWins) if (!v.win.isDestroyed()) v.win.webContents.send(channel, payload);
@@ -714,11 +743,11 @@ function pushState() { broadcast('state', publicState()); p2p.sync(); syncLive()
 
 // ---- the cats (Summon the cats) --------------------------------------------------------------------
 // Where each cat is lives here, so every screen agrees. Now and then a cat wanders to another screen; opening or closing the
-// panel a cat sits on shoos it (most of the time) to another screen, or out of sight for a bit when there's no other; and every 20 minutes
+// panel a cat sits on shoos it (most of the time) to another screen Drift is showing on (with just one, it stays); and every 20 minutes
 // they all come back, one by one, to the middle screen and stay there a while. Not saved: they start somewhere new each run.
 const CAT_MAX = 12, CAT_TICK = 15 * 1000, CAT_WANDER = CAT_TICK / (5 * 60 * 1000), CAT_SHOO = 0.85;
 const CAT_GATHER_EVERY = 20 * 60 * 1000, CAT_GATHER_GAP = 3500, CAT_GATHER_STAY = 3 * 60 * 1000;
-let catAt = Array(CAT_MAX).fill(-1), catAway = Array(CAT_MAX).fill(0), catGatherAt = Date.now() + CAT_GATHER_EVERY, catStayTill = 0, catGathering = [];
+let catAt = Array(CAT_MAX).fill(-1), catGatherAt = Date.now() + CAT_GATHER_EVERY, catStayTill = 0, catGathering = [];
 const catPick = (xs) => xs[Math.floor(Math.random() * xs.length)];
 const catScreens = () => visWins.filter((v) => !v.win.isDestroyed()).map((v) => v.index);
 function catMiddle() {       // the middle screen from left to right; of two in the middle, the main one
@@ -734,7 +763,7 @@ function catGather() {
   const order = [...Array(CAT_MAX).keys()].sort(() => Math.random() - 0.5), shown = state.catsUnlocked ? Math.max(1, Math.min(CAT_MAX, Math.round(+state.catCount || 3))) : 1;
   const seen = order.filter((k) => k < shown), rest = order.filter((k) => k >= shown);       // the ones you can see come first, one at a time
   catStayTill = Date.now() + seen.length * CAT_GATHER_GAP + CAT_GATHER_STAY;
-  seen.forEach((k, i) => catGathering.push(setTimeout(() => { const m = catMiddle(); if (m >= 0 && catAt[k] !== m) { catAt[k] = m; catAway[k] = 0; catSend(); } }, (i + 1) * CAT_GATHER_GAP)));
+  seen.forEach((k, i) => catGathering.push(setTimeout(() => { const m = catMiddle(); if (m >= 0 && catAt[k] !== m) { catAt[k] = m; catSend(); } }, (i + 1) * CAT_GATHER_GAP)));
   const m = catMiddle(); for (const k of rest) catAt[k] = m;
 }
 function catTick() {
@@ -742,7 +771,6 @@ function catTick() {
   const now = Date.now(); let moved = false;
   if (!state.cat) { catGatherAt = now + CAT_GATHER_EVERY; return; }       // the clock to the next gathering runs while they're out
   for (let k = 0; k < CAT_MAX; k++) {
-    if (catAway[k]) { if (now < catAway[k]) continue; catAway[k] = 0; catAt[k] = catPick(on); moved = true; continue; }       // back from hiding
     if (!on.includes(catAt[k])) { catAt[k] = catPick(on); moved = true; continue; }       // new, or its screen went away
     if (now < catStayTill || on.length < 2) continue;
     if (Math.random() < CAT_WANDER) { catAt[k] = catPick(on.filter((i) => i !== catAt[k])); moved = true; }
@@ -752,16 +780,24 @@ function catTick() {
 }
 function catShoo(from) {       // every cat on that screen, each most likely
   const others = catScreens().filter((i) => i !== from); let moved = false;
+  if (!others.length) return;       // nowhere else Drift is showing: they stay, and just hop to new spots on the edge (scatterCats in app.js)
   for (let k = 0; k < CAT_MAX; k++) {
     if (catAt[k] !== from || Math.random() > CAT_SHOO) continue;
-    if (others.length) catAt[k] = catPick(others);
-    else { catAt[k] = -1; catAway[k] = Date.now() + 20000 + Math.random() * 40000; }       // nowhere else to go: off out of sight for a bit
-    moved = true;
+    catAt[k] = catPick(others); moved = true;
   }
   if (moved) catSend();
 }
+// The windows were rebuilt (a monitor turned off or on, or plugged in or out): a cat on a screen Drift no longer shows on would
+// sit out of sight there till the next tick, so it moves to one that is showing straight away.
+function catRehome() {
+  const on = catScreens(); if (!on.length) return;
+  let moved = false;
+  for (let k = 0; k < CAT_MAX; k++) if (!on.includes(catAt[k])) { catAt[k] = catPick(on); moved = true; }
+  if (moved) catSend();
+}
 setInterval(catTick, CAT_TICK);
-const say = (text) => { if (text) broadcast('cmd', { type: 'toast', text: String(text) }, false); };
+let lastToast = '';       // (test runs read it)
+const say = (text) => { if (text) { lastToast = String(text); broadcast('cmd', { type: 'toast', text: String(text) }, false); } };
 
 // ---- watch together --------------------------------------------------------------------------------
 // One PC shares the video it is playing; friends who join with its invite code see the same video in step.
@@ -789,7 +825,7 @@ function shareSnapshot() {
     info: videoInfo, audio: { mode: videoAudio.mode, codec: videoAudio.codec },
     // subtitle tracks are named by a hash so no folder names leave this PC
     tracks: probing ? null : subInfo.tracks.filter((t) => t.usable && t.kind !== 'shared').map((t) => ({ id: subsLib.hash(t.id), kind: t.kind, lang: t.lang, label: t.label, def: !!t.def, forced: !!t.forced, sdh: !!t.sdh })),
-    ctrl: state.share.control, cap: state.share.quality, xc: !!ffmpegPath(), web: remote ? null : web.shared(), music: remote ? null : sharedMusic(on && !!cur()) };
+    ctrl: state.share.control, cap: state.share.quality, xc: !!ffmpegPath(), music: remote ? null : sharedMusic(on && !!cur()) };       // (Surf isn't on the media stream: it has a stream of its own, docs/plans/streams.md)
 }
 function videoJump(pos, play) {
   pos = Math.max(0, +pos || 0); vEnded = false;
@@ -856,12 +892,8 @@ function onRemote(s, why) {
     return;
   }
   const was = remote, wasKey = (cur() || {}).key;
-  if (!was) web.close();       // their page, if they have one open, is shown here in place of ours
-  const w = s.web && typeof s.web === 'object' && s.web.sid ? { url: String(s.web.url || '').slice(0, 2000), title: String(s.web.title || '').slice(0, 200), sid: String(s.web.sid).slice(0, 40),
-    tabs: (Array.isArray(s.web.tabs) ? s.web.tabs : []).slice(0, 20).map((t) => ({ id: +(t || {}).id || 0, title: String((t || {}).title || '').slice(0, 200) })), active: +s.web.active || 0, back: !!s.web.back, fwd: !!s.web.fwd } : null;
-  if (w && !(was && was.web)) streamShown = true;       // they opened their browser: it comes up here too
   const mu = s.music && typeof s.music === 'object' ? { on: !!s.music.on, src: s.music.src === 'files' ? 'files' : 'generative', title: String(s.music.title || '').slice(0, 200), preset: String(s.music.preset || '').slice(0, 40) } : null;
-  remote = { ...s, web: w, music: mu, files: (Array.isArray(s.files) ? s.files : []).slice(0, 5000).map((f) => ({ name: path.basename(String(f.name || 'video')).slice(0, 200), size: +f.size || 0 })),
+  remote = { ...s, web: null, music: mu, files: (Array.isArray(s.files) ? s.files : []).slice(0, 5000).map((f) => ({ name: path.basename(String(f.name || 'video')).slice(0, 200), size: +f.size || 0 })),
     index: Math.max(0, s.index | 0), pos: +s.pos || 0, seq: s.seq | 0 };
   vclock = { startedAt: +s.startedAt || Date.now(), pos: remote.pos, seq: remote.seq };
   if (!was) {
@@ -891,17 +923,19 @@ function guestCmd(m) {
     if (m.do === 'toggle') patch({ music: { playing: !state.music.playing } });
     else if ((m.do === 'next' || m.do === 'prev') && state.music.source === 'files' && audioWin && !audioWin.isDestroyed()) audioWin.webContents.send('cmd', { type: m.do });
   }
-  else if (m.a === 'surf') { if (web.info().open && !web.info().out && m.m && typeof m.m === 'object' && SURF.includes(m.m.do)) web.act({ do: m.m.do, text: m.m.text, id: m.m.id, n: m.m.n }); }       // the browser's own controls: tabs, back, the address…
-  else if (m.a === 'input') web.input(m.e);       // their mouse or keyboard, over the picture of our web page
 }
-// The Surf tab's browser, which friends see too while this PC shares: see web.js.
+// ---- Surf: this PC's own browser, or a hub's Surf stream (docs/plans/streams.md) ----
+// Offline, the Surf tab is this PC's own browser (`web`, see web.js). Online in a hub it's that hub's Surf stream: one browser
+// for the whole hub, running on its host's PC. On the host's PC that's `hubWeb`, a second web.js browser in a profile of its
+// own, drawn here straight from its offscreen frames; on everyone else's it's a picture streamed from the host's PC, with
+// their mouse, keyboard and Surf bar sent back. Your own browser is put away meanwhile (surfKept) and comes back, with its
+// tabs, once you disconnect.
 const SURF = ['go', 'home', 'new', 'tab', 'close', 'back', 'fwd', 'reload', 'hard', 'reopen', 'step', 'nth', 'zoom'];       // (the last five: keyboard shortcuts)
 const screenFor = (key) => (visWins.some((x) => x.key === key) ? key : (visWins.find((x) => (allDisplays().find((d) => d.key === x.key) || {}).primary) || visWins[0] || { key: 'd0' }).key);
-let streamKey = '', streamShown = true;       // as a guest: the monitor a friend's browser is shown on, and whether it is showing here
 const web = createWeb({
   changed: () => pushState(),
   screen: screenFor,
-  escape: () => { const x = visWins.find((y) => y.key === web.info().key); if (x && !x.win.isDestroyed()) { x.win.webContents.focus(); x.win.webContents.send('cmd', { type: 'web-esc' }); } },
+  escape: () => surfEsc(web.info().key),
   unfull: (hostWc) => setTimeout(() => {       // leaving a video's full screen must not take Drift's window out of full screen with it
     const x = visWins.find((y) => !y.win.isDestroyed() && y.win.webContents === hostWc);
     if (x && FAKE <= 1 && !process.env.DRIFT_HIDDEN && !x.win.isFullScreen()) x.win.setFullScreen(true);
@@ -917,6 +951,7 @@ const web = createWeb({
   },
   profile: () => path.join(app.getPath('userData'), 'browser-profile'),
   gpu: () => !!state.surfGpu,
+  gain: () => mixGain().surf,
   win: (key) => { const x = visWins.find((y) => y.key === key); return x && !x.win.isDestroyed() ? x.win : null; },
   display: (key) => { const x = visWins.find((y) => y.key === key); return x && !x.win.isDestroyed() ? screen.getDisplayMatching(x.win.getBounds()) : null; },
   // The size in pixels to draw the page at: that of the widest monitor it shows on (its own, and every other one while mirroring).
@@ -932,31 +967,271 @@ const web = createWeb({
   },
 });
 let webAway = false;
-// Where everyone's mouse is over a shared web page, as fractions of the page, so each PC can draw the others' pointers.
-// This PC, sharing, gathers them (its own included) and passes each friend everyone's but their own.
+function surfEsc(key) { const x = visWins.find((y) => y.key === key); if (x && !x.win.isDestroyed()) { x.win.webContents.focus(); x.win.webContents.send('cmd', { type: 'web-esc' }); } }
+
+// Which browser the Surf tab is: 'own' (this PC's), 'hub' (online in the hub this PC hosts: its Surf stream, here) or
+// 'stream' (online in someone else's hub: their Surf stream, streamed). The hub is your active one, else the first you're online in.
+const surfHub = () => (chat ? mediaHub() : null);
+function surfMode() { const h = surfHub(); return !h ? 'own' : h.mine && h.id === chat.hostedHub() ? 'hub' : 'stream'; }
+let surfModeWas = 'own', surfShown = false, surfKey = '';       // (for 'hub' and 'stream': whether the Surf tab shows it, and on which monitor)
+let surfKept = null;       // your own tabs, put away while you're online in a hub
+function surfBack() {
+  if (!surfKept || web.info().has) return false;
+  const s = surfKept; surfKept = null;
+  web.restore(s);
+  return true;
+}
+// Online, offline, or another hub: the Surf tab changes browser. Whatever showed carries on showing, on the same monitor.
+function surfModeCheck() {
+  const m = surfMode();
+  if (m === surfModeWas) return;
+  const was = surfModeWas; surfModeWas = m;
+  if (was === 'own') { const w = web.info(); surfShown = w.open; surfKey = w.key || surfKey; if (w.has) { surfKept = web.saved(true) || surfKept; web.close(); } }
+  else if (was === 'hub') { if (hubWeb) hubWeb.hide(); }
+  else if (was === 'stream') ssStop();
+  if (m === 'own') { if (surfShown && surfBack()) web.show(surfKey); surfShown = false; }
+  else if (m === 'hub') { if (surfShown) hubShow(surfKey); }
+  else if (m === 'stream') { if (surfShown) ssStart(); }
+  if (hubWeb) hubWeb.audioChanged();
+  ptrClear();
+  pushState();
+}
+
+// ---- the hub's browser, on the PC hosting the hub ----
+let hubWeb = null, hubWebId = '', hubTitleSent = null, hubPwTold = false;
+function hubBrowser() {
+  const id = chat ? chat.hostedHub() : '';
+  if (hubWeb && hubWebId !== id) { saveNow(); hubWeb.stop(); hubWeb = null; hubTitleSent = null; ssWinClose(); }
+  if (!id) return null;
+  if (!hubWeb) {
+    hubWebId = id;
+    hubWeb = createWeb({
+      changed: hubChanged,
+      screen: screenFor,
+      escape: () => surfEsc(screenFor(surfKey)),
+      say: (t) => { if (surfMode() === 'hub' && surfShown) say(t); ssNote(t); },       // to whoever is looking at it
+      blockAds: () => state.share.adblock,
+      ublockDir: () => path.join(app.getPath('userData'), 'ublock'),
+      gain: () => 1,       // (the members' own mixers set what they hear; here its sound is on or off, muted())
+      muted: () => surfMode() !== 'hub' || mixGain().surf === 0,       // silent here unless the host is in the hub (the capture keeps its sound: spike S1)
+      held: hubHeld,
+      holdDir: () => path.join(app.getPath('userData'), 'hub-downloads'),
+      allowLan: () => state.hubSurf.allowLan,
+      note: (what) => { if (what === 'password' && !hubPwTold) { hubPwTold = true; const t = 'Everyone in the hub can use what you sign in to here.'; if (surfMode() === 'hub') say(t); ssNote(t); } },
+    }, { partition: `persist:hub-${id}`, headless: true });
+  }
+  return hubWeb;
+}
+// The hub's browser starts the first time anyone opens Surf while online, with the tabs it had (decision §11.3).
+function hubStart() {
+  const hw = hubBrowser();
+  if (!hw || hw.running()) return hw;
+  const hs = state.hubSurf;
+  if (hs.hub === hubWebId && hs.urls.length) hw.restore({ urls: hs.urls, active: hs.active }); else hw.start();
+  return hw;
+}
+function hubShow(k) { const hw = hubStart(); if (hw) { surfShown = true; surfKey = k || surfKey; hw.show(surfKey); } }
+let hubChangeTimer = null;
+function hubChanged() {
+  if (surfMode() === 'hub') pushState();
+  if (hubChangeTimer) return;
+  hubChangeTimer = setTimeout(() => {       // what the members see of it, and what the hub says it is, at most 5 times a second
+    hubChangeTimer = null;
+    const hw = hubWeb, i = hw && hw.info(), running = !!(hw && hw.running());
+    const title = running ? i.title || (/^drift:\/\/home\//i.test(i.url || '') ? 'New tab' : i.url) || 'New tab' : null;
+    if (title !== hubTitleSent && chat) {
+      hubTitleSent = title;
+      chat.ssSet(running ? { on: true, title } : { on: false }).catch(() => {});
+      if (running && !state.hubSurf.told) { state.hubSurf.told = true; say('Your hub\'s Surf stream runs on this PC: its pages load from your internet connection, so sites see your address.'); }
+    }
+    if (running) ssState();
+    ssWinSync();
+    if (ssWin && i && i.sid !== ssSid) { ssSid = i.sid; toSs({ t: 'recapture' }); }       // another tab came to the front, or a page came in
+    saveSoon();
+  }, 200);
+}
+// ---- held downloads (§6): only the host can say yes, on this PC's own screens ----
+const held = [];       // { d (from web.js), from (member id, or ''), until, timer }
+const heldView = () => held.map((h) => ({ id: h.d.id, name: h.d.name, size: h.d.size, site: h.d.site, who: hubName(h.from), until: h.until }));
+const heldNews = () => broadcast('cmd', { type: 'hub-held', list: heldView() }, false);
+function hubName(id) { if (!id) return 'Someone'; if (chat && id === chat.myId()) return 'You'; const x = chat && chat.info().ss.host; return (x && x.names && x.names[id]) || 'Someone'; }
+function hubHeld(d) {
+  if (state.hubSurf.noDownloads) { ssNote('The host has turned off downloads on the Surf stream.'); return false; }
+  if (held.length >= 3 || (d.who && held.some((h) => h.from === d.who))) { ssNote('Too many downloads waiting'); return false; }
+  const h = { d, from: d.who || '', until: Date.now() + 60000 };
+  h.timer = setTimeout(() => heldAnswer(d.id, false), 60000);
+  held.push(h);
+  heldNews();
+  ssNote(`Waiting for the host to allow ${d.name}`);
+  return true;
+}
+function heldAnswer(id, yes) {
+  const i = held.findIndex((h) => h.d.id === id);
+  if (i < 0) return;
+  const h = held.splice(i, 1)[0];
+  clearTimeout(h.timer);
+  if (yes) h.d.save(); else { h.d.refuse(); ssNote(`The host didn't allow ${h.d.name}`); }
+  heldNews();
+}
+
+// ---- the host's side of the stream: the stream window (renderer/surf-stream.html) ----
+// A hidden window, made while anyone watches and closed when nobody does. It captures the hub's browser (main.js answers its
+// getDisplayMedia with the browser's own frame), holds one connection per watcher, all fed by that one capture, and their data
+// channels. It never sees a key or the hub: chat.js signs what it sends and checks what arrives before it sees it.
+let ssWin = null, ssUp = false, ssQueue = [], ssSid = '';
+const ssPeers = {};       // watcher -> connection state (tests read it)
+const ssWatchers = () => { const x = chat && chat.info().ss.host; return x ? x.watchers : []; };
+function toSs(m) { if (!ssWin) return; if (ssUp && !ssWin.isDestroyed()) ssWin.webContents.send('surf-stream', m); else ssQueue.push(m); }
+function ssWinSync() {
+  const need = !!(hubWeb && hubWeb.running() && ssWatchers().length);
+  if (need && !ssWin) {
+    ssUp = false; ssSid = hubWeb.info().sid;
+    ssQueue = [{ t: 'start', policy: state.voice.direct ? 'all' : 'relay' }];
+    const w = ssWin = new BrowserWindow({ show: false, width: 240, height: 120, skipTaskbar: true, title: 'Drift Surf stream',
+      webPreferences: { preload: path.join(__dirname, 'surf-stream-preload.js'), sandbox: true, contextIsolation: true, backgroundThrottling: false } });
+    w.webContents.setAudioMuted(true);       // (it only sends)
+    w.on('closed', () => { if (ssWin === w) { ssWin = null; ssUp = false; ssQueue = []; for (const k of Object.keys(ssPeers)) delete ssPeers[k]; } });
+    w.loadFile(path.join(__dirname, 'renderer', 'surf-stream.html')).catch(() => {});
+  } else if (!need && ssWin) ssWinClose();
+}
+function ssWinClose() { const w = ssWin; ssWin = null; ssUp = false; ssQueue = []; for (const k of Object.keys(ssPeers)) delete ssPeers[k]; if (w && !w.isDestroyed()) w.destroy(); }
+function ssState() {       // what the watchers' Surf bar shows
+  if (!hubWeb) return;
+  const i = hubWeb.info();
+  toSs({ t: 'send', m: { t: 'state', url: i.url, title: i.title, tabs: i.tabs, active: i.active, back: i.back, fwd: i.fwd } });
+}
+function ssNote(text) { if (text) toSs({ t: 'send', m: { t: 'note', text: String(text).slice(0, 200) } }); }
+// What a watcher sends over their data channel. The channel is end to end, so the hub can't check any of it: it's checked here.
+const SS_RATE = { in: 150, bar: 8, ptr: 30, hello: 2 };       // the most of each a second, per watcher (mouse moves come at most once a frame)
+const ssRate = new Map();
+function onSsData(from, m) {
+  if (!m || typeof m !== 'object' || !Object.hasOwn(SS_RATE, m.t) || !hubWeb || !ssWatchers().includes(from)) return;
+  const now = Date.now(), r = ssRate.get(from) || {};
+  if (!r[m.t] || now - r[m.t].at >= 1000) r[m.t] = { at: now, n: 0 };
+  ssRate.set(from, r);
+  if (++r[m.t].n > SS_RATE[m.t]) { ssDropped++; return; }       // a flood is slowed: the rest of that second is dropped
+  if (m.t === 'in' && m.e && typeof m.e === 'object') hubWeb.input(m.e, false, from);
+  else if (m.t === 'bar' && m.m && typeof m.m === 'object' && SURF.includes(m.m.do)) {
+    const res = hubWeb.act({ do: m.m.do, text: String(m.m.text || '').slice(0, 2000), id: +m.m.id || 0, n: +m.m.n || 0 });       // (only web addresses and the start page: web.js address())
+    if (res.error) toSs({ t: 'send', to: from, m: { t: 'note', text: res.error } });
+  } else if (m.t === 'ptr') ptrSet(from, hubName(from), m.x >= 0 ? { x: +m.x, y: +m.y } : null);
+  else if (m.t === 'hello') ssState();
+}
+let ssDropped = 0;
+ipcMain.on('surf-stream', (e, type, d) => {
+  if (!ssWin || ssWin.isDestroyed() || e.sender !== ssWin.webContents) return;
+  if (type === 'log') { chatLog('surf stream: ' + String(d).slice(0, 300)); return; }
+  if (type === 'hello') { ssUp = true; for (const m of ssQueue.splice(0)) ssWin.webContents.send('surf-stream', m); ssState(); return; }
+  if (!d || typeof d !== 'object') return;
+  if (type === 'signal') chat.ssSignal(String(d.to || ''), d.d);
+  else if (type === 'cert') chat.ssCert(String(d.peer || ''), String(d.alg || ''), String(d.fp || ''));       // a mismatch comes back as ss-verdict and closes it
+  else if (type === 'data') onSsData(String(d.from || ''), d.m);
+  else if (type === 'peer') { if (d.state) ssPeers[String(d.id)] = String(d.state); else delete ssPeers[String(d.id)]; }
+});
+// What chat.js says about the Surf stream (all of it already checked there).
+async function onSsEvent(hub, m) {
+  switch (m.t) {
+    case 'ss-wake': hubStart(); break;       // a member opened Surf: the hub's browser starts (decision §11.3)
+    case 'ss-viewer': {       // a watcher's request checked out: the stream window makes them an offer, through the relay
+      ssWinSync();
+      const r = await chat.ssRelay();
+      if (!r.error && (r.iceServers.length || state.voice.direct)) toSs({ t: 'viewer', id: m.id, iceServers: r.iceServers });
+      else chatLog('surf stream: no relay for a watcher' + (r.error ? ': ' + r.error : ''));
+      break;
+    }
+    case 'ss-viewer-left': toSs({ t: 'left', id: m.id }); ptrSet(m.id, '', null); setTimeout(ssWinSync, 0); break;
+    // (hosting, these are for the stream window; watching another hub's, for the screen window that shows it)
+    case 'ss-sdp':
+      if (hub !== chat.hostedHub()) { if (ssW && m.from === ssW.host) toScreen({ type: 'ss-rtc', d: { type: 'offer', sdp: m.sdp.sdp, iceServers: ssW.ice, policy: ssW.policy } }); }
+      else toSs({ t: 'sdp', from: m.from, sdp: m.sdp });
+      break;
+    case 'ss-candidate':
+      if (hub !== chat.hostedHub()) { if (ssW && m.from === ssW.host) toScreen({ type: 'ss-rtc', d: { type: 'ice', c: m.c } }); }
+      else toSs({ t: 'candidate', from: m.from, c: m.c });
+      break;
+    case 'ss-verdict': if (!m.ok) { if (hub !== chat.hostedHub()) toScreen({ type: 'ss-rtc', d: { type: 'bye' } }); else toSs({ t: 'left', id: m.id }); say('A Surf stream connection didn\'t match its signed certificate, so it was closed. The hub may be interfering.'); } break;
+    case 'ss-refused': say(ssW ? `Couldn't check the Surf stream really comes from ${m.name}. The hub may be interfering.` : `Couldn't verify ${m.name}. The hub may be interfering.`); break;
+    case 'ss-told': say(`${m.name} couldn't verify the Surf stream's connection. The hub may be interfering.`); break;
+    case 'ss-paused': toScreen({ type: 'ss-rtc', d: { type: 'bye' } }); pushState(); break;       // the host's browser stopped: it comes back by itself when it starts again
+    case 'ss-watch-off': if (ssW) { ssW = null; toScreen({ type: 'ss-rtc', d: { type: 'bye' } }); ptrClear(); if (surfShown && surfMode() === 'stream') setTimeout(() => ssStart(), 1500); pushState(); } break;
+    default: break;
+  }
+}
+
+// ---- the member's side: someone else's hub's Surf stream, in the Surf tab ----
+// Watching starts when the Surf tab is opened, not on coming online, so nobody pays for a stream they aren't looking at.
+// The picture is a <video> in the screen window of the Surf monitor (renderer/app.js), set up from SDPs chat.js has checked.
+let ssLive = '';       // the screen window's connection to the host: its state (tests read it)
+let ssW = null;       // { hub, host, sid, state (the host's browser, for the Surf bar), on, at, ice, policy }
+async function ssStart(again) {
+  const h = surfHub();
+  if (!h || surfMode() !== 'stream') return;
+  if (again && ssW && Date.now() - ssW.at < 2500) return;       // (the screen asks again by itself: at most every few seconds)
+  chatLog(`surf stream: asking to watch${again ? ' again' : ''}`);
+  const was = ssW && ssW.hub === h.id ? ssW : null, host = (h.members.find((x) => x.host) || {}).id || '';
+  ssW = { hub: h.id, host, sid: was ? was.sid : 's' + Date.now().toString(36), state: was ? was.state : null, on: false, at: Date.now(), ice: [], policy: state.voice.direct ? 'all' : 'relay' };
+  const mine = ssW, r = await chat.ssWatch(h.id);
+  if (ssW !== mine) return;
+  if (r.error) { if (!was || !was.err) say(r.error); ssW.err = r.error; pushState(); return; }
+  Object.assign(ssW, { on: !!r.on, ice: r.iceServers || [], host: (chat.info().ss.watching || {}).from || host });
+  pushState();
+}
+function ssStop() { if (!ssW) return; ssW = null; chat.ssUnwatch(); toScreen({ type: 'ss-rtc', d: { type: 'bye' } }); ptrClear(); pushState(); }
+const toScreen = (c) => { const x = visWins.find((y) => y.key === screenFor(surfKey)); if (x && !x.win.isDestroyed()) x.win.webContents.send('cmd', c); };
+const ssOut = (m) => { if (ssW) toScreen({ type: 'ss-out', m }); };       // to the host, over the data channel the screen window holds
+const cleanTabs = (t) => (Array.isArray(t) ? t : []).slice(0, 12).map((x) => ({ id: +(x || {}).id || 0, title: String((x || {}).title || '').replace(/[\x00-\x1f]/g, '').slice(0, 200) }));
+function onSsDc(m) {       // from the host, over the data channel (the screen window passes it on as it is)
+  if (!ssW || !m || typeof m !== 'object') return;
+  if (m.t === 'state') {
+    ssW.state = { url: String(m.url || '').slice(0, 2000), title: String(m.title || '').replace(/[\x00-\x1f]/g, '').slice(0, 200), tabs: cleanTabs(m.tabs), active: +m.active || 0, back: !!m.back, fwd: !!m.fwd };
+    pushState();
+  } else if (m.t === 'ptrs') {
+    const blocked = new Set(chat.info().blocked), me = chat.myId();
+    ptrShow(screenFor(surfKey), ptrClean(m.list).filter((q) => q.id !== me && !blocked.has(q.id)));       // (blocking someone hides their pointer: their input still reaches the page)
+  } else if (m.t === 'note') say(String(m.text || '').slice(0, 200));
+}
+function surfView() {
+  const m = surfMode(), h = surfHub();
+  const hubBits = h ? { hub: true, hubId: h.id, hubName: h.name || 'Hub', mine: m === 'hub' } : {};
+  if (m === 'hub') {
+    const x = chat.info().ss.host, i = hubWeb ? hubWeb.info() : { open: false, has: false, tabs: [] };
+    return { ...i, open: surfShown && !!i.open, key: surfShown && i.open ? screenFor(surfKey) : '', has: true, ...hubBits, watchers: x ? x.watchers : [] };
+  }
+  if (m === 'stream') {
+    const st = (ssW && ssW.state) || { url: '', title: '', tabs: [], active: 0, back: false, fwd: false };
+    const live = !!(ssW && h.surf && h.surf.on);
+    return { open: surfShown, has: true, stream: true, key: surfShown ? screenFor(surfKey) : '', parked: !surfShown && ssW ? screenFor(surfKey) : '', sid: ssW ? ssW.sid : '', live, ctrl: true, ...st, ...hubBits,
+      watchers: h.surf ? h.surf.watchers : [], waiting: !!ssW && !live, note: (ssW && ssW.err) || '' };
+  }
+  return web.info();
+}
+
+// Where everyone's mouse is over the Surf stream, as fractions of the page, so everyone can draw the others' pointers. The
+// host's Drift gathers them (the host's own too, while they look at it) and passes each watcher everyone's but their own.
 const pointers = new Map();
 let ptrTimer = null;
 const ptrClean = (list) => (Array.isArray(list) ? list : []).slice(0, 12).filter((q) => q && typeof q === 'object' && q.x >= 0 && q.x <= 1 && q.y >= 0 && q.y <= 1)
   .map((q) => ({ id: String(q.id).slice(0, 16), name: String(q.name || '').replace(/[\x00-\x1f<>]/g, '').slice(0, 24), x: +q.x, y: +q.y }));
 function ptrShow(key, list) { const x = visWins.find((y) => y.key === key); if (x && !x.win.isDestroyed()) x.win.webContents.send('cmd', { type: 'ptrs', list }); }
+function ptrClear() { pointers.clear(); for (const v of visWins) if (!v.win.isDestroyed()) v.win.webContents.send('cmd', { type: 'ptrs', list: [] }); }
 function ptrSet(id, name, m) {
-  const ok = m && typeof m === 'object' && m.x >= 0 && m.x <= 1 && m.y >= 0 && m.y <= 1 && web.info().open;
+  const ok = m && typeof m === 'object' && m.x >= 0 && m.x <= 1 && m.y >= 0 && m.y <= 1 && !!hubWeb && hubWeb.running();
   if (!ok && !pointers.has(id)) return;
   if (ok) pointers.set(id, { id, name, x: +m.x, y: +m.y }); else pointers.delete(id);
   if (ptrTimer) return;
   ptrTimer = setTimeout(() => {       // at most 25 times a second
     ptrTimer = null;
-    const all = ptrClean([...pointers.values()]);
-    ptrShow(web.info().key, all.filter((q) => q.id !== 'host'));
-    for (const peer of p2p.ids()) p2p.sendTo(peer, { t: 'ptrs', list: all.filter((q) => q.id !== peer) });
+    const all = ptrClean([...pointers.values()]), me = chat ? chat.myId() : '', blocked = new Set(chat ? chat.info().blocked : []);
+    if (surfMode() === 'hub' && surfShown) ptrShow(screenFor(surfKey), all.filter((q) => q.id !== me && !blocked.has(q.id)));
+    toSs({ t: 'ptrs', list: all });       // (the stream window leaves out each watcher's own)
   }, 40);
 }
-setInterval(() => {       // this PC's own mouse: the page swallows it, so ask Windows where it is
-  const w = web.info(), x = p2p.role() === 'host' && p2p.count() && w.open ? visWins.find((y) => y.key === w.key) : null;
-  if (!x || x.win.isDestroyed()) { if (pointers.size && (p2p.role() !== 'host' || !w.open)) { pointers.clear(); ptrSet('host', '', null); } return; }
+setInterval(() => {       // the host's own mouse over the hub's browser: the page swallows it, so ask Windows where it is
+  const me = chat ? chat.myId() : '', x = me && surfMode() === 'hub' && surfShown && ssWin ? visWins.find((y) => y.key === screenFor(surfKey)) : null;
+  if (!x || x.win.isDestroyed()) { if (me && pointers.has(me)) ptrSet(me, '', null); return; }
   if (SHOT_DIR) return;       // dev runs place it by hand
   const c = screen.getCursorScreenPoint(), b = x.win.getContentBounds();
-  ptrSet('host', shareName(), { x: (c.x - b.x) / b.width, y: (c.y - b.y) / b.height });
+  ptrSet(me, shareName(), { x: (c.x - b.x) / b.width, y: (c.y - b.y) / b.height });
 }, 60);
 const p2p = createP2P({
   snapshot: shareSnapshot,
@@ -971,13 +1246,10 @@ const p2p = createP2P({
     xcoder.serve(req, res, xcSpec('share|' + req.url, c.src, q.t, QUALITY[q.q] ? q.q : 'original'));
   },
   guestCmd,
-  ptr: (id, name, m) => { if (p2p.role() === 'host') ptrSet(id, name, m); },
-  ptrs: (list) => { if (remote && remote.web) ptrShow(screenFor(streamKey), ptrClean(list)); },
-  rtc: (id, d) => {       // setting up the stream of a web page: hand it to the window that has the page (sharing) or shows it (watching)
-    if (!d || typeof d !== 'object' || (id ? p2p.role() !== 'host' : !remote)) return;
-    if (d.ch === 'music') { if (audioWin && !audioWin.isDestroyed()) audioWin.webContents.send('cmd', { type: 'rtc', from: id, d }); return; }       // the music's stream is the audio window's
-    const k = id ? web.info().key : screenFor(streamKey), x = visWins.find((y) => y.key === k);
-    if (x && !x.win.isDestroyed()) x.win.webContents.send('cmd', { type: 'rtc', from: id, d });
+  ptr: () => {}, ptrs: () => {},       // (pointers are the Surf stream's now)
+  rtc: (id, d) => {       // setting up the stream of the music friends hear: the audio window's
+    if (!d || typeof d !== 'object' || (id ? p2p.role() !== 'host' : !remote) || d.ch !== 'music') return;
+    if (audioWin && !audioWin.isDestroyed()) audioWin.webContents.send('cmd', { type: 'rtc', from: id, d });
   },
   playing: () => !remote && !state.video.paused && !!cur() && visWins.some((v) => showsVideo(v.key)),
   hold: (names) => {       // pause for everyone while a friend loads; carry on when they have caught up
@@ -1009,9 +1281,19 @@ function startChat() {
       broadcast('chat', { type: 'info', info: chatInfo() }, false);
       const sh = sessionHub();       // the session's hub is known once that hub lists the share: the panels need it to chat over the video
       if (sh !== shownSessionHub) { shownSessionHub = sh; pushState(); }
+      bcNews();
+      mediaCheck();
+      surfModeCheck();
+      if (hubWeb || chat.hostedHub()) { hubBrowser(); ssWinSync(); }
+      if (surfMode() !== 'own') pushState();       // (who watches the Surf stream)
     },
     event: (hub, m) => {
       if (String(m.t).startsWith('voice-')) { onVoiceEvent(hub, m); return; }       // for the call's window, not the panels
+      if (String(m.t).startsWith('ss-')) { onSsEvent(hub, m); return; }       // the Surf stream's: for its windows
+      if (m.t === 'media-vote') onMediaVote(hub, m.vote);
+      if (m.t === 'live-no' && p2p.role() === 'host' && liveHub === hub) { liveHub = ''; p2p.stop(); say('Someone else put something on first'); return; }
+      if ((m.t === 'bc-off' || m.t === 'bc-watch-off') && m.why && m.why !== 'ended') say(m.why);       // e.g. the host stopped your broadcast
+      if (String(m.t).startsWith('bc-')) onBcEvent(hub, m);       // for the broadcast window and the screen showing one (the panels hear of it too)
       broadcast('chat', { type: 'event', hub, m }, false);
       // A new message pops up on one screen: over the video, while watching together in that hub (yours too, so the
       // conversation reads in order), or as a note at the top for anyone else's.
@@ -1022,10 +1304,24 @@ function startChat() {
       }
     },
     log: chatLog,
+    connectOnStart: false,       // online in a hub means on its stream (and sharing what you pick): only once you click it
   });
   chat.setName(shareName());
-  if (!SHOT_DIR || process.env.DRIFT_TESTCHAT) chat.start().catch((e) => console.log('chat: ' + e.message));
+  if (!SHOT_DIR || process.env.DRIFT_TESTCHAT || process.env.DRIFT_TESTSTREAM || process.env.DRIFT_TESTSS) chat.start().catch((e) => console.log('chat: ' + e.message));
   publicIp().then((ip) => { chatPub = ip; }).catch(() => {});
+}
+// A broadcast that starts in your active hub is a toast ("Sam started broadcasting"), never something opening by itself (§6).
+let bcSeen = null;
+function bcNews() {
+  const h = chat.info().hubs.find((x) => x.id === activeHub() && x.status === 'connected');
+  const now = new Map(((h && h.bcs) || []).map((b) => [b.id, b]));
+  if (bcSeen && h && bcSeen.hub === h.id) {
+    for (const [id, b] of now) if (!bcSeen.ids.has(id) && b.from !== chat.myId()) {
+      const who = (h.members.find((m) => m.id === b.from) || {}).name || 'Someone';
+      say(`${who} started broadcasting · open Broadcast to watch`);
+    }
+  }
+  bcSeen = { hub: h ? h.id : '', ids: new Set(now.keys()) };
 }
 // Sharing (Together) happens in a hub: the hub hears this PC's watch-together code, what's on and who's watching, and
 // everyone in it gets a Join button in the chat. liveHub is the hub the current share was started in.
@@ -1038,8 +1334,8 @@ function sessionHub() {
   return h ? h.id : '';
 }
 function shareTitle() {
-  const c = cur(), w = web.info();
-  return c && visWins.some((v) => showsVideo(v.key)) ? c.name : w && w.open ? (w.title || 'a web page') : 'nothing yet';
+  const c = cur();
+  return c && visWins.some((v) => showsVideo(v.key)) ? c.name : state.music.source === 'files' && state.music.playing && nowPlaying.title ? nowPlaying.title : 'nothing yet';
 }
 function syncLive() {
   if (!chat) return;
@@ -1050,6 +1346,86 @@ function syncLive() {
   liveSent = key;
   chat.announce(live ? liveHub : '', live);
   if (!live && p.role !== 'host') liveHub = '';
+}
+// A hub's media stream: playing your own video or music while you're online in a hub shares it there, and a hub
+// streams one at a time. With nothing on, it's shared straight away. While someone else's is on, everyone online
+// votes (a card over the video, drawn by renderer/chat.js; the hub counts, see hub.js "the media stream"): if more than half
+// agree, theirs stops and yours goes on. Everyone online in the hub watches what's on, by themselves. Not wanting to
+// watch means disconnecting from the hub: that leaves the stream too. Leave (or Stop sharing) skips the share that's on;
+// the next thing put on pulls you back in. (The hub stamps each share with when it started, `since`, on its own clock:
+// if two are ever listed, the newest is the stream.)
+let mediaTried = '', mediaIn = '';       // mediaTried: the code of the last share this PC joined (never joined again by itself); mediaIn: the hub of this PC's session
+const mediaNewer = (a, b) => a.since > b.since || (a.since === b.since && a.from > b.from);
+const mediaTop = (h) => ((h && h.lives) || []).reduce((a, l) => (!a || mediaNewer(l, a) ? l : a), null);
+// The hub the stream is in: your active hub, else the first one you're online in.
+function mediaHub() {
+  const up = chat ? chat.info().hubs.filter((x) => x.status === 'connected') : [];
+  return up.find((x) => x.id === activeHub()) || up[0] || null;
+}
+async function mediaShare() {
+  const h = mediaHub();
+  if (!h || p2p.role() === 'host') return;       // not online in a hub (just play it here), or already sharing (the session plays it)
+  liveHub = h.id; mediaIn = h.id;
+  await p2p.share({ port: state.share.port, internet: state.share.internet, wait: state.share.wait, name: shareName(), local: !!process.env.DRIFT_SHARE_LOCAL });
+}
+// Playing something of your own while watching someone else's: leave theirs (it isn't joined again), then share yours.
+async function mediaOwn() { if (remote) { mediaTried = joinedCode; await p2p.stop(); } }
+// Something picked to play (`go` plays it here). With nothing else on in the hub, or no hub, it plays and is shared now.
+// While someone else's is on, the hub asks everyone first; the pick waits (mediaPending) and plays only if the vote passes.
+let mediaPending = null, mediaBusy = false;       // mediaPending: { hub, go }, this PC's pick, waiting on its vote; mediaBusy: putting a pick on now
+async function mediaPlay(title, go) {
+  const now = async () => { mediaBusy = true; try { await mediaOwn(); await go(); await mediaShare(); } finally { mediaBusy = false; } };
+  const h = mediaHub(), t = mediaTop(h);
+  if (!h || !t || t.from === chat.myId() || (p2p.role() === 'host' && liveHub === h.id)) return now();
+  if (mediaPending) { say('Your vote is still going'); return; }
+  mediaPending = { hub: h.id, go: now };       // (set before asking: the result can arrive right behind the answer)
+  const r = await chat.mediaAsk(h.id, title);
+  if (r.error || r.free) { mediaPending = null; if (r.error) say(r.error); else await now(); }
+}
+const mediaName = (f) => path.basename(String(f || '')).replace(/\.[^.]+$/, '');
+// A vote from the hub: open (the panels draw it over the video) or decided.
+function onMediaVote(hub, v) {
+  if (!v.result) return;
+  const h = chat.info().hubs.find((x) => x.id === hub), who = ((h && h.members.find((m) => m.id === v.from)) || {}).name || 'Someone';
+  if (v.from === chat.myId()) {
+    const p = mediaPending && mediaPending.hub === hub ? mediaPending : null;
+    mediaPending = null;
+    if (!p) return;
+    if (v.result === 'yes') p.go();
+    else if (v.result === 'no') say('Everyone wants to keep watching what\'s on');
+    else if (v.result === 'time') say('Not enough people agreed in time');
+    return;
+  }
+  if (v.result !== 'yes') return;
+  if (p2p.role() === 'host' && liveHub === hub) { liveHub = ''; p2p.stop(); }       // ours was on: it gives way
+  say(`Switching to ${who}'s ${v.title || 'pick'}`);
+}
+function mediaCheck() {
+  if (!chat) return;
+  const me = chat.myId(), role = p2p.role(), hubs = chat.info().hubs;
+  if (role === 'off') mediaIn = '';
+  else if (role === 'host' && liveHub) mediaIn = liveHub;
+  else { const sh = sessionHub(); if (sh) mediaIn = sh; }
+  if (mediaIn && (hubs.find((x) => x.id === mediaIn) || {}).status === 'away') {       // disconnected from the hub: off the stream
+    mediaTried = joinedCode; mediaIn = ''; liveHub = '';
+    p2p.stop();
+    return;
+  }
+  if (role === 'host' && liveHub) {
+    const h = hubs.find((x) => x.id === liveHub), mine = h && (h.lives || []).find((l) => l.from === me), t = mediaTop(h);
+    if (mine && t && t.from !== me) {       // someone put something else on: stop ours, and watch theirs
+      const who = (h.members.find((m) => m.id === t.from) || {}).name || 'Someone';
+      liveHub = '';
+      p2p.stop().then(mediaCheck);
+      say(`${who} put on ${t.title || 'something else'}`);
+    }
+    return;
+  }
+  const h = mediaHub(), t = mediaTop(h);
+  if (!t || t.from === me || t.code === mediaTried || (role === 'guest' && t.code === joinedCode)) return;
+  mediaTried = t.code; joinedCode = t.code; mediaIn = h.id;
+  const go = () => p2p.join(t.code, shareName()).then((r) => { if (!r.ok) say(r.error); });
+  if (role === 'guest') p2p.stop().then(go); else go();
 }
 // The hub to share into: the one asked for, else the first one this PC is connected to, else a new one of its own.
 async function shareHub(want) {
@@ -1082,76 +1458,433 @@ const CHAT_OPS = {
   invite: async (hub) => { const r = await chat.invite(String(hub)); if (r.code) clipboard.writeText(r.code); return r; },
   withdrawInvites: (hub) => chat.withdrawInvites(String(hub)),
   removeMember: (hub, member) => chat.removeMember(String(hub), String(member || '')),
+  mediaVote: (hub, id, yes) => chat.mediaVote(String(hub || ''), String(id || ''), !!yes),       // a vote to change what's on
+  mediaCancel: (hub, id) => chat.mediaCancel(String(hub || ''), String(id || '')),
   block: (member, on) => chat.block(String(member || ''), !!on),
   paste: () => clipboard.readText().slice(0, 400),
   setAvatar: (data) => chat.setAvatar(String(data || '').slice(0, 20000)),
   avatar: (hub, member, av) => chat.avatar(String(hub), String(member || ''), String(av || '')),
   mic: (on) => chat.setMic(!!on),
-  voiceJoin: (hub) => voiceJoin(String(hub || '')),
-  voiceLeave: () => voiceLeave(),
+  // the hub open in Together: your active hub, unless one is pinned. A different active hub starts out of its voice room
+  voiceHub: (hub) => { const was = activeHub(); voiceSel = String(hub || ''); if (activeHub() !== was) leaveVoice(); syncVoice(); return {}; },
+  disconnect: (hub) => chat.disconnect(String(hub || '')),
+  reconnect: (hub) => { if (String(hub || '') === activeHub()) leaveVoice(); return chat.reconnect(String(hub || '')); },
   safety: (hub, member) => chat.safety(String(hub || ''), String(member || '')),
   verify: (hub, member, on) => chat.setVerified(String(hub || ''), String(member || ''), !!on),
+  // Broadcast (docs/plans/broadcast.md §5). The page never names a source itself: it picks one of the ids bcSources
+  // just listed, and main.js keeps which one (§3), so only that one can ever be handed to a capture.
+  bcSources: () => bcSources(),
+  bcStart: (id) => bcStart(String(id || '')),
+  bcStop: () => { bcSource = null; bcClose(); return chat.bcStop(); },
+  bcSwitch: (id) => bcSwitch(String(id || '')),
+  bcPause: (on) => bcPause(!!on),
+  bcHide: (member, on) => bcHide(String(member || ''), !!on),       // the broadcaster hides one viewer's pointer (§9.3)
+  bcLive: () => bcLiveInfo(),
+  bcScreens: () => bcScreens(),
+  // Watch: the broadcast fills the monitor picked (`key`), in its own Broadcast view. Again for another person switches to theirs.
+  bcWatch: (hub, id, key) => bcWatchOn(String(hub || ''), String(id || ''), String(key || '')),
+  bcUnwatch: (id) => bcUnwatchOp(String(id || '')),
+  bcCursor: (id, on) => bcCursor(String(id || ''), !!on),       // share my cursor with this broadcast (opt-in, per broadcast)
+  bcHostStop: (hub, id) => chat.bcHostStop(String(hub || ''), String(id || '')),
 };
+
+// ---- broadcast: the broadcaster (docs/plans/broadcast.md §3, §5, §7) ---------------------------------------
+// The Broadcast tab lists each monitor and each application window, with thumbnails, and nothing is captured until Go
+// live. Drift's own windows are left out of Applications. bcSource is the one picked for the live broadcast: the
+// broadcast window's getDisplayMedia is answered with exactly that source and nothing else (see
+// setDisplayMediaRequestHandler). The window lives only while you're live, so the capture can't outlive the broadcast.
+let bcSource = null, bcListed = new Map();
+async function bcSources() {
+  const own = new Set(BrowserWindow.getAllWindows().map((w) => { try { return w.getMediaSourceId(); } catch { return ''; } }));
+  const src = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 180 }, fetchWindowIcon: true });
+  const covered = new Set(visWins.filter((v) => !v.win.isDestroyed()).map((v) => String(screen.getDisplayMatching(v.win.getBounds()).id)));       // monitors Drift is showing on
+  const displays = screen.getAllDisplays();
+  bcListed = new Map();
+  const out = { screens: [], apps: [] };
+  for (const x of src) {
+    if (x.id.startsWith('window:') && (own.has(x.id) || !x.name || x.thumbnail.isEmpty())) continue;       // Drift's own, or a window with nothing to show (minimised)
+    const kind = x.id.startsWith('screen:') ? 'screen' : 'window';
+    const i = kind === 'screen' ? displays.findIndex((d) => String(d.id) === String(x.display_id)) : -1;
+    const title = kind === 'screen' ? `Screen ${i >= 0 ? i + 1 : out.screens.length + 1}` : x.name.slice(0, 80);
+    const thumb = x.thumbnail.toDataURL();
+    bcListed.set(x.id, { id: x.id, kind, title, display: kind === 'screen' ? String(x.display_id) : '', thumb });
+    const item = { id: x.id, title, thumb, icon: x.appIcon && !x.appIcon.isEmpty() ? x.appIcon.resize({ width: 16, height: 16 }).toDataURL() : '' };
+    if (kind === 'screen') out.screens.push({ ...item, drift: covered.has(String(x.display_id)) }); else out.apps.push(item);
+  }
+  out.screens.sort((a, b) => a.title.localeCompare(b.title, undefined, { numeric: true }));
+  return out;
+}
+async function bcStart(id) {
+  const s = bcListed.get(id);
+  if (!s) return { error: 'Pick a screen or an application first.' };
+  const hub = activeHub(), h = chat.info().hubs.find((x) => x.id === hub);
+  if (!h || !h.room.in) return { error: 'Connect to a hub in Together to broadcast.' };
+  const r = await chat.bcStart(hub, { title: s.title, kind: s.kind, audio: !!state.broadcast.sound && bcSoundCan });
+  if (r.error) return r;
+  if (!r.iceServers.length && !state.voice.direct) {       // as voice: without the relay, viewers would learn this PC's address
+    chat.bcStop();
+    return { error: 'This hub\'s relay isn\'t running, so a broadcast can\'t keep your address private. Turn on "Connect directly" under Voice in Options to broadcast without it.' };
+  }
+  bcSource = s;
+  bcOpen(r.iceServers);
+  return { id: r.id, source: { id: s.id, title: s.title, kind: s.kind } };
+}
+// Switch source while live: capture the new one and swap it in (replaceTrack), so nobody watching drops.
+async function bcSwitch(id) {
+  const s = bcListed.get(id);
+  if (!chat.info().bc.mine || !bcWin) return { error: 'You aren\'t broadcasting.' };
+  if (!s) return { error: 'Pick a screen or an application first.' };
+  const r = await chat.bcUpdate({ title: s.title, kind: s.kind });
+  if (r.error) return r;
+  bcSource = s; bcRect = null; bcFollow(); bcOvSync();
+  toBc({ t: 'switch' });
+  bcSoundSync();
+  if (state.broadcast.sound) chat.bcUpdate({ audio: bcSoundWanted() });       // (a new program to listen to gets a fresh try)
+  bcPush();
+  return {};
+}
+function bcPause(on) { if (!bcWin) return { error: 'You aren\'t broadcasting.' }; bcPaused = on; toBc({ t: 'pause', on }); bcPush(); return {}; }
+function bcHide(member, on) { if (on) bcHidden.add(member); else bcHidden.delete(member); bcOvSync(); bcPush(); return {}; }
+
+let bcWin = null, bcUp = false, bcQueue = [], bcIce = [], bcStats = null, bcPaused = false, bcPtrs = [], bcPeers = {};
+const bcHidden = new Set();       // viewers whose pointer the broadcaster hid
+const toBc = (m) => { if (!bcWin) return; if (bcUp && !bcWin.isDestroyed()) bcWin.webContents.send('bc-send', m); else bcQueue.push(m); };
+function bcOpen(ice) {
+  bcClose();
+  bcIce = ice; bcPaused = false; bcStats = null; bcPtrs = []; bcPeers = {}; bcHidden.clear();
+  bcQueue = [{ t: 'start', policy: state.voice.direct ? 'all' : 'relay', quality: state.broadcast.quality, test: !!process.env.DRIFT_TESTBROADCAST }];
+  const w = bcWin = new BrowserWindow({ show: false, width: 240, height: 120, skipTaskbar: true, title: 'Drift broadcast',
+    webPreferences: { preload: path.join(__dirname, 'bc-send-preload.js'), sandbox: true, contextIsolation: true, backgroundThrottling: false } });
+  w.webContents.setAudioMuted(true);       // (it only sends)
+  w.on('closed', () => { if (bcWin === w) { bcWin = null; bcUp = false; bcQueue = []; } });
+  w.loadFile(path.join(__dirname, 'renderer', 'bc-send.html')).catch(() => {});
+  bcFollow(); bcSoundFail = ''; bcSoundSync();
+  micLight(); bcPush();
+}
+function bcClose() {
+  const w = bcWin, had = !!w;
+  bcWin = null; bcUp = false; bcQueue = []; bcStats = null; bcPtrs = []; bcPeers = {}; bcRect = null;
+  bcFollow(); bcOvSync(); bcSoundSync();
+  if (w && !w.isDestroyed()) w.destroy();       // the capture goes with it
+  if (had) { micLight(); bcPush(); }
+}
+// What the Broadcast tab and the hub bar show while you're live.
+function bcLiveInfo() {
+  if (!bcWin || !bcSource) return null;
+  return { source: { id: bcSource.id, title: bcSource.title, kind: bcSource.kind }, thumb: bcSource.thumb || '', paused: bcPaused, stats: bcStats, peers: bcPeers,
+    pointers: !!state.broadcast.pointers, hidden: [...bcHidden], ptrs: bcPtrs.map((p) => p.id), sound: bcSoundState() };
+}
+let bcPushed = '';
+function bcPush() {
+  const live = bcLiveInfo(), k = JSON.stringify(live);
+  if (k === bcPushed) return;
+  bcPushed = k;
+  broadcast('chat', { type: 'bclive', live }, false);
+}
+ipcMain.on('bc-send', (e, type, d) => {
+  if (!bcWin || bcWin.isDestroyed() || e.sender !== bcWin.webContents) return;
+  if (type === 'log') { chatLog('broadcast: ' + String(d).slice(0, 300)); return; }
+  const mine = chat.info().bc.mine;
+  if (type === 'hello') { bcUp = true; for (const m of bcQueue.splice(0)) bcWin.webContents.send('bc-send', m); return; }
+  if (type === 'ended') {       // the window closed, or the source couldn't be captured
+    say(d === 'capture' ? 'Drift couldn\'t capture what you picked, so the broadcast stopped.' : `${bcSource ? bcSource.title : 'What you were showing'} closed, so the broadcast stopped.`);
+    bcSource = null; bcClose(); chat.bcStop(); return;
+  }
+  if (!mine) return;
+  if (type === 'signal' && d && typeof d === 'object') chat.bcSignal(mine.id, String(d.to || ''), d.d);
+  else if (type === 'cert' && d && typeof d === 'object') chat.bcCert(mine.id, String(d.peer || ''), String(d.alg || ''), String(d.fp || ''));       // a mismatch comes back as bc-verdict and closes it
+  else if (type === 'peer' && d && typeof d === 'object') { if (d.state) bcPeers[String(d.id)] = String(d.state); else delete bcPeers[String(d.id)]; bcPush(); }
+  else if (type === 'stats' && d && typeof d === 'object') {
+    const was = bcStats;
+    bcStats = { fps: +d.fps || 0, kbps: +d.kbps || 0, encoder: String(d.encoder || '').slice(0, 60), hardware: d.hardware === null ? null : !!d.hardware, viewers: +d.viewers || 0, stalled: !!d.stalled, slow: !!d.slow, size: String(d.size || '').slice(0, 20) };
+    if (bcStats.slow && !(was && was.slow) && bcSource && bcSource.kind === 'window') say('The picture nearly stopped (this happens when a window is resized). Press Switch source and pick it again.');
+    bcPush();
+  } else if (type === 'ptrs') { bcPtrs = (Array.isArray(d) ? d : []).slice(0, 8).filter((p) => p && p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1).map((p) => ({ id: String(p.id), x: +p.x, y: +p.y })); bcOvSync(); bcPush(); }
+  else if (type === 'ping' && d && typeof d === 'object' && d.x >= 0 && d.x <= 1 && d.y >= 0 && d.y <= 1) bcOvSync({ id: String(d.id), x: +d.x, y: +d.y });
+});
+
+// ---- the broadcast's sound (§8, spike A; bc-sound.js): Windows' process loopback, through a helper. For an
+// application, only the sound of the process that owns its window (and its children); for a whole screen, everything
+// the PC plays except Drift itself, so the voice room isn't sent back to the people in it. The PCM goes to the broadcast
+// window in 20 ms pieces, which turns it into the broadcast's audio track. The helper runs only while you're live with
+// Sound on, and is restarted when Switch source changes what to listen to. ----
+const bcSound = require('./bc-sound');
+const bcSoundCan = process.platform === 'win32';
+let bcSnd = null, bcSoundFail = '', bcSoundBuf = [], bcSoundLen = 0;       // bcSnd: { key, h, ready }; bcSoundFail: the key that failed (not retried)
+const bcSoundWanted = () => bcSoundCan && !!state.broadcast.sound && bcSoundFail !== bcSoundKey();
+function bcSoundKey() {
+  if (!bcWin || !bcSource || !state.broadcast.sound) return '';
+  if (bcSource.kind === 'window') { const m = /^window:(\d+):/.exec(bcSource.id); return m ? 'w' + m[1] : ''; }
+  return 'x' + process.pid;
+}
+function bcSoundState() {
+  if (!state.broadcast.sound) return 'off';
+  if (!bcSoundCan || (bcSoundFail && bcSoundFail === bcSoundKey())) return 'failed';
+  return bcSnd && bcSnd.ready ? 'on' : 'starting';
+}
+function bcSoundSync() {
+  const key = bcSoundKey(), want = key && key !== bcSoundFail && bcSoundCan;
+  if (bcSnd && bcSnd.key === key && want) return;
+  if (bcSnd) { bcSnd.h.stop(); bcSnd = null; toBc({ t: 'sound', on: false }); }
+  bcSoundBuf = []; bcSoundLen = 0;
+  if (!want) return;
+  const what = key[0] === 'w' ? { hwnd: +key.slice(1) } : { pid: process.pid, exclude: true };
+  const me = bcSnd = { key, ready: false, h: null };
+  me.h = bcSound.start(what, {
+    onReady: () => { if (bcSnd !== me) return; me.ready = true; chatLog(`broadcast: sound from ${key[0] === 'w' ? 'the application' : 'the PC, without Drift'}`); toBc({ t: 'sound', on: true }); bcPush(); },
+    onPcm: (d) => {
+      if (bcSnd !== me || !bcUp || !bcWin || bcWin.isDestroyed()) return;
+      bcSoundBuf.push(d); bcSoundLen += d.length;
+      if (bcSoundLen < 3840) return;       // 20 ms at a time
+      const all = Buffer.concat(bcSoundBuf, bcSoundLen); bcSoundBuf = []; bcSoundLen = 0;
+      bcWin.webContents.send('bc-send', { t: 'pcm', d: new Uint8Array(all.buffer, all.byteOffset, all.length) });
+    },
+    onEnd: (why) => {
+      if (bcSnd !== me) return;
+      bcSnd = null; bcSoundFail = key;
+      chatLog('broadcast: sound stopped: ' + String(why).slice(0, 200));
+      toBc({ t: 'sound', on: false });
+      if (chat.info().bc.mine) chat.bcUpdate({ audio: false });
+      say(/unsupported|type/.test(why) ? "This version of Windows can't capture one program's sound, so your broadcast has no sound. It needs Windows 11, or a recent Windows 10."
+        : /window|process/.test(why) ? "Drift couldn't find the program behind that window, so your broadcast has no sound."
+          : "Your broadcast's sound stopped. The picture carries on. Turn Sound off and on again to retry.");
+      bcPush();
+    },
+  });
+}
+
+// ---- viewers' pointers on the broadcaster's real screen (§9.2): one transparent, click-through, topmost window over
+// what's being shown, kept out of every capture (setContentProtection gives WDA_EXCLUDEFROMCAPTURE: spike E), so the
+// pointers aren't baked into the stream as well. It's shown only while a pointer is. For a window, a small helper
+// follows where it is (DWMWA_EXTENDED_FRAME_BOUNDS, ten times a second) and whether it's minimised. ----
+let bcOv = null, bcOvUp = false, bcOvLast = null, bcRect = null, bcFollowProc = null;
+const memberName = (hubId, id) => { const h = chat && chat.info().hubs.find((x) => x.id === hubId); return ((h && h.members.find((m) => m.id === id)) || {}).name || 'Someone'; };
+const followScript = (hwnd) => [
+  'Add-Type -TypeDefinition @\'',
+  'using System; using System.Runtime.InteropServices;',
+  'public static class D {',
+  '  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }',
+  '  [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr h, int a, out RECT r, int size);',
+  '  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);',
+  '  [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr h);',
+  '  [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr c);',
+  '}',
+  '\'@',
+  '[D]::SetProcessDpiAwarenessContext([IntPtr]-4) | Out-Null',
+  `$h = [IntPtr]${hwnd}`,
+  'while ([D]::IsWindow($h)) {',
+  '  $r = New-Object D+RECT',
+  '  [D]::DwmGetWindowAttribute($h, 9, [ref]$r, 16) | Out-Null',
+  '  [Console]::Out.WriteLine("$($r.L) $($r.T) $($r.R - $r.L) $($r.B - $r.T) $([D]::IsIconic($h))")',
+  '  Start-Sleep -Milliseconds 100',
+  '}'].join('\n');
+function bcFollow() {
+  if (bcFollowProc) { try { bcFollowProc.kill(); } catch { /* gone */ } bcFollowProc = null; }
+  const m = bcWin && bcSource && bcSource.kind === 'window' && process.platform === 'win32' && /^window:(\d+):/.exec(bcSource.id);
+  if (!m) return;
+  const p = bcFollowProc = ps(followScript(m[1]), { stdio: ['ignore', 'pipe', 'ignore'] });
+  let buf = '';
+  p.stdout.setEncoding('utf8');
+  p.stdout.on('data', (d) => {
+    buf += d; const lines = buf.split(/\r?\n/); buf = lines.pop();
+    const l = lines.pop(); if (!l || bcFollowProc !== p) return;
+    const [x, y, w, h, min] = l.trim().split(/\s+/);
+    const r = min === 'True' || !(+w > 0 && +h > 0) ? null : screen.screenToDipRect(null, { x: +x, y: +y, width: +w, height: +h });
+    if (JSON.stringify(r) !== JSON.stringify(bcRect)) { bcRect = r; bcOvSync(); }
+  });
+  p.on('error', () => { if (bcFollowProc === p) bcFollowProc = null; });
+  p.on('close', () => { if (bcFollowProc === p) bcFollowProc = null; });
+}
+function bcTarget() {       // where what's shown is on this PC's screen, in DIPs
+  if (!bcSource) return null;
+  if (bcSource.kind === 'window') return bcRect;
+  const d = screen.getAllDisplays().find((x) => String(x.id) === bcSource.display);
+  return d ? d.bounds : null;
+}
+function bcOvSync(ping) {
+  const mine = chat && chat.info().bc.mine, blocked = new Set(chat ? chat.info().blocked : []);
+  const list = !mine || !bcWin || !state.broadcast.pointers ? [] : bcPtrs.filter((p) => !bcHidden.has(p.id) && !blocked.has(p.id)).map((p) => ({ ...p, name: memberName(mine.hub, p.id) }));
+  const r = bcTarget(), pin = ping && mine && state.broadcast.pointers && !bcHidden.has(ping.id) && !blocked.has(ping.id) ? { ...ping, name: memberName(mine.hub, ping.id) } : null;
+  bcOvLast = { list, ping: pin, rect: r };       // (tests read it)
+  if ((!list.length && !pin) || !r) {
+    if (bcOv && !bcOv.isDestroyed()) { if (!bcWin) { bcOv.destroy(); bcOv = null; } else if (bcOv.isVisible()) bcOv.hide(); }
+    return;
+  }
+  if (!bcOv || bcOv.isDestroyed()) {
+    bcOvUp = false;
+    const w = bcOv = new BrowserWindow({ show: false, transparent: true, frame: false, focusable: false, skipTaskbar: true, resizable: false, hasShadow: false, alwaysOnTop: true, title: 'Drift pointers',
+      webPreferences: { preload: path.join(__dirname, 'bc-overlay-preload.js'), sandbox: true, contextIsolation: true } });
+    w.setIgnoreMouseEvents(true);       // every click goes straight through to what's underneath
+    w.setAlwaysOnTop(true, 'screen-saver');
+    w.setContentProtection(true);       // kept out of the capture
+    w.webContents.once('did-finish-load', () => { if (bcOv === w) { bcOvUp = true; bcOvSync(); } });
+    w.loadFile(path.join(__dirname, 'renderer', 'bc-overlay.html')).catch(() => {});
+  }
+  const b = bcOv.getBounds();
+  if (b.x !== r.x || b.y !== r.y || b.width !== r.width || b.height !== r.height) bcOv.setBounds(r);
+  if (bcOvUp) bcOv.webContents.send('bc-overlay', { list, ping: pin });
+  if (!bcOv.isVisible() && !process.env.DRIFT_HIDDEN) bcOv.showInactive();
+}
+
+// ---- broadcast: the viewer (§6). Watching fills the monitor picked with the broadcast, in its own Broadcast view
+// (renderer/app.js #bcView), set up from SDPs chat.js has checked. It never starts by itself. Your cursor is shared only
+// with broadcasts you turned "Share my cursor" on for (opt-in, per broadcast). ----
+let bcView = null;       // { hub, bc, from, key, ice, policy, at, state (the connection), remote: { paused, stalled } }
+const bcShareOn = new Set();       // broadcast ids you chose to share your cursor with (forgotten when they end)
+const bcViewKey = () => (bcView ? screenFor(bcView.key) : '');
+function toBcViewAt(key, c) { const x = visWins.find((y) => y.key === screenFor(key)); if (x && !x.win.isDestroyed()) x.win.webContents.send('cmd', c); }
+const toBcView = (c) => { if (bcView) toBcViewAt(bcView.key, c); };
+function bcScreens() {       // for the Watch picker: each monitor, and whether a watch-together video is playing on it
+  return { screens: visWins.filter((v) => !v.win.isDestroyed()).map((v, i) => ({ key: v.key, label: `Monitor ${i + 1}`, video: showsVideo(v.key) })) };
+}
+async function bcWatchOn(hub, id, key) {
+  key = screenFor(key || (bcView && bcView.key) || '');
+  const was = bcView;
+  if (was && was.bc !== id) { bcView = null; toBcViewAt(was.key, { type: 'bc-rtc', d: { type: 'bye' } }); chat.bcUnwatch(was.bc); }       // switching to someone else's
+  const r = await chat.bcWatch(hub, id);
+  if (r.error) { pushState(); return r; }
+  if (was && was.bc === id && was.key !== key) toBcViewAt(was.key, { type: 'bc-rtc', d: { type: 'bye' } });
+  bcView = { hub, bc: id, from: r.from, key, ice: r.iceServers || [], policy: state.voice.direct ? 'all' : 'relay', at: Date.now(), state: '', remote: {} };
+  pushState();
+  return {};
+}
+async function bcAgain() {       // the screen had no picture for a while: a fresh request, so the broadcaster makes a new offer
+  if (!bcView || Date.now() - bcView.at < 2500) return;
+  const v = bcView; v.at = Date.now();
+  chatLog('broadcast: asking to watch again');
+  const r = await chat.bcWatch(v.hub, v.bc);
+  if (bcView !== v) return;
+  if (r.error) { bcViewEnd(r.error); return; }
+  v.ice = r.iceServers || v.ice;
+}
+function bcViewEnd(why) {
+  if (!bcView) return;
+  chatLog(`broadcast: stopped watching (${why || "no reason"})`);
+  toBcView({ type: 'bc-rtc', d: { type: 'bye' } });
+  bcView = null;
+  if (why) say(why);
+  pushState();
+}
+function bcUnwatchOp(id) {
+  chatLog("broadcast: stop watching pressed");
+  if (bcView && bcView.bc === id) { toBcView({ type: 'bc-rtc', d: { type: 'bye' } }); bcView = null; pushState(); }
+  return chat.bcUnwatch(id);
+}
+const bcLevel = (from) => { const v = state.voice.volumes['bc:' + from]; return isFinite(v) ? v : 1; };       // a broadcast's sound, apart from that person's voice
+function bcCursor(id, on) { if (on) bcShareOn.add(id); else bcShareOn.delete(id); pushState(); return {}; }
+function bcViewInfo() {
+  if (!bcView || !chat) return null;
+  const I = chat.info(), h = I.hubs.find((x) => x.id === bcView.hub), b = h && (h.bcs || []).find((x) => x.id === bcView.bc);
+  const w = (I.bc.watching || []).find((x) => x.id === bcView.bc) || {};
+  const others = h ? (h.bcs || []).filter((x) => x.from !== I.me.id && x.id !== bcView.bc).map((x) => ({ id: x.id, who: memberName(h.id, x.from), title: x.title })) : [];
+  return { key: bcViewKey(), hub: bcView.hub, bc: bcView.bc, from: bcView.from, who: memberName(bcView.hub, bcView.from), title: b ? b.title : '', kind: b ? b.kind : 'screen',
+    audio: !!(b && b.audio), level: bcLevel(bcView.from), vol: bcLevel(bcView.from) * mixGain().master,
+    state: bcView.state, paused: !!bcView.remote.paused, stalled: !!bcView.remote.stalled, share: bcShareOn.has(bcView.bc), verdict: w.verdict || '', bad: !!(w.refused || w.told || w.verdict === 'mismatch'), others };
+}
+// From the broadcaster, over the data channel the screen window holds: everyone's pointers (named here; blocked members
+// left out, without telling them), pings, and whether it's paused or the picture stopped.
+function onBcDc(m) {
+  if (!bcView || !m || typeof m !== 'object') return;
+  const blocked = new Set(chat.info().blocked), me = chat.myId();
+  const named = (q) => ({ id: String(q.id).slice(0, 64), name: memberName(bcView.hub, String(q.id)).replace(/[\x00-\x1f<>]/g, '').slice(0, 24), x: +q.x, y: +q.y });
+  const fine = (q) => q && typeof q === 'object' && q.x >= 0 && q.x <= 1 && q.y >= 0 && q.y <= 1 && q.id !== me && !blocked.has(String(q.id));
+  if (m.t === 'ptrs') toBcView({ type: 'bc-ptrs', list: (Array.isArray(m.list) ? m.list : []).slice(0, 8).filter(fine).map(named) });
+  else if (m.t === 'ping' && fine(m)) toBcView({ type: 'bc-ping', p: named(m) });
+  else if (m.t === 'state') { const r = { paused: !!m.paused, stalled: !!m.stalled }; if (JSON.stringify(r) !== JSON.stringify(bcView.remote)) { bcView.remote = r; pushState(); } }
+}
+// What chat.js says about broadcasts (all of it already checked there).
+function onBcEvent(hub, m) {
+  const mine = chat.info().bc.mine, isMine = !!(bcWin && mine && m.bc === mine.id), viewing = !!(bcView && bcView.bc === m.bc);
+  switch (m.t) {
+    case 'bc-viewer': if (isMine) toBc({ t: 'viewer', id: m.id, iceServers: bcIce }); break;
+    case 'bc-viewer-left': if (bcWin) toBc({ t: 'left', id: m.id }); bcHidden.delete(m.id); break;
+    case 'bc-off': bcSource = null; bcClose(); break;
+    case 'bc-watch-off': bcShareOn.delete(m.bc); if (viewing) bcViewEnd(m.why === 'ended' ? `${memberName(hub, bcView.from)} stopped broadcasting` : ''); break;
+    case 'bc-sdp':
+      if (isMine) toBc({ t: 'sdp', from: m.from, sdp: m.sdp });
+      else if (viewing && m.from === bcView.from) toBcView({ type: 'bc-rtc', d: { type: 'offer', sdp: m.sdp.sdp, iceServers: bcView.ice, policy: bcView.policy } });
+      break;
+    case 'bc-candidate':
+      if (isMine) toBc({ t: 'candidate', from: m.from, c: m.c });
+      else if (viewing && m.from === bcView.from) toBcView({ type: 'bc-rtc', d: { type: 'ice', c: m.c } });
+      break;
+    case 'bc-refused':
+      if (isMine) { toBc({ t: 'left', id: m.from }); say(`Couldn't verify ${m.name}, so they can't watch. The hub may be interfering.`); }
+      else if (viewing) { toBcView({ type: 'bc-rtc', d: { type: 'bye' } }); say(`Couldn't check that this broadcast is really from ${m.name}, so Drift won't show it. The hub may be interfering.`); pushState(); }
+      break;
+    case 'bc-told': say(`${m.name} couldn't verify your broadcast connection. The hub may be interfering.`); break;
+    case 'bc-verdict':
+      if (!m.ok) { if (isMine) toBc({ t: 'left', id: m.id }); else if (viewing) toBcView({ type: 'bc-rtc', d: { type: 'bye' } }); say('A broadcast connection didn\'t match its signed certificate, so it was closed. The hub may be interfering.'); }
+      pushState();
+      break;
+    default: break;
+  }
+}
 ipcMain.handle('chat', async (_e, op, ...args) => {
   if (!chat || !Object.hasOwn(CHAT_OPS, op)) return { error: 'Chat isn\'t ready.' };
   try { return (await CHAT_OPS[op](...args)) ?? {}; } catch (e) { return { error: String(e && e.message || e) }; }
 });
 
-// ---- voice calls ------------------------------------------------------------------------------------
-// A call lives in its own hidden window (renderer/voice.html), made when you join and closed when you leave, so the
-// microphone is only open during a call. chat.js signs what this PC sends and checks what arrives before the window
-// sees it; this only carries messages between the two, keeps the "mic live" light in the tray, and watches the
-// hold-to-talk key. voiceLive is what the panels draw: the call's hub, the microphone, who is speaking, each connection.
-let voiceWin = null, voiceUp = false, voiceQueue = [], voiceLive = null, micTray = null, pttProc = null;
-const chatInfo = () => ({ ...chat.info(), live: voiceLive });
+// ---- the voice room ---------------------------------------------------------------------------------
+// Online in a hub, with it as your active hub (the one open in Together, or the one you pinned), you can be in its voice
+// room (docs/plans/broadcast.md §1). You start out of it (deaf), at every start and whenever the active hub changes or you
+// come back online in it: Join voice puts you in, listening. The room lives in its own hidden window (renderer/voice.html), made
+// while you listen and closed when you stop. It never opens the microphone until you press Talk. chat.js signs what
+// this PC sends and checks what arrives before the window sees it; this only carries messages between the two, keeps
+// the light in the tray, and watches the hold-to-talk key. voiceLive is what the panels draw: the room's hub, the
+// microphone, who is speaking, each connection.
+let voiceWin = null, voiceUp = false, voiceQueue = [], voiceLive = null, micTray = null, pttProc = null, voiceSel = '', voiceNote = '';
+const chatInfo = () => ({ ...chat.info(), live: voiceLive, voiceNote, bcLive: bcLiveInfo() });
 const pushVoice = () => broadcast('chat', { type: 'voice', live: voiceLive }, false);
-function toVoice(m) {       // to the call's window; held until it has loaded
+function toVoice(m) {       // to the room's window; held until it has loaded
   if (!voiceLive) return;
   if (voiceUp && voiceWin && !voiceWin.isDestroyed()) voiceWin.webContents.send('voice', m); else voiceQueue.push(m);
 }
-async function voiceJoin(hub) {
-  if (voiceLive && voiceLive.hub === hub) return {};
-  await voiceLeave();
-  voiceLive = { hub, mic: 'off', micOk: false, speaking: [], peers: {} }; voiceUp = false; voiceQueue = [];       // (setup messages arriving meanwhile wait in the queue)
-  const r = await chat.voiceJoin(hub, { muted: state.voice.muted, deaf: state.voice.deaf });
-  if (r.error || (!r.iceServers.length && !state.voice.direct)) {
-    if (!r.error) await chat.voiceLeave();
-    voiceLive = null; voiceQueue = []; pushVoice();
-    return { error: r.error || 'This hub\'s voice relay isn\'t running, so the call can\'t keep your address private. Turn on "Connect directly in calls" in Options to call without it.' };
+// Which hub's room to be in, and how: told to chat.js whenever any of it changes.
+const activeHub = () => (state.voice.pin && chat.info().hubs.some((h) => h.id === state.voice.pin) ? state.voice.pin : voiceSel);
+function syncVoice() {
+  if (!chat) return;
+  chat.setVoice({ hub: activeHub(), listen: !state.voice.deaf, talk: state.voice.talk, mic: !!(voiceLive && voiceLive.micOk) });
+}
+// chat.js is in a room (and listening): open its window. Nothing is opened before Talk.
+function openRoom(hub, r) {
+  closeVoiceWin();
+  if (!r.iceServers.length && !state.voice.direct) {
+    voiceNote = 'This hub\'s voice relay isn\'t running, so voice can\'t keep your address private. Turn on "Connect directly" under Voice in Options to talk without it.';
+    broadcast('chat', { type: 'info', info: chatInfo() }, false); return;
   }
-  voiceQueue.unshift({ t: 'start', me: r.me, peers: r.peers, iceServers: r.iceServers, policy: state.voice.direct ? 'all' : 'relay', tone: !!process.env.DRIFT_TESTVOICE,
-    muted: state.voice.muted, deaf: state.voice.deaf, ptt: state.voice.ptt, volumes: state.voice.volumes });
-  const w = voiceWin = new BrowserWindow({ show: false, width: 240, height: 120, skipTaskbar: true, title: 'Drift call',
+  voiceNote = '';
+  voiceLive = { hub, mic: 'closed', micOk: false, speaking: [], peers: {} }; voiceUp = false;
+  voiceQueue.unshift({ t: 'start', me: r.me, iceServers: r.iceServers, policy: state.voice.direct ? 'all' : 'relay', tone: !!process.env.DRIFT_TESTVOICE,
+    talk: state.voice.talk, ptt: state.voice.ptt, volumes: state.voice.volumes, master: mixGain().master });
+  const w = voiceWin = new BrowserWindow({ show: false, width: 240, height: 120, skipTaskbar: true, title: 'Drift voice',
     webPreferences: { preload: path.join(__dirname, 'voice-preload.js'), sandbox: true, contextIsolation: true, backgroundThrottling: false, autoplayPolicy: 'no-user-gesture-required' } });
   if (process.env.DRIFT_MUTE) w.webContents.setAudioMuted(true);
-  w.on('closed', () => { if (voiceWin === w) { voiceWin = null; if (voiceLive) voiceLeave(); } });
+  w.on('closed', () => { if (voiceWin === w) { voiceWin = null; voiceLive = null; voiceQueue = []; pttWatch(); micLight(); pushVoice(); } });
   w.loadFile(path.join(__dirname, 'renderer', 'voice.html')).catch(() => {});
   pttWatch(); micLight(); pushVoice();
-  return {};
-}
-async function voiceLeave() {
-  if (!voiceLive) return {};
-  closeVoiceWin();
-  await chat.voiceLeave();
-  return {};
 }
 function closeVoiceWin() {
+  const had = !!voiceLive;
   voiceLive = null; voiceUp = false; voiceQueue = [];
   const w = voiceWin; voiceWin = null;
   if (w && !w.isDestroyed()) w.destroy();       // the microphone goes with it
-  pttWatch(); micLight(); pushVoice();
+  if (had) { pttWatch(); micLight(); pushVoice(); }
 }
-// What chat.js says about the call (all of it already checked there).
+// What chat.js says about the room (all of it already checked there).
 function onVoiceEvent(hub, m) {
   const named = String(m.name || 'someone');
   switch (m.t) {
+    case 'voice-room': openRoom(hub, m); break;
+    case 'voice-room-off': closeVoiceWin(); if (voiceNote) { voiceNote = ''; broadcast('chat', { type: 'info', info: chatInfo() }, false); } if (m.why) say(m.why); break;
+    case 'voice-peers': toVoice({ t: 'peers', list: m.list }); break;
+    case 'voice-said': if (m.talk === false && state.voice.talk) { applyVoice({ talk: false }); pushState(); } say(m.why); break;       // e.g. too many people talking
     case 'voice-sdp': toVoice({ t: 'sdp', from: m.from, sdp: m.sdp }); break;
     case 'voice-candidate': toVoice({ t: 'candidate', from: m.from, c: m.c }); break;
     case 'voice-left': toVoice({ t: 'left', id: m.id }); if (voiceLive) { delete voiceLive.peers[m.id]; pushVoice(); } break;
     case 'voice-refused': toVoice({ t: 'close', id: m.from }); say(`Couldn't verify ${named}. The hub may be interfering.`); break;
     case 'voice-told': say(`${named} couldn't verify your connection. The hub may be interfering.`); break;
-    case 'voice-verdict': if (!m.ok) { toVoice({ t: 'close', id: m.id }); say('A connection in the call didn\'t match its signed certificate, so it was closed. The hub may be interfering.'); } break;
-    case 'voice-ended': closeVoiceWin(); say(m.why); break;
+    case 'voice-verdict': if (!m.ok) { toVoice({ t: 'close', id: m.id }); say('A voice connection didn\'t match its signed certificate, so it was closed. The hub may be interfering.'); } break;
     default: break;
   }
 }
@@ -1165,26 +1898,28 @@ ipcMain.on('voice', (e, type, d) => {
     case 'cert': if (d && typeof d === 'object') chat.voiceCert(String(d.peer || ''), String(d.alg || ''), String(d.fp || '')); break;       // a mismatch comes back as voice-verdict and closes it
     case 'state':
       if (!d || typeof d !== 'object') break;
-      Object.assign(voiceLive, { mic: ['off', 'open', 'live'].includes(d.mic) ? d.mic : 'off', micOk: !!d.micOk });
-      chat.voiceState({ muted: !!d.muted, deaf: !!d.deaf, mic: !!d.micOk });
+      Object.assign(voiceLive, { mic: ['closed', 'none', 'open', 'live'].includes(d.mic) ? d.mic : 'closed', micOk: !!d.micOk });
+      syncVoice();       // the hub hears whether the microphone really opened
       micLight(); pushVoice(); break;
-    case 'speaking': voiceLive.speaking = (Array.isArray(d) ? d : []).map(String).slice(0, 9); pushVoice(); break;
-    case 'peer': if (d && typeof d === 'object') { voiceLive.peers[String(d.id)] = String(d.state); pushVoice(); } break;
-    case 'failed': say('The call couldn\'t start: ' + String(d).slice(0, 120)); voiceLeave(); break;
+    case 'speaking': voiceLive.speaking = (Array.isArray(d) ? d : []).map(String).slice(0, 17); pushVoice(); break;
+    case 'peer': if (d && typeof d === 'object') { if (d.state) voiceLive.peers[String(d.id)] = String(d.state); else delete voiceLive.peers[String(d.id)]; pushVoice(); } break;
+    case 'failed': say('Voice couldn\'t start: ' + String(d).slice(0, 120)); closeVoiceWin(); break;
     default: break;
   }
 });
 function applyVoice(q) {
   const was = state.voice;
   const v = state.voice = cleanVoice({ ...was, ...q, volumes: { ...was.volumes, ...(q.volumes && typeof q.volumes === 'object' ? q.volumes : {}) } });
-  if (v.muted !== was.muted) toVoice({ t: 'mute', on: v.muted });
-  if (v.deaf !== was.deaf) toVoice({ t: 'deafen', on: v.deaf });
+  if (v.deaf) v.talk = false;       // not listening: not talking either
+  if (v.talk !== was.talk) toVoice({ t: 'talk', on: v.talk });
   if (v.ptt !== was.ptt) toVoice({ t: 'ptt', on: v.ptt });
   for (const id of Object.keys(q.volumes || {})) if (id in v.volumes) toVoice({ t: 'volume', id, v: v.volumes[id] });
   if (v.ptt !== was.ptt || v.pttKey !== was.pttKey) pttWatch();
-  if (v.muted !== was.muted) micLight();
+  if (v.talk !== was.talk || v.deaf !== was.deaf || v.pin !== was.pin) syncVoice();
+  if (v.talk !== was.talk) micLight();
 }
-// The "mic live" light in the tray: grey while in a call and nobody can hear you, red while they can.
+// The light in the tray while you're in a voice room: grey while your microphone is closed, red while it's open.
+// Clicking it turns Talk on or off.
 function dotImage(r, g, b) {
   const s = 16, buf = Buffer.alloc(s * s * 4);
   for (let y = 0; y < s; y++) for (let x = 0; x < s; x++) {
@@ -1193,15 +1928,23 @@ function dotImage(r, g, b) {
   }
   return nativeImage.createFromBitmap(buf, { width: s, height: s });
 }
+const toggleTalk = () => patch({ voice: { talk: !state.voice.talk } });
+// Out of the voice room (still online in the hub, still in its chat), until Join voice.
+function leaveVoice() { if (!state.voice.deaf) { applyVoice({ deaf: true }); pushState(); } }
 function micLight() {
-  if (!voiceLive) { if (micTray) { micTray.destroy(); micTray = null; } return; }
-  const live = voiceLive.mic === 'live';
-  const img = live ? dotImage(230, 40, 40) : dotImage(140, 140, 140);
-  if (!micTray) { micTray = new Tray(img); micTray.on('click', () => patch({ voice: { muted: !state.voice.muted } })); } else micTray.setImage(img);
-  micTray.setToolTip(live ? 'Drift: you\'re in a call and people can hear you' : voiceLive.mic === 'off' ? 'Drift: you\'re in a call, with no microphone' : 'Drift: you\'re in a call, and your microphone is muted');
+  const live = !!bcWin;       // broadcasting: the light is red too (docs/plans/broadcast.md §12), with Stop one click away
+  if (!voiceLive && !live) { if (micTray) { micTray.destroy(); micTray = null; } return; }
+  const open = !!voiceLive && state.voice.talk;
+  const img = open || live ? dotImage(230, 40, 40) : dotImage(140, 140, 140);
+  // Clicking it: Talk on or off while in voice; otherwise (only live) the Broadcast tab
+  if (!micTray) { micTray = new Tray(img); micTray.on('click', () => (voiceLive ? toggleTalk() : visWins[0] && visWins[0].win.webContents.send('cmd', { type: 'show-panel', tab: 'broadcast' }))); } else micTray.setImage(img);
+  const hubId = voiceLive ? voiceLive.hub : (chat.info().bc.mine || {}).hub, where = (chat.info().hubs.find((h) => h.id === hubId) || {}).name || 'a hub';
+  const mic = !voiceLive ? '' : !open ? `listening in ${where}. Your microphone is closed` : voiceLive.mic === 'none' ? 'no microphone found' : voiceLive.mic === 'open' ? `your microphone is open in ${where}. Hold the key to talk` : `your microphone is on in ${where}: people can hear you`;
+  micTray.setToolTip('Drift: ' + [live ? `you're live in ${where} (${bcSource ? bcSource.title : 'broadcasting'})` : '', mic].filter(Boolean).join('. '));
   micTray.setContextMenu(Menu.buildFromTemplate([
-    { label: state.voice.muted ? 'Unmute' : 'Mute', click: () => patch({ voice: { muted: !state.voice.muted } }) },
-    { label: 'Leave the call', click: () => voiceLeave() },
+    ...(live ? [{ label: 'Stop broadcasting', click: () => CHAT_OPS.bcStop() }, { type: 'separator' }] : []),
+    ...(voiceLive ? [{ label: open ? 'Mute (close the microphone)' : 'Talk', click: toggleTalk }, { label: 'Leave voice', click: () => patch({ voice: { deaf: true } }) }] : []),
+    { label: `Leave ${where}`, click: () => chat.disconnect(hubId) },
   ]));
 }
 // Hold-to-talk: Electron's globalShortcut only reports presses, never releases (spike 1), so a small helper watches
@@ -1223,7 +1966,7 @@ const pttScript = (vk) => [
   '}'].join('\n');
 function pttWatch() {
   if (pttProc) { try { pttProc.kill(); } catch { /* gone */ } pttProc = null; }
-  if (!voiceLive || !state.voice.ptt || process.platform !== 'win32') return;
+  if (!voiceLive || !state.voice.talk || !state.voice.ptt || process.platform !== 'win32') return;
   const p = pttProc = ps(pttScript(VOICE_KEYS[state.voice.pttKey]), { stdio: ['ignore', 'pipe', 'ignore'] });
   let buf = '';
   p.stdout.setEncoding('utf8');
@@ -1301,6 +2044,7 @@ function buildWindows() {
     win.loadFile(path.join(__dirname, 'renderer', 'index.html')).catch(() => {});       // (a window replaced while it loads)
   }
   for (const o of old) if (!o.win.isDestroyed()) o.win.destroy();
+  catRehome();       // before the new windows ask where the cats are (initFor)
 }
 function rebuildSoon() {
   clearTimeout(rebuildTimer);
@@ -1398,6 +2142,15 @@ function patch(p) {
       if (!['auto', '2160', '1440', '1080', '720', '480'].includes(String(v.xq))) v.xq = 'auto';
     }
     else if (k === 'voice') applyVoice(p.voice || {});
+    else if (k === 'broadcast') {
+      const was = state.broadcast;
+      state.broadcast = cleanBroadcast({ ...state.broadcast, ...(p.broadcast || {}) });
+      if (state.broadcast.quality !== was.quality) toBc({ t: 'quality', quality: state.broadcast.quality });
+      if (state.broadcast.pointers !== was.pointers) { bcOvSync(); bcPush(); }
+      if (state.broadcast.sound !== was.sound && bcWin) { bcSoundFail = ''; chat.bcUpdate({ audio: bcSoundWanted() }); bcSoundSync(); bcPush(); }
+    }
+    else if (k === 'hubSurf') { const q = p.hubSurf || {}; state.hubSurf = cleanHubSurf({ ...state.hubSurf, ...(q.noDownloads !== undefined ? { noDownloads: q.noDownloads } : {}), ...(q.allowLan !== undefined ? { allowLan: q.allowLan } : {}) }); }       // (only these two are the panel's to set)
+    else if (k === 'mixer') state.mixer = cleanMixer({ ...state.mixer, ...(p.mixer && typeof p.mixer === 'object' ? p.mixer : {}) });
     else if (k === 'share') { state.share = cleanShare({ ...state.share, ...(p.share || {}) }); p2p.setOptions({ wait: state.share.wait, name: shareName() }); if (chat && p.share && p.share.name !== undefined) chat.setName(shareName()); web.blockChanged(); }
     else if (k === 'music') {
       state.music = { ...state.music, ...p.music };
@@ -1421,6 +2174,7 @@ function patch(p) {
   // Settings' Mirror layout takes a page open in our own Surf along with it: Mirror shows it on every monitor, Span and Mix put it back on its own one
   if (prev.mode !== state.mode && !('surfMirror' in p) && !remote && web.info().open) state.surfMirror = state.mode === 'mirror';
   applySideEffects(prev);
+  if (JSON.stringify(prev.mixer) !== JSON.stringify(state.mixer)) { web.gainChanged(); toVoice({ t: 'master', v: mixGain().master }); }       // (a voice room not open yet takes it as it starts)
   if (prev.surfGpu !== state.surfGpu) web.gpuChanged();       // the browser goes up again the other way
   else if (prev.surfMirror !== state.surfMirror) web.resized();       // the page's size follows the widest monitor it is on
   const pv = prev.video, nv = state.video;
@@ -1540,7 +2294,7 @@ ipcMain.handle('list-dir', (_e, dir, kind) => listDir(dir, libKind(kind)));
 ipcMain.handle('search-lib', (_e, kind, root, q) => searchLib(libKind(kind), root, q));
 ipcMain.on('patch', (_e, p) => patch(p || {}));
 ipcMain.on('levels', (_e, l) => broadcast('levels', l, false));
-ipcMain.on('now', (_e, n) => { nowPlaying = n; broadcast('now', n, false); p2p.sync(); });       // friends listening see the title too
+ipcMain.on('now', (_e, n) => { nowPlaying = n; broadcast('now', n, false); p2p.sync(); syncLive(); });       // friends listening see the title too
 ipcMain.handle('read-file', async (_e, p) => {
   if (!state.music.playlist.includes(p)) throw new Error('not in playlist');
   const buf = await fs.promises.readFile(p);
@@ -1590,12 +2344,12 @@ ipcMain.on('cmd', async (e, c) => {
     case 'add-files': {
       const r = await dialog.showOpenDialog(parent, { title: 'Add music', properties: ['openFile', 'multiSelections'],
         defaultPath: app.getPath('music'), filters: [{ name: 'Audio', extensions: AUDIO_EXT.map((x) => x.slice(1)) }] });
-      if (!r.canceled) addTracks(r.filePaths);
+      if (!r.canceled && r.filePaths.length) await mediaPlay(mediaName(r.filePaths[0]), () => addTracks(r.filePaths));
       break;
     }
     case 'add-folder': {
       const r = await dialog.showOpenDialog(parent, { title: 'Add a music folder', properties: ['openDirectory'], defaultPath: app.getPath('music') });
-      if (!r.canceled) { const out = []; scanFolder(r.filePaths[0], out); addTracks(out); }
+      if (!r.canceled) { const out = []; scanFolder(r.filePaths[0], out); if (out.length) await mediaPlay(path.basename(r.filePaths[0]), () => addTracks(out)); }
       break;
     }
     case 'pick-video': {
@@ -1603,43 +2357,94 @@ ipcMain.on('cmd', async (e, c) => {
         defaultPath: app.getPath('videos'), filters: [{ name: 'Video and music', extensions: [...new Set([...VIDEO_EXT, ...AUDIO_EXT])].map((x) => x.slice(1)) }, { name: 'Video', extensions: VIDEO_EXT.map((x) => x.slice(1)) }, { name: 'Music', extensions: AUDIO_EXT.map((x) => x.slice(1)) }] });
       if (r.canceled || !r.filePaths.length) break;
       const vids = r.filePaths.filter(isVideo), songs = r.filePaths.filter((f) => !isVideo(f) && isAudio(f));
-      if (vids.length) { if (remote) await p2p.stop(); setVideos(vids, c.key); }      // playing your own video leaves a friend's session
-      else if (songs.length) {
+      if (vids.length) await mediaPlay(mediaName(vids[0]), () => setVideos(vids, c.key));      // playing your own video leaves a friend's session, and shares it into your hub
+      else if (songs.length) await mediaPlay(mediaName(songs[0]), () => {
         showVisualizer();
         patch({ music: { playlist: songs, source: 'files', playing: true } });
         if (audioWin && !audioWin.isDestroyed()) audioWin.webContents.send('cmd', { type: 'play-index', index: 0 });
-      }
+      });
       break;
     }
     // ---- watch together ----
-    case 'share-start':
+    case 'share-start': {
+      const want = chat ? await shareHub(String(c.hub || '')) : '', h = want && chat.info().hubs.find((x) => x.id === want), t = mediaTop(h);
+      if (t && t.from !== chat.myId()) {       // someone else's is on there: ask everyone, as picking something does
+        if (mediaPending) { say('Your vote is still going'); break; }
+        mediaPending = { hub: want, go: () => ipcMain.emit('cmd', e, { ...c, type: 'share-start', hub: want }) };
+        const r = await chat.mediaAsk(want, shareTitle());
+        if (r.error || r.free) { const p = mediaPending; mediaPending = null; if (r.error) say(r.error); else p.go(); }
+        break;
+      }
       if (remote) await p2p.stop();
-      liveHub = chat ? await shareHub(String(c.hub || '')) : '';
+      liveHub = want;
       p2p.share({ port: state.share.port, internet: state.share.internet, wait: state.share.wait, name: shareName(), local: !!process.env.DRIFT_SHARE_LOCAL });     // dev: stay on this PC
       break;
-    case 'share-stop': p2p.stop(); break;
+    }
+    case 'share-stop': if (p2p.role() === 'guest') mediaTried = joinedCode; p2p.stop(); break;       // (Leave skips the share that's on; Stop sharing ends ours)
     case 'surf-forget':       // Settings: forget Surf's sign-ins, cookies and history (Drift's own settings stay)
       try { await web.forget(); say('Surf has forgotten its sign-ins, cookies and history'); } catch { say('Surf\'s data couldn\'t be cleared. Try again after restarting Drift.'); }
       break;
     case 'surf': {       // the browser: the Surf tab and the bar along the top of a page
-      const k = (visWins.find((x) => x.win.webContents === e.sender) || {}).key, d = c.do, was = web.info().open;
-      if (d === 'attached') web.attached(e.sender, +c.tab, +c.wc);
-      else if (d === 'hide') { if (!remote) web.hide(); else if (streamShown) { streamShown = false; pushState(); } }
-      else if (d === 'show' || d === 'move') {       // show: bring it back where it was; move: onto the screen that asked
-        if (!remote) web.show(d === 'move' || !was ? k : '');
-        else { if (d === 'move') streamKey = k || ''; streamShown = true; pushState(); }
+      const k = (visWins.find((x) => x.win.webContents === e.sender) || {}).key, d = c.do, mode = surfMode();
+      if (mode === 'hub') {       // the hub's Surf stream, on this PC
+        if (d === 'hide' || d === 'quit') { surfShown = false; if (hubWeb) hubWeb.hide(); ptrClear(); }
+        else if (d === 'show' || d === 'move' || d === 'new' && !(hubWeb && hubWeb.running())) hubShow(d === 'move' || !surfShown ? k : surfKey);       // (a first "new tab" just starts it, on its start page)
+        else if (d === 'view') { if (k && hubWeb) hubWeb.viewer(e.sender, !!c.on); }       // this window starts or stops drawing it
+        else if (SURF.includes(d)) { if (!surfShown) hubShow(k); const r = hubWeb ? hubWeb.act(c) : {}; if (r.error) say(r.error); }
+        pushState();
+        break;
       }
-      else if (d === 'quit') { if (!remote) web.close(); }
-      else if (d === 'outside') { if (!remote) web.outside(); }       // open the page in the PC's own browser
-      else if (d === 'view') { if (k) web.viewer(e.sender, !!c.on && !remote); }       // this window starts or stops drawing the offscreen page
-      else if (!SURF.includes(d)) break;
-      else if (remote) {       // a friend's browser: ask their PC
-        if (!remote.web) say('Leave your friend\'s session to open your own page');
-        else if (!remote.ctrl) say(`Only ${p2p.info().host || 'the host'} can control the page`);
-        else p2p.send({ t: 'cmd', a: 'surf', m: { do: d, text: String(c.text || '').slice(0, 2000), id: +c.id || 0, n: +c.n || 0 } });
-      } else { const r = web.act(c, was ? web.info().key : k); if (r.error) say(r.error); }       // (the bar on a monitor mirroring the page steers it where it is)
+      if (mode === 'stream') {       // another hub's Surf stream: shown here as a picture, steered from here
+        if (d === 'hide') surfShown = false;       // put away: its sound plays on (decision §11.1); the picture comes back when Surf is chosen again
+        else if (d === 'quit') { surfShown = false; ssStop(); }
+        else if (d === 'show' || d === 'move' || (d === 'new' && !surfShown)) {
+          const was = surfKey; surfShown = true; surfKey = d === 'move' || !was ? k : was;
+          if (!ssW || ssW.err || ssW.hub !== (surfHub() || {}).id || surfKey !== was) ssStart();       // (back from being put away on the same screen: the same connection, shown again)
+        }
+        else if (d === 'want') ssStart(true);       // the screen holding the picture asks again (no picture for a while)
+        else if (SURF.includes(d)) ssOut({ t: 'bar', m: { do: d, text: String(c.text || '').slice(0, 2000), id: +c.id || 0, n: +c.n || 0 } });
+        pushState();
+        break;
+      }
+      if (d === 'show' || d === 'move' || SURF.includes(d)) surfBack();       // your own tabs, kept while you were online in a hub, come back first
+      const was = web.info().open;
+      if (d === 'attached') web.attached(e.sender, +c.tab, +c.wc);
+      else if (d === 'hide') web.hide();
+      else if (d === 'show' || d === 'move') web.show(d === 'move' || !was ? k : '');       // show: bring it back where it was; move: onto the screen that asked
+      else if (d === 'quit') web.close();
+      else if (d === 'outside') web.outside();       // open the page in the PC's own browser
+      else if (d === 'view') { if (k) web.viewer(e.sender, !!c.on); }       // this window starts or stops drawing the offscreen page
+      else if (SURF.includes(d)) { const r = web.act(c, was ? web.info().key : k); if (r.error) say(r.error); }       // (the bar on a monitor mirroring the page steers it where it is)
       break;
     }
+    case 'ss': {       // the Surf stream's picture, in the screen window that shows it (renderer/app.js)
+      const x = visWins.find((y) => y.win.webContents === e.sender);
+      if (surfMode() !== 'stream' || !ssW || !x || x.key !== screenFor(surfKey)) { if (c.do === 'cert') chatLog('surf stream: a certificate came while not watching here'); break; }
+      if (c.do === 'signal' && c.d && typeof c.d === 'object') chat.ssSignal(ssW.host, c.d);
+      else if (c.do === 'cert') { const r = chat.ssCert(ssW.host, String(c.alg || ''), String(c.fp || '')); if (!r.ok) chatLog('surf stream: the host\'s certificate couldn\'t be checked (' + JSON.stringify(chat.info().ss.watching) + ')'); }
+      else if (c.do === 'dc') onSsDc(c.m);
+      else if (c.do === 'state') ssLive = String(c.state || '');
+      break;
+    }
+    case 'bc': {       // a broadcast being watched, in the screen window that shows it (renderer/app.js #bcView)
+      const x = visWins.find((y) => y.win.webContents === e.sender);
+      if (!bcView || !x || x.key !== bcViewKey()) break;
+      if (c.do === 'signal' && c.d && typeof c.d === 'object') chat.bcSignal(bcView.bc, bcView.from, c.d);
+      else if (c.do === 'cert') chat.bcCert(bcView.bc, bcView.from, String(c.alg || ''), String(c.fp || ''));
+      else if (c.do === 'dc') onBcDc(c.m);
+      else if (c.do === 'state') { const st = String(c.state || '').slice(0, 20); if (st !== bcView.state) { bcView.state = st; pushState(); } }
+      else if (c.do === 'want') bcAgain();
+      else if (c.do === 'stop') bcUnwatchOp(bcView.bc);
+      else if (c.do === 'cursor') bcCursor(bcView.bc, !!c.on);
+      else if (c.do === 'switch') bcWatchOn(bcView.hub, String(c.id || ''), x.key).then((r) => { if (r.error) say(r.error); });
+      break;
+    }
+    case 'hub-held': heldAnswer(+c.id, !!c.save); break;       // the host's answer to a download on the Surf stream
+    case 'hub-surf-clear':       // Settings: the hub's browser closes its tabs and forgets its sign-ins
+      if (!hubBrowser()) break;
+      try { await hubWeb.forget(); state.hubSurf = { ...state.hubSurf, urls: [], active: 0 }; saveSoon(); say('The hub\'s browser has closed its tabs and forgotten its sign-ins'); } catch { say('The hub\'s browser couldn\'t be cleared. Try again after restarting Drift.'); }
+      if (surfMode() === 'hub' && surfShown) hubShow(surfKey);
+      break;
     case 'rtc': {       // setting up a web page's stream: with a friend, or (local) between the window holding the page and another monitor mirroring it
       if (!c.d || typeof c.d !== 'object') break;
       const to = String(c.to || '');
@@ -1649,20 +2454,21 @@ ipcMain.on('cmd', async (e, c) => {
       } else if (to.startsWith('local:')) {       // ...and back
         const x = visWins.find((y) => y.key === to.slice(6));
         if (x && !x.win.isDestroyed() && x.win.webContents !== e.sender) x.win.webContents.send('cmd', { type: 'rtc', local: true, d: c.d });
-      } else if (to) p2p.sendTo(to, { t: 'rtc', d: c.d }); else if (remote) p2p.send({ t: 'rtc', d: c.d });
+      } else if (c.d.ch === 'music') { if (to) p2p.sendTo(to, { t: 'rtc', d: c.d }); else if (remote) p2p.send({ t: 'rtc', d: c.d }); }       // (the music friends hear)
       break;
     }
     case 'share-music':       // play / pause / next / previous for a friend's music
       if (!remote || !remote.music || !['toggle', 'next', 'prev'].includes(c.do)) break;
       if (remote.ctrl) p2p.send({ t: 'cmd', a: 'music', do: c.do }); else say(`Only ${p2p.info().host || 'the host'} can control the music`);
       break;
-    case 'web-ptr': if (remote && remote.web) p2p.send({ t: 'ptr', x: +c.x, y: +c.y }); break;       // where this PC's mouse is over a friend's web page
+    case 'web-ptr': if (surfMode() === 'stream') ssOut({ t: 'ptr', x: +c.x, y: +c.y }); break;       // where this PC's mouse is over the Surf stream
     case 'web-input':       // mouse and keyboard over a friend's web page, or over our own page mirrored on another monitor
       if (!c.e || typeof c.e !== 'object') break;
-      if (remote) { if (remote.ctrl && remote.web) p2p.send({ t: 'cmd', a: 'input', e: c.e }); }
+      if (surfMode() === 'stream') ssOut({ t: 'in', e: c.e });       // over another hub's Surf stream: to its host
+      else if (surfMode() === 'hub') { if (hubWeb && visWins.some((x) => x.win.webContents === e.sender)) hubWeb.input(c.e, true, chat.myId()); }       // over the hub's own, on this PC
       else if (visWins.some((x) => x.win.webContents === e.sender && (x.key !== web.info().key ? state.surfMirror : web.info().gpu))) web.input(c.e, true);       // (the Surf monitor's own, when the page is drawn offscreen)
       break;
-    case 'share-join': { joinedCode = String(c.code || ''); const r = await p2p.join(c.code, shareName()); if (!r.ok) say(r.error); break; }
+    case 'share-join': { joinedCode = mediaTried = String(c.code || ''); const r = await p2p.join(c.code, shareName()); if (!r.ok) say(r.error); break; }
     case 'share-copy': if (p2p.info().code && !p2p.info().settling) { clipboard.writeText(p2p.info().code); say('Invite code copied — send it to your friend'); } break;
     case 'share-paste': e.sender.send('cmd', { type: 'share-code', code: clipboard.readText().trim().slice(0, 300) }); break;
     case 'xc-started': if (c.ms > 0) xcLead = Math.round(Math.max(1500, Math.min(7000, Math.max(c.ms * 1.25 + 300, xcLead * 0.8)))); break;      // how long a stream took to show its first picture
@@ -1703,9 +2509,11 @@ ipcMain.on('cmd', async (e, c) => {
     case 'play-tracks': {
       const files = (c.files || []).filter((f) => typeof f === 'string' && isAudio(f) && inLib('audio', f));
       if (!files.length) break;
-      showVisualizer();
-      patch({ music: { playlist: files, source: 'files', playing: true } });
-      if (audioWin && !audioWin.isDestroyed()) audioWin.webContents.send('cmd', { type: 'play-index', index: Math.max(0, Math.min(files.length - 1, c.index | 0)) });
+      await mediaPlay(mediaName(files[c.index | 0] || files[0]), () => {
+        showVisualizer();
+        patch({ music: { playlist: files, source: 'files', playing: true } });
+        if (audioWin && !audioWin.isDestroyed()) audioWin.webContents.send('cmd', { type: 'play-index', index: Math.max(0, Math.min(files.length - 1, c.index | 0)) });
+      });
       break;
     }
     case 'show-viz': showVisualizer(); break;       // an Ambient preset or another music source was chosen
@@ -1747,8 +2555,7 @@ ipcMain.on('cmd', async (e, c) => {
     case 'play-videos': {
       const files = (c.files || []).filter((f) => typeof f === 'string' && isVideo(f) && inLibrary(f));
       if (!files.length) break;
-      if (remote) await p2p.stop();
-      setVideos(files, c.key, Math.max(0, Math.min(files.length - 1, c.index | 0)));
+      await mediaPlay(mediaName(files[c.index | 0] || files[0]), () => setVideos(files, c.key, Math.max(0, Math.min(files.length - 1, c.index | 0))));
       break;
     }
     case 'stop-video':
@@ -1829,8 +2636,18 @@ else {
     // and lets the window holding a shared web page capture that page's picture and sound, to send to friends
     session.defaultSession.setDisplayMediaRequestHandler((req, cb) => {
       const from = req.frame ? webContents.fromFrame(req.frame) : null;
+      if (from && ssWin && !ssWin.isDestroyed() && from === ssWin.webContents) {       // the Surf stream's window: the hub's browser, and nothing else
+        const f = hubWeb && hubWeb.captureFrame();
+        cb(f ? { video: f, audio: f, enableLocalEcho: true } : {});       // (local echo: the host hears it when muted() lets them)
+        return;
+      }
+      if (from && bcWin && !bcWin.isDestroyed() && from === bcWin.webContents) {       // the broadcast window: exactly the source picked in the Broadcast tab, and nothing else
+        if (!bcSource) { cb({}); return; }
+        desktopCapturer.getSources({ types: [bcSource.kind], thumbnailSize: { width: 0, height: 0 } }).then((src) => { const x = src.find((y) => y.id === bcSource.id); cb(x ? { video: x } : {}); }).catch(() => cb({}));
+        return;
+      }
       if (from && visWins.some((v) => !v.win.isDestroyed() && v.win.webContents === from)) {
-        const may = p2p.role() === 'host' || (!!state.surfMirror && !remote);       // for friends, or for this PC's other monitors
+        const may = !!state.surfMirror;       // for this PC's other monitors
         const f = may ? web.frame(from) : null;
         const out = !f && may ? web.source(from) : null;
         if (out) {       // the page is open in the PC's own browser: its window, and the PC's sound (a window's own sound can't be picked out)
@@ -1925,6 +2742,7 @@ async function runShots() {
     // shoo: the mouse runs at every cat on each screen, a few times; then they all gather on the middle screen
     const count = async (tag) => log.push(`${tag} ` + JSON.stringify(await Promise.all(visWins.map((v) => v.win.webContents.executeJavaScript("document.querySelectorAll('.coCat.here').length").catch(() => -1)))));
     await panelJs("p.classList.remove('show', 'open')"); await wait(1200); await count('cats before shoo');
+    log.push(`cats at ${JSON.stringify(catAt)} screens ${JSON.stringify(catScreens())} off ${JSON.stringify(state.displaysOff)} unlocked ${state.catsUnlocked} count ${state.catCount}`);
     await count('cats before unlock');
     await panelJs("document.querySelector('.tabs [data-tab=\\\"settings\\\"]').click(); p.classList.add('show', 'open'); for (const key of 'meow') dispatchEvent(new KeyboardEvent('keydown', { key }))");
     await wait(1500); log.push('unlocked: ' + state.catsUnlocked + ' / label: ' + await visWins[0].win.webContents.executeJavaScript("document.querySelector('#catName').textContent + ' / slider hidden: ' + document.querySelector('#catCountRow').hidden"));
@@ -1932,6 +2750,14 @@ async function runShots() {
     for (let i = 0; i < 3; i++) { await panelJs(`p.classList.${i % 2 ? 'remove' : 'add'}('show')`); await wait(1300); await count('cats after panel ' + (i % 2 ? 'closed' : 'opened')); }
     await count('cats after shoo'); await snap('cat-shooed');
     catGather(); await wait(CAT_GATHER_GAP * 3 + 1200); await count('cats gathered (middle ' + catMiddle() + ')'); await snap('cat-gather');
+    log.push('cat names: ' + await visWins[0].win.webContents.executeJavaScript("[...document.querySelectorAll('.coCat')].map((c) => c.dataset.name).join(' ')"));
+    log.push('hover tag: ' + await visWins[0].win.webContents.executeJavaScript("(() => { const c = document.querySelector('.coCat.here'); if (!c) return 'no cat here'; c.dispatchEvent(new MouseEvent('mouseenter')); const t = document.querySelector('#coCatTag'); return t.textContent + ' on=' + t.classList.contains('on'); })()"));
+    const offWas = state.displaysOff; patch({ displaysOff: [] }); await wait(3000);
+    if (visWins.length > 1) {       // a monitor turned off: its cats move to the screens still showing, right away (not at the next tick)
+      const off = visWins[visWins.length - 1].index; patch({ displaysOff: [off] }); await wait(3000);
+      log.push(`monitor ${off} off: cats at ${JSON.stringify(catAt.slice(0, state.catCount))} screens ${JSON.stringify(catScreens())}`); await count('cats after monitor off');
+    }
+    patch({ displaysOff: offWas }); await wait(3000);
     patch({ cat: false });
   }
   if (process.env.DRIFT_TESTWAV) {
@@ -2131,7 +2957,7 @@ async function runShots() {
       if (process.env.DRIFT_TESTVIDEO) { setVideos([process.env.DRIFT_TESTVIDEO]); await wait(2500); }
       const pic = await js("(() => { const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d'); g.fillStyle = '#e0457b'; g.fillRect(0, 0, 128, 128); g.fillStyle = '#fff'; g.font = 'bold 80px sans-serif'; g.fillText('H', 34, 94); return c.toDataURL('image/webp', 0.8); })()");
       log.push('host: picture ' + JSON.stringify(chat.setAvatar(pic)));
-      await js("document.querySelector('#shStart').click()");
+      ipcMain.emit('cmd', { sender: wc }, { type: 'share-start', hub: '' });       // (the Together button is gone: this is what it did)
       log.push('host: hub made and up ' + await until(() => hubs().some((h) => h.mine && h.status === 'connected')));
       log.push('host: sharing ' + await until(() => p2p.info().role === 'host' && !!p2p.info().code && !p2p.info().settling));
       const h = hubs().find((x) => x.mine);
@@ -2171,16 +2997,18 @@ async function runShots() {
       log.push('guest: session over ' + (p2p.role() === 'off'));
     }
   }
-  if (process.env.DRIFT_TESTVOICE) {     // a call between three copies of Drift on one PC (DRIFT_USERDATA apart): =host, =guest or =third. DRIFT_TESTCODE = a file
+  if (process.env.DRIFT_TESTVOICE) {     // a hub's voice room with three copies of Drift on one PC (DRIFT_USERDATA apart): =host, =guest or =third. DRIFT_TESTCODE = a file
     // for the invite, DRIFT_TESTVOICE_OUT = a folder where each writes what it saw (<role>.json). The host's Drift runs the hub, so DRIFT_HUB_TAMPER
-    // goes to the host. They press the real buttons: the host starts the call, the guest joins, the third joins last (and offers to both).
+    // goes to the host. Opening the hub doesn't put you in voice: each presses Join voice in the hub bar, then Unmute (a test tone, not a microphone).
     const role = process.env.DRIFT_TESTVOICE, codeFile = process.env.DRIFT_TESTCODE, outDir = process.env.DRIFT_TESTVOICE_OUT;
     const name = { host: 'Hosty', guest: 'Guesty', third: 'Third' }[role] || role;
     const wc = visWins[0].win.webContents, js = (c) => wc.executeJavaScript(c);
     const until = async (f, ms = 30000) => { for (let t = 0; t < ms && !f(); t += 250) await wait(250); return f(); };
     const vlog = (t) => log.push(`voice ${role}: ${t}`);
     const hubNow = () => chat.info().hubs.find((h) => h.status === 'connected');
-    patch({ music: { source: 'off' }, share: { internet: false, name }, voice: { muted: false, deaf: false, ptt: false, direct: false } });
+    const vtest = () => (voiceWin ? voiceWin.webContents.executeJavaScript('window.voiceTest()').catch((e) => ({ error: e.message })) : null);
+    const barBtn = (label) => js(`(() => { const b = [...document.querySelectorAll('#callBar button')].find((x) => x.textContent === ${JSON.stringify(label)}); if (b) b.click(); return !!b; })()`);
+    patch({ music: { source: 'off' }, share: { internet: false, name }, voice: { talk: false, deaf: false, ptt: false, direct: false, pin: '' } });
     wc.send('cmd', { type: 'show-panel', tab: 'share' }); await wait(800);
     if (role === 'host') {
       await js("document.querySelector('#chHost').click()");
@@ -2191,94 +3019,549 @@ async function runShots() {
       await js(`document.querySelector('#chCode').value = ${JSON.stringify(fs.readFileSync(codeFile, 'utf8'))}; document.querySelector('#chJoin').click()`);
       vlog('joined the hub ' + await until(() => hubNow()));
     }
-    const everyone = () => { const h = hubNow(); return h ? h.members.length + h.suspect.length : 0; };
+    const everyone = () => { const h = hubNow(); return h ? h.members.length + h.suspect.length : 0; }, res0 = {};
     vlog('everyone is in the hub ' + await until(() => everyone() >= 3, 60000));
-    const turn = { host: 0, guest: 1, third: 2 }[role];
-    vlog('my turn to join the call ' + await until(() => hubNow() && hubNow().voice.length === turn, 60000));
-    await wait(400);
-    await js("[...document.querySelectorAll('#chHubs button')].find((b) => /^(Start a call|Join the call)$/.test(b.textContent)).click()");
-    vlog('in the call ' + await until(() => !!chat.info().call));
-    // Settled: all three in the call, and every connection either verified, refused, or given up on.
+    await wait(2000);
+    res0.notInVoiceAtFirst = !chat.info().call && !voiceLive && state.voice.deaf;
+    vlog('not in voice before Join voice ' + res0.notInVoiceAtFirst);
+    vlog('press Join voice ' + await barBtn('Join voice'));
+    vlog('in the voice room ' + await until(() => !!chat.info().call && !!voiceLive, 30000));
+    // Settled: all three listening, and every connection either verified, refused, or given up on.
     const settled = () => {
       const c = chat.info().call, h = hubNow();
-      if (!c || !h || h.voice.length < 3 || !voiceLive) return false;
-      return c.peers.length === 2 && c.peers.every((id) => c.verdict[id] || c.refused[id] || c.told.includes(id) || voiceLive.peers[id] === 'failed');
+      if (!c || !h || h.voice.filter((v) => v.listen).length < 3 || !voiceLive) return false;
+      return c.peers.length === 2 && c.want.length === 2 && c.peers.every((id) => c.verdict[id] || c.refused[id] || c.told.includes(id) || voiceLive.peers[id] === 'failed');
     };
-    vlog('settled ' + await until(settled, 60000));
+    vlog('settled, listening ' + await until(settled, 60000));
+    await wait(1500);
+    const before = await vtest();       // connected, but nobody has pressed Talk: no microphone was ever opened
+    const res = { ...res0, role, name, me: chat.myId(), before, lightBefore: voiceLive && voiceLive.mic, trayBefore: !!micTray, barBefore: await js("document.querySelector('#callBar').innerText.replace(/\\n+/g, ' | ')") };
+    vlog('press Unmute ' + await barBtn('Unmute'));
+    vlog('everyone talking ' + await until(() => { const h = hubNow(); return h && h.voice.filter((v) => v.talk && v.mic).length === 3; }, 30000));
     await wait(4000);       // sound flowing for a while, and the panel drawn
     const h = hubNow(), names = Object.fromEntries([...h.members, ...h.suspect].map((m) => [m.id, m.name]));
-    const res = {
-      role, name, me: chat.myId(), names, call: chat.info().call, live: voiceLive, suspect: h.suspect, voice: h.voice,
-      test: voiceWin ? await voiceWin.webContents.executeJavaScript('window.voiceTest()').catch((e) => ({ error: e.message })) : null,
+    Object.assign(res, {
+      names, call: chat.info().call, live: voiceLive, suspect: h.suspect, voice: h.voice, test: await vtest(),
       panel: JSON.parse(await js(`JSON.stringify({ warns: [...document.querySelectorAll('#chHubs .warn')].map((e) => e.textContent),
-        locks: Object.fromEntries([...document.querySelectorAll('#chHubs .vcWho')].map((r) => [r.querySelector('.nm').textContent, (r.querySelector('.lock') || {}).title || ''])),
-        note: (document.querySelector('#chHubs .vcNote') || {}).textContent || '', bar: document.querySelector('#callBar').classList.contains('on') ? document.querySelector('#callBar').innerText.replace(/\\n+/g, ' | ') : '' })`)),
+        locks: Object.fromEntries([...document.querySelectorAll('#chHubs .chWho')].map((r) => [r.querySelector('.nm').textContent, (r.querySelector('.lock') || {}).title || ''])),
+        note: (document.querySelector('#chHubs .vcNote') || {}).textContent || '', bar: document.querySelector('#callBar').classList.contains('on') ? document.querySelector('#callBar').innerText.replace(/\\n+/g, ' | ') : '',
+        hot: document.querySelector('#callBar').classList.contains('hot') })`)),
       heard: JSON.parse(await js(`JSON.stringify(Object.fromEntries(${JSON.stringify(h.voice.map((v) => v.id))}.map((id) => [id, window.chatUI.canBeHeard(${JSON.stringify(h.id)}, id)])))`)),
-      relay: role === 'host' ? chat.relayStats() : null,
-    };
+      relay: role === 'host' ? chat.relayStats() : null, lightTalking: voiceLive && voiceLive.mic,
+    });
     await snap('voice-' + role);
-    patch({ voice: { muted: true } }); await wait(1500);       // muting reaches the hub, and the others stop counting you as heard
-    res.mutedReported = (hubNow().voice.find((v) => v.id === chat.myId()) || {}).muted === true;
+    vlog('press Mute ' + await barBtn('Mute')); await wait(1500);       // the microphone closes, the hub hears of it, and the others stop counting you as heard
+    res.closedReported = (hubNow().voice.find((v) => v.id === chat.myId()) || {}).talk === false;
     res.lightAfterMute = voiceLive && voiceLive.mic;
-    patch({ voice: { muted: false } });
+    res.afterMute = await vtest();
     fs.mkdirSync(outDir, { recursive: true });
     fs.writeFileSync(path.join(outDir, role + '.json'), JSON.stringify(res, null, 1));
     vlog('wrote what it saw');
     await until(() => ['host', 'guest', 'third'].every((r) => fs.existsSync(path.join(outDir, r + '.json'))), role === 'host' ? 90000 : 30000);       // the host keeps the hub up until everyone is done
-    await js("[...document.querySelectorAll('#callBar button')].find((b) => b.textContent === 'Leave').click()");
-    vlog('left the call: window closed ' + await until(() => !voiceWin && !voiceLive, 5000));
-    if (role === 'host') await wait(1500);
-  }
-  if (process.env.DRIFT_TESTWEB) {     // exercise watching a web page together, the same way: =host or =guest, DRIFT_TESTCODE as above, DRIFT_TESTURL = the page. The host's page is streamed to the guest, whose mouse and keys go back
-    const role = process.env.DRIFT_TESTWEB, codeFile = process.env.DRIFT_TESTCODE, wc = visWins[0].win.webContents, cmd = (c) => ipcMain.emit('cmd', { sender: wc }, c);
-    const page = () => { const f = web.frame(wc); return f ? webContents.fromFrame(f) : null; };       // the tab in front
-    const inPage = (code) => { const g = page(); return g ? Promise.race([g.executeJavaScript(code, true), wait(3000)]).catch((e) => 'error ' + e.message) : Promise.resolve('no page'); };
-    const note = () => wc.executeJavaScript("document.querySelector('#nowName').textContent.slice(0, 140)").catch((e) => 'failed: ' + e.message);
-    wc.on('render-process-gone', (_e, d) => log.push('web: the renderer of this window went: ' + JSON.stringify(d)));
-    patch({ music: { source: 'off' }, share: { internet: false, wait: true, control: process.env.DRIFT_TESTCTRL !== 'off', quality: 'original', name: process.env.DRIFT_TESTNAME || (role === 'host' ? 'Hosty' : 'Guesty'), adblock: process.env.DRIFT_TESTADS !== 'off' } });
-    if (role === 'host') {
-      cmd({ type: 'share-start' }); await wait(1500);
-      fs.writeFileSync(codeFile, p2p.info().code);
-      cmd({ type: 'surf', do: 'go', text: process.env.DRIFT_TESTURL }); await wait(1000);
-      for (let i = 0; i < 40 && !p2p.count(); i++) await wait(500);
-      const tabsNow = () => { const w = web.info(); return `tabs=${w.tabs.map((t) => (t.id === w.active ? '*' : '') + t.title).join(' | ')} open=${w.open} sid=${w.sid} back=${w.back}`; };
-      for (let i = 0; i < 27; i++) {       // what the guest's mouse and keyboard did to the page, then tabs and putting the browser away
-        await wait(2000);
-        log.push(`web host +${i * 2}s: ${JSON.stringify(await inPage('({ y: Math.round(scrollY), hash: location.hash, typed: (document.querySelector("input") || {}).value || "", keys: window.keys || "", q: location.host + location.search })'))} ${tabsNow()} note=${await note()}`);
-        if (i === 4) ptrSet('host', shareName(), { x: 0.62, y: 0.44 });
-        if (i === 5) { await snap('pointers'); log.push('pointers on the host: ' + await wc.executeJavaScript("JSON.stringify([...document.querySelectorAll('#ptrs .ptr')].map((q) => q.textContent + ' ' + q.style.left + ' ' + q.style.top))")); }
-        if (i === 6) { wc.send('cmd', { type: 'show-panel', tab: 'music' }); await wait(1500); await snap('media-music'); wc.send('cmd', { type: 'show-panel', tab: 'video' }); await wait(1500); await snap('media-video'); log.push('media tab: ' + await wc.executeJavaScript("JSON.stringify({ tabs: [...document.querySelectorAll('.tabs button')].map((b) => b.textContent), section: document.querySelector('#content section.active').dataset.tab, tag: document.querySelector('#ctxTag').textContent })")); await wc.executeJavaScript("document.querySelector('#panel').classList.remove('open')"); }
-        if (i === 9) { log.push('host goes to another site in the same tab'); cmd({ type: 'surf', do: 'go', text: process.env.DRIFT_TESTURL.replace('127.0.0.1', 'localhost') + '?other' }); }
-        if (i === 11) { log.push('host opens a second tab'); cmd({ type: 'surf', do: 'new' }); cmd({ type: 'surf', do: 'go', text: process.env.DRIFT_TESTURL + '?two' }); }
-        if (i === 12) { await wc.executeJavaScript("document.querySelector('#surfBar').classList.add('show')"); await wait(500); await snap('surf-bar'); wc.send('cmd', { type: 'show-panel', tab: 'surf' }); await wait(1200); await snap('surf-tab'); log.push('bar: ' + await wc.executeJavaScript("JSON.stringify({ tabs: [...document.querySelectorAll('#sbTabs .sbTab')].map((b) => b.textContent), url: document.querySelector('#sbUrl').value, views: document.querySelectorAll('webview').length, front: document.querySelectorAll('webview.on').length, vbar: getComputedStyle(document.querySelector('#vbar')).display })")); }
-        if (i === 13) { log.push('host goes back to the first tab'); cmd({ type: 'surf', do: 'tab', id: web.info().tabs[0].id }); }
-        if (i === 15) { log.push('host picks the Scenes tab'); await wc.executeJavaScript("document.querySelector('.tabs button[data-tab=scenes]').click()"); }
-        if (i === 17) { log.push('host picks the Surf tab again'); await wc.executeJavaScript("document.querySelector('.tabs button[data-tab=surf]').click()"); }
-        if (i === 18) { log.push('host goes to the second tab'); cmd({ type: 'surf', do: 'tab', id: web.info().tabs[1].id }); }
-      }
-      cmd({ type: 'surf', do: 'quit' }); await wait(1500); log.push('web host closed: page=' + !!page() + ' info=' + JSON.stringify(web.info()));
-    } else {
-      for (let i = 0; i < 80 && !fs.existsSync(codeFile); i++) await wait(500);
-      await wait(600); cmd({ type: 'share-join', code: fs.readFileSync(codeFile, 'utf8') });
-      await wait(1500); cmd({ type: 'surf', do: 'move' });       // on the monitor this test looks at
-      // the picture that arrived: its size, whether it is moving, whether sound came with it, and the colour at the top left quarter
-      const see = () => wc.executeJavaScript(`(() => { const v = document.querySelector('#webStream'); if (!v) return null; const c = document.createElement('canvas'); c.width = 64; c.height = 36; let px = null;
-        try { const g = c.getContext('2d'); g.drawImage(v, 0, 0, 64, 36); px = [...g.getImageData(16, 5, 1, 1).data].slice(0, 3); } catch (e) { px = e.message; }
-        return { size: v.videoWidth + 'x' + v.videoHeight, t: +v.currentTime.toFixed(1), sound: v.srcObject ? v.srcObject.getAudioTracks().length : 0, px, focus: document.activeElement === v }; })()`).catch((e) => 'failed: ' + e.message);
-      const [W, H] = visWins[0].win.getContentSize(), at = (fx, fy) => ({ x: Math.round(W * fx), y: Math.round(H * fy) });
-      const click = (fx, fy) => { const q = at(fx, fy); wc.sendInputEvent({ type: 'mouseMove', ...q }); wc.sendInputEvent({ type: 'mouseDown', ...q, button: 'left', clickCount: 1 }); wc.sendInputEvent({ type: 'mouseUp', ...q, button: 'left', clickCount: 1 }); };
-      for (let i = 0; i < 26; i++) {
-        await wait(2000); log.push(`web guest +${i * 2}s: ${JSON.stringify(await see())} tabs=${(publicState().web.tabs || []).map((t) => t.title).join(' | ')} note=${await note()}`);
-        if (i === 2) { log.push('guest moves the mouse'); for (const [fx, fy] of [[0.3, 0.5], [0.34, 0.56], [0.38, 0.62]]) { wc.sendInputEvent({ type: 'mouseMove', ...at(fx, fy) }); await wait(120); } }
-        if (i === 4) { await snap('pointers'); log.push('pointers on the guest: ' + await wc.executeJavaScript("JSON.stringify([...document.querySelectorAll('#ptrs .ptr')].map((q) => q.textContent + ' ' + q.style.left + ' ' + q.style.top))")); }
-        if (i === 3) { log.push('guest turns the wheel'); wc.sendInputEvent({ type: 'mouseWheel', ...at(0.5, 0.6), deltaX: 0, deltaY: -400, canScroll: true }); }
-        if (i === 5) { log.push('guest clicks the link'); click(0.25, 0.15); }
-        if (i === 22) { log.push('guest uses the address bar'); cmd({ type: 'surf', do: 'go', text: process.env.DRIFT_TESTURL + '?guest' }); }
-        if (i === 7) { log.push('guest clicks the box and types'); click(0.75, 0.1); await wait(500); for (const k of ['h', 'i', 'Enter']) { wc.sendInputEvent({ type: 'keyDown', keyCode: k }); if (k.length === 1) wc.sendInputEvent({ type: 'char', keyCode: k }); wc.sendInputEvent({ type: 'keyUp', keyCode: k }); await wait(150); } }
-      }
-      await snap('web-guest');
-      await wait(5000); log.push('web guest after host closed: ' + JSON.stringify(await see()) + ' note=' + await note());
+    if (role !== 'host') {
+      await barBtn('Leave hub');
+      res.disconnected = await until(() => !voiceWin && !voiceLive && !micTray && (chat.info().hubs[0] || {}).status === 'away', 5000);
+      vlog('disconnected: voice window closed ' + res.disconnected);
+      fs.writeFileSync(path.join(outDir, role + '.json'), JSON.stringify(res, null, 1));
     }
+    if (role === 'host') await wait(8000);       // while the others press Disconnect
+  }
+  if (process.env.DRIFT_TESTSTREAM) {     // a hub's media stream, two copies of Drift (scripts/test-stream.js): =host or =guest. DRIFT_TESTCODE = a file for
+    // the invite, DRIFT_TESTSTREAM_DIR = a folder holding a.mp4 and b.mp4 (added to the library), DRIFT_TESTSTREAM_OUT = where each writes <role>.json.
+    const role = process.env.DRIFT_TESTSTREAM, codeFile = process.env.DRIFT_TESTCODE, dir = process.env.DRIFT_TESTSTREAM_DIR, outDir = process.env.DRIFT_TESTSTREAM_OUT;
+    const wc = visWins[0].win.webContents, js = (c) => wc.executeJavaScript(c), other = role === 'host' ? 'guest' : 'host';
+    const until = async (f, ms = 30000) => { for (let t = 0; t < ms && !f(); t += 250) await wait(250); return f(); };
+    const hubNow = () => chat.info().hubs.find((h) => h.status === 'connected');
+    const lives = () => (hubNow() || {}).lives || [];
+    const play = (f) => ipcMain.emit('cmd', { sender: wc }, { type: 'play-videos', files: [path.join(dir, f)], key: visWins[0].key });       // as the Media tab does
+    const step = (n) => fs.writeFileSync(path.join(outDir, role + '.step'), String(n)), stepOf = (r) => { try { return +fs.readFileSync(path.join(outDir, r + '.step'), 'utf8'); } catch { return 0; } };
+    const res = { role, me: chat.myId() }, tl = (k, v) => { res[k] = v; log.push(`stream ${role}: ${k} ${JSON.stringify(v)}`); };
+    fs.mkdirSync(outDir, { recursive: true });
+    patch({ music: { source: 'off' }, share: { internet: false, wait: false, name: role === 'host' ? 'Hosty' : 'Guesty' }, video: { folders: [dir] } });
+    wc.send('cmd', { type: 'show-panel', tab: 'share' }); await wait(800);
+    const song = () => ipcMain.emit('cmd', { sender: wc }, { type: 'play-tracks', files: [path.join(dir, 'c.wav')], index: 0 });
+    const mineOn = () => p2p.role() === 'host' && lives().length === 1 && lives()[0].from === chat.myId();
+    const theirsOn = () => p2p.connected() && lives().length === 1 && lives()[0].from !== chat.myId();
+    const card = () => js('window.chatUI.vote()'), click = (label) => js(`window.chatUI.voteClick(${JSON.stringify(label)})`);
+    const untilA = async (f, ms = 30000) => { for (let t = 0; t < ms; t += 250) { if (await f()) return true; await wait(250); } return false; };
+    const asked = () => untilA(async () => { const c = await card(); return !!c && c.btns.includes('Switch'); }, 30000);
+    const surf = (d) => ipcMain.emit('cmd', { sender: wc }, { type: 'surf', do: d });       // as the Surf tab does
+    tl('picking a video with no hub plays it here only', (play('a.mp4'), await wait(1500), p2p.role() === 'off'));
+    if (role === 'host') {
+      await js("document.querySelector('#chHost').click()");
+      tl('hub up', await until(() => !!hubNow()));
+      fs.writeFileSync(codeFile, (await chat.invite(hubNow().id)).code || '');
+      play('a.mp4');
+      tl('with nothing on, picking a video shares it straight away', await until(mineOn));
+      tl('a friend coming online is pulled in', await until(() => p2p.count() === 1, 60000));
+      step(1);
+      tl('the friend picks something: a vote card comes over the video', await asked());
+      tl('...naming them and what', /Guesty.*wants.*b/.test((await card()).text));
+      await until(() => stepOf(other) >= 1.5, 15000);       // (once they've seen their own card)
+      tl('pressing Keep', await click('Keep'));
+      tl('...mine stays on', (await wait(3000), mineOn() && p2p.count() === 1));
+      step(2);
+      tl('they ask again', await asked());
+      tl('pressing Switch', await click('Switch'));
+      tl('...mine stops and I watch theirs', await until(() => theirsOn() && /b\.mp4/.test(String((remote && remote.file) || '')), 40000));
+      tl('the card goes', !(await card()));
+      step(3);
+      song();
+      tl('picking music asks them', await untilA(async () => { const c = await card(); return !!c && c.btns.includes('Cancel'); }, 15000));
+      tl('...and I keep watching meanwhile', theirsOn());
+      step(3.5);
+      tl('they agree: my music goes on', await until(mineOn, 40000));
+      tl('the card names the song', /c/.test((lives()[0] || {}).title || ''));
+      tl('...and they follow', await until(() => p2p.count() === 1, 40000));
+      step(4);
+      tl('they disconnected: off the stream', await until(() => p2p.count() === 0, 40000));
+      await wait(4000);
+      tl('...and they stay off', p2p.count() === 0);
+      ipcMain.emit('cmd', { sender: wc }, { type: 'share-stop' });
+      await until(() => p2p.role() === 'off' && !lives().length, 10000);
+      surf('home');
+      tl('opening Surf opens the hub\'s Surf stream, not the media stream', await until(() => surfMode() === 'hub' && !!hubWeb && hubWeb.running() && surfView().open, 30000) && !web.info().has);
+      tl('...and nothing is shared on the media stream', (await wait(1500), p2p.role() === 'off' && !lives().length));
+      step(5);
+    } else {
+      surf('home');
+      tl('Surf with no hub is just mine', await until(() => web.info().open, 15000) && p2p.role() === 'off');
+      for (let i = 0; i < 120 && !(fs.existsSync(codeFile) && fs.readFileSync(codeFile, 'utf8')); i++) await wait(500);
+      await js(`document.querySelector('#chCode').value = ${JSON.stringify(fs.readFileSync(codeFile, 'utf8'))}; document.querySelector('#chJoin').click()`);
+      tl('joined the hub', await until(() => !!hubNow(), 60000));
+      tl('pulled into what is on without pressing anything', await until(theirsOn, 60000));
+      tl('my own Surf tabs are put away, kept', !web.info().has && !!surfKept && surfKept.urls.length === 1);
+      await until(() => stepOf(other) >= 1, 40000); await wait(1500);
+      play('b.mp4');
+      tl('picking a video while theirs is on asks first (I see Cancel)', await untilA(async () => { const c = await card(); return !!c && c.btns.includes('Cancel'); }, 15000));
+      tl('...and nothing switches yet', theirsOn());
+      step(1.5);
+      await until(() => stepOf(other) >= 2, 40000);
+      tl('they said no: still watching theirs', theirsOn() && !(await card()));
+      play('b.mp4');
+      tl('they said yes: mine goes on', await until(mineOn, 40000));
+      tl('...and they follow', await until(() => p2p.count() === 1, 40000));
+      await until(() => stepOf(other) >= 3, 40000);
+      tl('their music: a card asks me', await asked());
+      await until(() => stepOf(other) >= 3.5, 15000);
+      tl('pressing Switch', await click('Switch'));
+      tl('I follow their music', await until(() => theirsOn() && !!(remote && remote.music), 60000));
+      await until(() => stepOf(other) >= 4, 40000);
+      await chat.disconnect(hubNow().id);
+      tl('disconnecting leaves the stream', await until(() => p2p.role() === 'off', 10000));
+      await wait(4000);
+      tl('...and nothing pulls me back', p2p.role() === 'off');
+      surf('show');
+      tl('opening Surf again brings my tabs back', await until(() => web.info().open && web.info().has, 15000) && !surfKept);
+      tl('...not shared: I\'m not online in the hub', (await wait(1500), p2p.role() === 'off'));
+      step(5);
+    }
+    await until(() => stepOf(other) >= 5, 30000);
+    fs.writeFileSync(path.join(outDir, role + '.json'), JSON.stringify(res, null, 1));
+    if (role === 'host') await wait(3000);
+  }
+  if (process.env.DRIFT_TESTSS) {     // a hub's Surf stream, two copies of Drift (scripts/test-surf-stream.js): =host or =guest. DRIFT_TESTCODE = a file for
+    // the invite, DRIFT_TESTSS_OUT = a folder for each step's marker, the downloads and what each saw (<role>.json),
+    // DRIFT_TESTSS_CLIP = a video to put on the media stream meanwhile. The host serves the test pages itself, on this PC: the
+    // hub's browser may open that one local address (Settings) and no other.
+    const role = process.env.DRIFT_TESTSS, codeFile = process.env.DRIFT_TESTCODE, outDir = process.env.DRIFT_TESTSS_OUT, other = role === 'host' ? 'guest' : 'host';
+    const name = role === 'host' ? 'Hosty' : 'Guesty', wc = visWins[0].win.webContents, js = (c) => wc.executeJavaScript(c);
+    const until = async (f, ms = 30000) => { for (let t = 0; t < ms; t += 250) { if (await f()) return true; await wait(250); } return !!(await f()); };
+    const step = async (s, ms = 120000) => { fs.writeFileSync(path.join(outDir, `${role}-${s}`), ''); log.push(`surf ${role}: at ${s}`); return until(() => fs.existsSync(path.join(outDir, `${other}-${s}`)), ms); };
+    const res = { role, name, me: chat.myId() }, tl = (k, v) => { res[k] = v; log.push(`surf ${role}: ${k} ${JSON.stringify(v)}`); };
+    const hubNow = () => chat.info().hubs.find((h) => h.status === 'connected');
+    const surf = (d, more) => ipcMain.emit('cmd', { sender: wc }, { type: 'surf', do: d, ...more });       // as the Surf tab and its bar do
+    const input = (e) => ipcMain.emit('cmd', { sender: wc }, { type: 'web-input', e });       // as the mouse and keys over the picture do
+    const click = (x, y) => { input({ k: 'down', x, y, b: 0, n: 1 }); input({ k: 'up', x, y, b: 0, n: 1 }); };
+    fs.mkdirSync(outDir, { recursive: true });
+    const dl = path.join(outDir, 'downloads-' + role); fs.mkdirSync(dl, { recursive: true }); app.setPath('downloads', dl);
+    patch({ music: { source: 'off' }, share: { internet: false, name, wait: false, adblock: false }, voice: { talk: false, deaf: false, direct: false, pin: '' } });
+    wc.send('cmd', { type: 'show-panel', tab: 'share' }); await wait(800);
+    try {
+      if (role === 'host') {
+        // the test pages: a moving picture with a tone, a link over the top left quarter, a box whose text becomes the title,
+        // two downloads, a link that opens a window, and a page that tries a file picker and an alert
+        const big = Buffer.alloc(200 * 1024, 7);
+        let lanHits = 0;
+        const srv = http.createServer((q, r) => {
+          const page = (title, body) => { r.writeHead(200, { 'Content-Type': 'text/html' }); r.end(`<!DOCTYPE html><title>${title}</title><body style="margin:0;background:#123;color:#fff;font:40px sans-serif">${body}</body>`); };
+          if (q.url === '/') page('Test one', `<canvas id=c width=640 height=360 style="position:fixed;right:0;bottom:0"></canvas><a href="/page2" style="position:fixed;left:0;top:0;width:50%;height:50%;background:#0a0;display:block">go</a><script>
+            const g = c.getContext('2d'); let n = 0; (function f() { n++; g.fillStyle = 'hsl(' + n % 360 + ' 80% 50%)'; g.fillRect(0, 0, 640, 360); requestAnimationFrame(f); })();
+            const a = new AudioContext(), o = a.createOscillator(), v = a.createGain(); v.gain.value = 0.3; o.connect(v).connect(a.destination); o.start();</script>`);
+          else if (q.url === '/page2') page('page two', `<input id=i autofocus style="font-size:40px" oninput="document.title = 'typed:' + this.value"><script>i.focus()</script>`);
+          else if (q.url === '/pop') page('pop', `<button id=b style="position:fixed;inset:0;font-size:60px" onclick="window.open('/page2', 'x', 'width=300,height=300')">open a window</button>`);
+          else if (q.url === '/pick') page('pick', `<input type=file id=f style="position:fixed;inset:0;width:100%;height:100%"><script>
+            let n = 0; f.addEventListener('click', () => n++); alert('hello'); document.title = 'pick:' + (confirm('ok?') ? 'yes' : 'no');
+            setTimeout(() => { f.click(); try { f.showPicker(); } catch (e) { document.title += ':' + e.name; } }, 100);</script>`);
+          else if (q.url === '/dl' || q.url === '/dl2') { r.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': big.length, 'Content-Disposition': `attachment; filename="${q.url === '/dl' ? 'first' : 'second'}.bin"` }); r.end(big); }
+          else { r.writeHead(404); r.end(); }
+        });
+        const lan = http.createServer((q, r) => { lanHits++; r.end('secret'); });       // another address on this PC, not allowed
+        await new Promise((r) => srv.listen(0, '127.0.0.1', r)); await new Promise((r) => lan.listen(0, '127.0.0.1', r));
+        const base = `http://127.0.0.1:${srv.address().port}`;
+        fs.writeFileSync(path.join(outDir, 'base.txt'), base + '\n' + `http://127.0.0.1:${lan.address().port}/`);
+        patch({ hubSurf: { allowLan: `127.0.0.1:${srv.address().port}` } });
+        surf('home');
+        tl('before any hub, Surf is my own browser', await until(() => web.info().open, 15000) && surfMode() === 'own');
+        await js("document.querySelector('#chHost').click()");
+        tl('hub up', await until(() => !!hubNow()));
+        fs.writeFileSync(codeFile, (await chat.invite(hubNow().id)).code || '');
+        tl('online in my own hub: my own browser is put away, its tabs kept', await until(() => surfMode() === 'hub' && !web.info().has && !!surfKept && surfKept.urls.length === 1, 15000));
+        tl('...and the Surf tab is the hub\'s browser, drawn here offscreen', await until(() => !!hubWeb && hubWeb.running() && surfView().open && surfView().gpu && surfView().hub, 15000));
+        ipcMain.emit('cmd', { sender: wc }, { type: 'surf', do: 'go', text: base + '/' });
+        tl('it opens a page (the one local address allowed)', await until(() => hubWeb.info().title === 'Test one', 20000));
+        tl('the hub lists it running, with its title', await until(() => (hubNow().surf || {}).on && hubNow().surf.title === 'Test one', 10000));
+        const hubSes = session.fromPartition(`persist:hub-${hubWebId}`);
+        await session.fromPartition('persist:web').cookies.set({ url: base, name: 'mine', value: 'secret' });
+        tl('its own profile: none of my browser\'s cookies', !(await hubSes.cookies.get({ url: base })).some((c) => c.name === 'mine'));
+        await step('ready');
+        tl('a member watching: the stream window opens', await until(() => !!ssWin && ssWatchers().length === 1, 60000));
+        tl('...and connects to them', await until(() => Object.values(ssPeers).includes('connected'), 40000));
+        tl('...certificate checked', await until(() => Object.values(chat.info().ss.host.viewers).some((v) => v.verdict === 'verified'), 20000));
+        let st = null;
+        tl('...relayed through the hub, sending picture and sound', await until(async () => { st = ssWin && await ssWin.webContents.executeJavaScript('window.surfStreamTest()').catch(() => null); return !!st && Object.values(st.peers).some((p) => /relay/.test(p.path || '') && p.framesOut > 10 && p.audioOut > 0); }, 20000));
+        log.push('surf host: stream ' + JSON.stringify(st));
+        const cpu0 = app.getAppMetrics(); await wait(3000);       // what it costs this PC: every process's processor use while streaming to one
+        log.push('surf host: cpu ' + JSON.stringify(app.getAppMetrics().filter((x) => x.cpu.percentCPUUsage > 1).map((x) => `${x.type}:${x.cpu.percentCPUUsage.toFixed(0)}%`)));
+        void cpu0;
+        await step('watching');
+        tl('the member clicks the link over the picture: the page goes there', await until(() => hubWeb.info().title === 'page two', 30000));
+        tl('...and types into the box', await until(() => hubWeb.info().title === 'typed:hi', 30000));
+        tl('...their pointer reaches me', await until(() => pointers.has(chat.info().ss.host.watchers[0]), 15000));
+        await step('typed');
+        tl('a flood of input from them is slowed', await until(() => ssDropped > 0, 15000));
+        await step('flooded');
+        tl('a download they start waits for me, naming them', await until(() => held.length === 1 && hubName(held[0].from) === 'Guesty' && held[0].d.name === 'first.bin', 30000));
+        await wait(1500);       // (it has all arrived by now, in the holding folder)
+        tl('...on my screen, as a card', await until(() => js("!document.querySelector('#heldCard').hidden && /Guesty wants to download/.test(document.querySelector('#heldCard').textContent)"), 5000));
+        tl('...and nothing is in my Downloads folder yet', fs.readdirSync(dl).length === 0);
+        await js("[...document.querySelectorAll('#heldCard button')].find((b) => b.textContent === 'Save').click()");
+        tl('Save: it lands in my Downloads folder', await until(() => fs.existsSync(path.join(dl, 'first.bin')) && fs.statSync(path.join(dl, 'first.bin')).size === big.length, 15000));
+        await step('saved');
+        tl('their second download waits too', await until(() => held.length === 1 && held[0].d.name === 'second.bin', 30000));
+        await wait(1500);
+        await js("[...document.querySelectorAll('#heldCard button')].find((b) => b.textContent === 'Refuse').click()");
+        await wait(1500);
+        const holdDir = path.join(app.getPath('userData'), 'hub-downloads');
+        tl('Refuse: nothing is kept, here or in Downloads', !fs.existsSync(path.join(dl, 'second.bin')) && (!fs.existsSync(holdDir) || fs.readdirSync(holdDir).length === 0));
+        await step('refused');
+        const tabs0 = hubWeb.info().tabs.length;
+        tl('a link that opens a window opens a tab instead (no window on my screen)', await until(() => hubWeb.info().tabs.length === tabs0 + 1, 20000) && BrowserWindow.getAllWindows().every((w) => !w.getParentWindow()));
+        await step('popped');
+        tl('a file picker and page boxes don\'t open', await until(() => /^pick:no:NotAllowedError/.test(hubWeb.info().title), 20000));
+        await step('picked');
+        await wait(3000);
+        tl('another local address isn\'t reached', lanHits === 0);
+        // the media stream at the same time: a video on it, while the Surf stream carries on
+        if (process.env.DRIFT_TESTSS_CLIP) {
+          state.video.folders = [path.dirname(process.env.DRIFT_TESTSS_CLIP)];
+          ipcMain.emit('cmd', { sender: wc }, { type: 'play-videos', files: [process.env.DRIFT_TESTSS_CLIP], key: visWins[0].key });
+          tl('a video goes on the media stream meanwhile', await until(() => p2p.role() === 'host' && ((hubNow() || {}).lives || []).length === 1, 30000));
+        }
+        await step('media');
+        // disconnecting from my own hub: my own browser back, the hub's still running for them
+        chat.disconnect(hubNow() ? hubNow().id : chat.hostedHub());
+        tl('disconnected: my own browser is back, with its tab', await until(() => surfMode() === 'own' && web.info().has && web.info().open, 15000));
+        tl('...and the hub\'s browser still runs for everyone else', hubWeb.running() && Object.values(ssPeers).includes('connected'));
+        await step('away');
+        chat.reconnect(chat.hostedHub());
+        tl('connecting again: the hub\'s browser is back where it was', await until(() => surfMode() === 'hub' && surfView().open && /^typed:hi|page two|pick/.test(hubWeb.info().title || ''), 20000));
+        tl('...and my own is put away again', !web.info().has && !!surfKept);
+        await step('back');
+        srv.close(); lan.close();
+      } else {
+        for (let i = 0; i < 240 && !(fs.existsSync(codeFile) && fs.readFileSync(codeFile, 'utf8')); i++) await wait(500);
+        await js(`document.querySelector('#chCode').value = ${JSON.stringify(fs.readFileSync(codeFile, 'utf8'))}; document.querySelector('#chJoin').click()`);
+        tl('joined the hub', await until(() => !!hubNow(), 60000));
+        await step('ready');
+        const [base, lanUrl] = fs.readFileSync(path.join(outDir, 'base.txt'), 'utf8').split('\n');
+        surf('new');       // the Surf tab
+        tl('the Surf tab is the hub\'s Surf stream', await until(() => surfMode() === 'stream' && surfView().stream && surfView().open, 15000));
+        const t = () => js('window.ssTest()');
+        tl('picture and sound arrive, relayed', await until(async () => { const r = await t(); return r.framesIn > 10 && r.audioIn > 0 && /relay/.test(r.path || ''); }, 60000));
+        const f0 = await t(); await wait(3000); const f1 = await t();
+        log.push('surf guest: ' + JSON.stringify(f1) + ` · ${((f1.framesIn - f0.framesIn) / 3).toFixed(1)} frames a second, ${(((f1.bytesIn - f0.bytesIn) * 8) / 3e6).toFixed(2)} Mb/s`);
+        tl('the host\'s certificate checked', await until(() => (chat.info().ss.watching || {}).verdict === 'verified', 40000));       // (room for one reconnect: see ssCert in renderer/app.js)
+        tl('the Surf bar shows the host\'s page', await until(() => surfView().title === 'Test one' && surfView().tabs.length >= 1, 15000));
+        tl('the line along the top says whose it is', await until(() => js("document.querySelector('#ssLine').classList.contains('on') && /Surf stream · .* · everyone can control/.test(document.querySelector('#ssLine').textContent)"), 10000));
+        await step('watching');
+        ipcMain.emit('cmd', { sender: wc }, { type: 'web-ptr', x: 0.6, y: 0.6 });
+        click(0.25, 0.25);
+        tl('clicking the link: my picture follows', await until(() => surfView().title === 'page two', 30000));
+        await wait(800);
+        for (const k of ['h', 'i']) { input({ k: 'key', d: true, key: k, m: [] }); input({ k: 'key', d: false, key: k, m: [] }); }
+        tl('typing: my bar shows it', await until(() => surfView().title === 'typed:hi', 30000));
+        for (let i = 0; i < 10; i++) ipcMain.emit('cmd', { sender: wc }, { type: 'web-ptr', x: 0.6, y: 0.6 + i / 100 });
+        // Scenes chosen: the picture is put away, its sound plays on (decision §11.1); Surf again: the same connection, shown again
+        surf('hide');
+        const a0 = (await t()).audioIn; await wait(2500); const a1 = await t();
+        tl('put away: its sound plays on, the picture hidden', a1.audioIn > a0 && a1.state === 'connected' && await js("document.querySelector('#webStream').classList.contains('parked')"));
+        surf('show');
+        tl('...and shown again on the same connection', (await wait(1500), (await t()).state === 'connected') && await js("!document.querySelector('#webStream').classList.contains('parked')"));
+        await step('typed');
+        for (let i = 0; i < 400; i++) input({ k: 'move', x: (i % 100) / 100, y: 0.5, bt: 0 });       // a flood
+        await step('flooded');
+        surf('go', { text: base + '/dl' });
+        tl('my download waits for the host', await until(() => /Waiting for the host to allow first\.bin/.test(lastToast), 20000));
+        await step('saved');
+        tl('...and never lands here', !fs.existsSync(path.join(dl, 'first.bin')));
+        surf('go', { text: base + '/dl2' });
+        await step('refused');
+        tl('refused: I\'m told', await until(() => /didn't allow second\.bin/.test(lastToast), 15000));
+        surf('go', { text: base + '/pop' });
+        await wait(2500);
+        click(0.5, 0.5);
+        await step('popped');
+        surf('go', { text: base + '/pick' });
+        await step('picked');
+        surf('go', { text: lanUrl });
+        await wait(2000);
+        if (process.env.DRIFT_TESTSS_CLIP) tl('the media stream\'s video reaches me too', await until(() => p2p.connected(), 40000));
+        await step('media');
+        tl('the host disconnected: the stream carries on', (await wait(3000), (await t()).state === 'connected'));
+        await step('away');
+        await step('back');
+        await chat.disconnect(hubNow().id);
+        tl('disconnecting: my own browser is back', await until(() => surfMode() === 'own', 10000));
+      }
+    } catch (e) { tl('failed: ' + (e && e.stack || e), false); }
+    fs.writeFileSync(path.join(outDir, role + '.json'), JSON.stringify(res, null, 1));
+    await step('end', 20000);
+  }
+  if (process.env.DRIFT_TESTBCUI) {     // the Broadcast tab between two copies of Drift (DRIFT_USERDATA apart), pressing the real buttons: =host or =guest.
+    // DRIFT_TESTCODE = a file for the invite, DRIFT_TESTBC_OUT = a folder for each step's marker and what each saw (<role>.json).
+    const role = process.env.DRIFT_TESTBCUI, codeFile = process.env.DRIFT_TESTCODE, outDir = process.env.DRIFT_TESTBC_OUT, other = role === 'host' ? 'guest' : 'host';
+    const name = role === 'host' ? 'Hosty' : 'Guesty', wc = visWins[0].win.webContents, js = (c) => wc.executeJavaScript(c);
+    const until = async (f, ms = 30000) => { for (let t = 0; t < ms; t += 250) { if (await f()) return true; await wait(250); } return !!(await f()); };
+    const step = async (s) => { fs.writeFileSync(path.join(outDir, `${role}-${s}`), ''); log.push(`bcui ${role}: at ${s}`); return until(() => fs.existsSync(path.join(outDir, `${other}-${s}`)), 90000); };
+    const hubNow = () => chat.info().hubs.find((h) => h.status === 'connected');
+    const read = () => js(`JSON.stringify({ tab: !document.querySelector('.tabs button[data-tab="broadcast"]').hidden, onair: document.querySelector('.tabs button[data-tab="broadcast"]').classList.contains('onair'),
+      active: (document.querySelector('#content section.active') || { dataset: {} }).dataset.tab || '', open: document.querySelector('#panel').classList.contains('open'),
+      cards: [...document.querySelectorAll('#bcLive .bcCard')].map((c) => ({ text: c.innerText.replace(/\\n+/g, ' | '), btns: [...c.querySelectorAll('button')].map((b) => b.textContent + (b.disabled ? ' (off)' : '')) })),
+      empty: (document.querySelector('#bcLive .bcEmpty') || {}).textContent || '', go: getComputedStyle(document.querySelector('#bcGo')).display !== 'none', mine: getComputedStyle(document.querySelector('#bcMine')).display !== 'none',
+      mineTitle: document.querySelector('#bcMineTitle').textContent, mineWho: document.querySelector('#bcMineWho').textContent, picked: document.querySelector('#bcPicked').textContent,
+      start: !document.querySelector('#bcStart').disabled, screens: [...document.querySelectorAll('#bcScreens .bcSrc')].map((b) => b.dataset.src), apps: [...document.querySelectorAll('#bcApps .bcSrc')].map((b) => b.dataset.src),
+      off: getComputedStyle(document.querySelector('#bcOff')).display !== 'none', toast: document.querySelector('#toast').textContent })`).then(JSON.parse);
+    const click = (sel) => js(`(() => { const b = document.querySelector(${JSON.stringify(sel)}); if (b) b.click(); return !!b; })()`);
+    const cardBtn = (label) => js(`(() => { const b = [...document.querySelectorAll('#bcLive .bcCard button')].find((x) => x.textContent === ${JSON.stringify(label)}); if (b) b.click(); return !!b; })()`);
+    const res = { role, name, me: chat.myId(), seen: {} };
+    const keep = async (k) => { res.seen[k] = await read(); };
+    fs.mkdirSync(outDir, { recursive: true });
+    patch({ music: { source: 'off' }, share: { internet: false, name }, voice: { talk: false, deaf: false, ptt: false, direct: false, pin: '' } });
+    wc.send('cmd', { type: 'show-panel', tab: 'share' }); await wait(1000);
+    await keep('before');       // no hub yet: no Broadcast tab
+    if (role === 'host') {
+      await js("document.querySelector('#chHost').click()");
+      await until(() => hubNow() && hubNow().room.in);
+      fs.writeFileSync(codeFile, (await chat.invite(hubNow().id)).code || '');
+    } else {
+      await until(() => fs.existsSync(codeFile) && fs.readFileSync(codeFile, 'utf8'), 60000);
+      await js(`document.querySelector('#chCode').value = ${JSON.stringify(fs.readFileSync(codeFile, 'utf8'))}; document.querySelector('#chJoin').click()`);
+      await until(() => hubNow() && hubNow().room.in);
+    }
+    await until(async () => (await read()).tab, 10000);
+    await keep('connected');
+    await step('joined');
+    wc.send('cmd', { type: 'show-panel', tab: 'broadcast' }); await wait(500);
+    if (role === 'host') {
+      await until(() => js('window.broadcastUI.sources().screens.length > 0'), 15000);
+      await wait(600);
+      await keep('picker');
+      res.own = BrowserWindow.getAllWindows().map((w) => { try { return w.getMediaSourceId(); } catch { return ''; } });
+      await snap('bc-host-picker');
+      await click('#bcScreens .bcSrc'); await wait(300);
+      await keep('picked');
+      await click('#bcStart');
+      await until(() => !!chat.info().bc.mine);
+      await wait(800);
+      await keep('live');
+      await snap('bc-host-live');
+      await step('live');
+      await step('watching');
+      await until(async () => /Guesty · watching/.test((await read()).mineWho), 15000);
+      await keep('watched'); res.hubSaysWatching = (hubNow().bcs[0] || { viewers: [] }).viewers;
+      await snap('bc-host-watched');
+      await step('seen');
+      await step('unwatched');
+      await until(async () => /Nobody/.test((await read()).mineWho), 15000);
+      await keep('unwatched');
+      await click('#bcStop');
+      await until(async () => { const r = await read(); return r.go && !r.mine && !chat.info().bc.mine; }, 15000);
+      await keep('stopped');
+      await step('stopped');
+      await until(() => fs.existsSync(path.join(outDir, 'guest.json')), 60000);
+    } else {
+      await step('live');
+      await until(async () => (await read()).cards.length === 1, 15000);
+      await keep('card'); res.toast = res.seen.card.toast;
+      await snap('bc-guest-card');
+      await cardBtn('Watch'); await wait(500);
+      await click(`.bcWhere button[data-key="${visWins[0].key}"]`);       // which monitor, when there's more than one
+      await until(async () => chat.info().bc.watching.length === 1 && (await read()).cards[0].btns.includes('Stop watching'), 15000);
+      await keep('watching');
+      await step('watching');
+      await step('seen');
+      await cardBtn('Stop watching');
+      await until(async () => !chat.info().bc.watching.length && (await read()).cards[0].btns.includes('Watch'), 15000);
+      await keep('unwatched');
+      await step('unwatched');
+      await step('stopped');
+      await until(async () => !!(await read()).empty, 15000);
+      await keep('ended');
+      await js(`(() => { const b = [...document.querySelectorAll('#callBar button')].find((x) => x.textContent === 'Leave hub'); if (b) b.click(); return !!b; })()`);       // on the Broadcast tab: it goes, and the panel goes back to Together
+      await until(async () => { const r = await read(); return !r.tab && r.active === 'share'; }, 15000);
+      await keep('disconnected');
+    }
+    fs.writeFileSync(path.join(outDir, role + '.json'), JSON.stringify(res, null, 1));
+    log.push(`bcui ${role}: wrote what it saw`);
+  }
+  if (process.env.DRIFT_TESTBC) {     // a broadcast between three copies of Drift (scripts/test-broadcast.js): =host, =guest or =third, pressing the real buttons.
+    // DRIFT_TESTCODE = a file for the invite, DRIFT_TESTBC_OUT = a folder for each step's marker and what each saw (<role>.json).
+    // DRIFT_TESTBROADCAST makes the broadcast window send a moving test pattern in place of the screen it was given.
+    const role = process.env.DRIFT_TESTBC, codeFile = process.env.DRIFT_TESTCODE, outDir = process.env.DRIFT_TESTBC_OUT;
+    const name = { host: 'Hosty', guest: 'Guesty', third: 'Third' }[role], wc = visWins[0].win.webContents, js = (c) => wc.executeJavaScript(c);
+    const until = async (f, ms = 30000) => { for (let t = 0; t < ms; t += 250) { if (await f()) return true; await wait(250); } return !!(await f()); };
+    const step = async (s, ms = 90000) => { fs.writeFileSync(path.join(outDir, `${role}-${s}`), ''); log.push(`bc ${role}: at ${s}`); return until(() => ['host', 'guest', 'third'].every((r) => fs.existsSync(path.join(outDir, `${r}-${s}`))), ms); };
+    const hubNow = () => chat.info().hubs.find((h) => h.status === 'connected');
+    const click = (sel) => js(`(() => { const b = document.querySelector(${JSON.stringify(sel)}); if (b) b.click(); return !!b; })()`);
+    const btnIn = (sel, label) => js(`(() => { const b = [...document.querySelectorAll(${JSON.stringify(sel)})].find((x) => x.textContent === ${JSON.stringify(label)}); if (b) b.click(); return !!b; })()`);
+    const view = () => js('window.bcTest()').catch((e) => ({ error: e.message }));
+    const sendTest = () => (bcWin ? bcWin.webContents.executeJavaScript('window.bcSendTest()').catch((e) => ({ error: e.message })) : null);
+    const bar = () => js("document.querySelector('#callBar').innerText.replace(/\\n+/g, ' | ')");
+    const res = { role, name, me: chat.myId(), steps: {} }, s0 = (r) => r.steps;
+    const keep = (k, v) => { res.steps[k] = v; const t = `bc ${role}: ${k} ${String(JSON.stringify(v)).slice(0, 300)}`; log.push(t); try { fs.appendFileSync(path.join(outDir, role + '.log'), t + '\n'); } catch { /* fine */ } };       // (as it goes, so a stuck copy can be read)
+    fs.mkdirSync(outDir, { recursive: true });
+    for (const ev of ['unhandledRejection', 'uncaughtException']) process.on(ev, (e) => { try { fs.appendFileSync(path.join(outDir, role + '.log'), `ERROR ${ev}: ${e && e.stack || e}\n`); } catch { /* fine */ } });
+    patch({ music: { source: 'off' }, share: { internet: false, name }, voice: { talk: false, deaf: false, ptt: false, direct: false, pin: '' }, broadcast: { pointers: true, quality: 'auto', sound: false } });
+    wc.send('cmd', { type: 'show-panel', tab: 'share' }); await wait(1000);
+    if (role === 'host') {
+      await js("document.querySelector('#chHost').click()");
+      await until(() => hubNow() && hubNow().room.in);
+      fs.writeFileSync(codeFile, (await chat.invite(hubNow().id)).code || '');
+    } else {
+      await until(() => fs.existsSync(codeFile) && fs.readFileSync(codeFile, 'utf8'), 60000);
+      await js(`document.querySelector('#chCode').value = ${JSON.stringify(fs.readFileSync(codeFile, 'utf8'))}; document.querySelector('#chJoin').click()`);
+      await until(() => hubNow() && hubNow().room.in);
+    }
+    await until(() => { const h = hubNow(); return h && h.members.length + h.suspect.length >= 3; }, 60000);
+    await step('joined');
+    wc.send('cmd', { type: 'show-panel', tab: 'broadcast' }); await wait(600);
+    if (role === 'host') {
+      await until(() => js('window.broadcastUI.sources().screens.length > 0'), 15000);
+      await click('#bcScreens .bcSrc'); await wait(300);
+      await js("document.querySelector('#bcSound button[data-v=\"on\"]').click()"); await wait(300);       // Sound on: a screen, so everything but Drift (the test's quiet tone plays from another program)
+      keep('soundNote', await js("document.querySelector('#bcSoundNote').textContent"));
+      await click('#bcStart');
+      keep('live', await until(() => !!chat.info().bc.mine && !!bcWin, 15000));
+      keep('soundLive', await until(() => (bcLiveInfo() || {}).sound === 'on', 15000) && { live: bcLiveInfo().sound, hub: !!chat.info().bc.mine.audio });
+      keep('trayLive', !!micTray);
+      await wait(1000);
+      keep('barLive', await bar());
+    }
+    await step('live');
+    if (role !== 'host') {       // Watch, on this screen (the picker asks which, when there's more than one)
+      await until(() => js("document.querySelectorAll('#bcLive .bcCard button').length > 0"), 15000);
+      await btnIn('#bcLive .bcCard button', 'Watch'); await wait(500);
+      await click(`.bcWhere button[data-key="${visWins[0].key}"]`);
+      keep('viewOn', await until(async () => { const v = await view(); return v.on && v.state === 'connected' && v.framesIn > 20; }, 45000));
+      const a = await view(); await wait(2000); const b = await view();
+      keep('frames', { first: a.framesIn, later: b.framesIn, video: b.video, path: b.path, dtls: b.dtls, signed: b.signed, bar: b.bar, note: b.note });
+      await until(() => (publicState().bcView || {}).verdict === 'verified', 10000);
+      keep('verdict', (publicState().bcView || {}).verdict);
+      keep('cardLock', await js("!!document.querySelector('#bcLive .bcCard.on .lock.ok')"));
+      keep('barWatch', await bar());
+      keep('refusedWarn', await js("(document.querySelector('#bcLive .bcCard .warn') || {}).textContent || ''"));
+      if (s0(res).viewOn) {       // the sound: it arrives, it's the tone (not silence or noise), stereo, and its own volume works
+        await until(async () => (await view()).audioIn > 2000, 15000);
+        const t = await (async () => { let best = null; for (let i = 0; i < 12; i++) { const a = await js('window.bcTestTone(1000)'), b = await js('window.bcTestTone(700)'); if (a !== null && (!best || a - b > best.k1000 - best.k700)) best = { k1000: +a.toFixed(1), k700: +b.toFixed(1) }; await wait(250); } return best; })();
+        const v1 = await view();
+        keep('sound', { audioIn: v1.audioIn, level: v1.audioLevel, stereo: v1.stereo, muted: v1.muted, volume: v1.volume, avDelay: v1.avDelay, tone: t, card: await js("(document.querySelector('#bcLive .bcCard.on') || {}).innerText || ''"), slider: await js("!!document.querySelector('#bcBar .bcVol input')") });
+        await js(`(() => { const r = document.querySelector('#bcBar .bcVol input'); r.value = 20; r.dispatchEvent(new Event('input')); })()`);
+        await until(async () => Math.abs((await view()).volume - 0.2) < 0.01, 5000);
+        keep('soundVol', { volume: (await view()).volume, saved: state.voice.volumes['bc:' + bcView.from] });
+      }
+    }
+    await step('watching');
+    // Cursors: off until you turn it on, for each broadcast
+    if (role === 'guest') {
+      for (let i = 0; i < 6; i++) { await js('window.bcTestPoint(0.25, 0.4)'); await wait(150); }
+    }
+    await step('pointed-off');
+    if (role === 'host') keep('ptrsBeforeOptIn', (bcOvLast && bcOvLast.list.map((p) => p.id)) || []);
+    await step('checked-off');
+    if (role === 'guest') {
+      await btnIn('#bcLive .bcCard button', 'Share my cursor');
+      await until(() => (publicState().bcView || {}).share, 5000);
+      for (let i = 0; i < 20; i++) { await js('window.bcTestPoint(0.25, 0.4)'); await wait(100); }
+      keep('shareOn', (publicState().bcView || {}).share);
+    }
+    if (role === 'host') {
+      const g = () => bcOvLast && bcOvLast.list.find((p) => p.name === 'Guesty');
+      keep('overlayGot', await until(() => !!g(), 15000));
+      keep('overlayAt', g() || null);
+      keep('overlayRect', bcOvLast && bcOvLast.rect);
+      keep('overlayProtected', !!(bcOv && !bcOv.isDestroyed()));
+    }
+    if (role === 'third') {
+      keep('thirdSeesGuesty', await until(async () => (await view()).ptrs.length > 0, 15000));
+    }
+    await step('pointed');
+    if (role === 'host') {       // how it's going: relayed, a cap on each viewer, the tab's live card
+      const st = await sendTest();
+      keep('send', st);
+      keep('liveInfo', bcLiveInfo());
+      keep('tab', await js("({ stats: document.querySelector('#bcMineStats').textContent, who: document.querySelector('#bcMineWho').innerText.replace(/\\n+/g, ' | ') })"));
+      keep('trackBefore', st && st.track);
+      await click('#bcSwitch');       // Switch source: pick a screen again (another one, if there is)
+      await until(() => js('window.broadcastUI.sources().screens.length > 0'), 15000); await wait(500);
+      await js("(() => { const t = [...document.querySelectorAll('#bcScreens .bcSrc')]; (t[1] || t[0]).click(); })()"); await wait(300);
+      await click('#bcStart');
+      await until(async () => { const s2 = await sendTest(); return s2 && s2.track && s2.track !== st.track; }, 15000);
+      await wait(2500);
+      keep('afterSwitch', await sendTest());
+    } else await wait(1000);
+    await step('switched', 60000);
+    if (role !== 'host') {
+      const a = await view(); await wait(2000); const b = await view();
+      keep('afterSwitch', { state: b.state, first: a.framesIn, later: b.framesIn, dtls: b.dtls });
+    }
+    await step('checked-switch');
+    if (role === 'host') {       // Sound off while live: the helper stops, nobody reconnects, and viewers' cards say so
+      const before = await sendTest();
+      await js("document.querySelector('#bcSoundLive button[data-v=\"off\"]').click()");
+      await until(() => !bcSnd && !chat.info().bc.mine.audio, 8000);
+      await wait(1500);
+      const after = await sendTest();
+      keep('soundOff', { helper: !!bcSnd, hub: chat.info().bc.mine.audio, live: (bcLiveInfo() || {}).sound, sending: after && after.sound, sameConn: !!after && !!before && Object.keys(before.peers).some((id) => before.peers[id].state === 'connected') && Object.keys(before.peers).filter((id) => before.peers[id].state === 'connected').every((id) => after.peers[id] && after.peers[id].state === 'connected') });
+    }
+    await step('sound-off');
+    if (role !== 'host' && s0(res).viewOn) keep('soundOffView', await until(async () => (await view()).muted && !(publicState().bcView || {}).audio, 8000) && { card: await js("(document.querySelector('#bcLive .bcCard.on') || {}).innerText || ''"), avDelay: (await view()).avDelay });
+    await step('checked-sound-off');
+    if (role === 'host') { await click('#bcPause'); await wait(500); }
+    await step('paused');
+    if (role !== 'host') keep('pausedNote', await until(async () => /paused/.test((await view()).note), 10000) && (await view()).note);
+    if (role === 'host') keep('barPaused', await bar());
+    await step('checked-pause');
+    if (role === 'host') { await click('#bcPause'); await wait(500); }
+    if (role === 'third') {       // Stop watching from the view's own bar (Esc does the same)
+      await js("(() => { const b = [...document.querySelectorAll('#bcBar button')].find((x) => x.textContent === 'Stop watching'); if (b) b.click(); return !!b; })()");
+      keep('thirdStopped', await until(async () => !publicState().bcView && !(await view()).on, 10000));
+    }
+    await step('third-left');
+    if (role === 'guest') keep('guestStillWatching', (await view()).state === 'connected' && !!publicState().bcView);
+    await step('checked-third');
+    if (role === 'host') {
+      keep('hubViewersAfterThird', ((hubNow().bcs || [])[0] || { viewers: [] }).viewers.map((id) => memberName(hubNow().id, id)));
+      await click('#bcStop');
+      keep('stopped', await until(() => !bcWin && !chat.info().bc.mine, 10000));
+      keep('trayAfter', micTray ? 'tray' : 'none');
+      keep('overlayGone', !bcOv);
+    }
+    await step('stopped');
+    if (role === 'guest') keep('guestViewGone', await until(async () => !publicState().bcView && !(await view()).on, 10000));
+    fs.writeFileSync(path.join(outDir, role + '.json'), JSON.stringify(res, null, 1));
+    log.push(`bc ${role}: wrote what it saw`);
+    await step('end', 30000);
   }
   if (process.env.DRIFT_TESTSURF) {     // the README's Surf picture: a new tab on Drift's start page
     const wc = visWins[0].win.webContents;
@@ -2315,8 +3598,8 @@ async function runShots() {
     const dump = async (tag) => log.push('shareui ' + tag + ': ' + await js("JSON.stringify({ off: getComputedStyle(document.querySelector('#shOff')).display, host: getComputedStyle(document.querySelector('#shHost')).display, title: document.querySelector('#shTitle').textContent, sub: document.querySelector('#shSub').textContent, note: document.querySelector('#shNote').textContent, lives: document.querySelector('#chLives').innerText, toast: document.querySelector('#toast').className + '|' + document.querySelector('#toast').textContent, tab: (document.querySelector('#content section.active') || {}).dataset && document.querySelector('#content section.active').dataset.tab })"));
     patch({ music: { source: 'off' } });
     wc.send('cmd', { type: 'show-panel', tab: 'share' }); await wait(1000); await dump('before');
-    await js("document.querySelector('#shStart').click()"); await wait(1500); await dump('clicked with no video');
-    if (process.env.DRIFT_TESTVIDEO) { setVideos([process.env.DRIFT_TESTVIDEO]); await wait(2500); await js("document.querySelector('#shStart').click()"); await wait(1500); await dump('clicked with video'); await wait(15000); await dump('15 s later'); }
+    ipcMain.emit('cmd', { sender: wc }, { type: 'share-start', hub: '' }); await wait(1500); await dump('clicked with no video');
+    if (process.env.DRIFT_TESTVIDEO) { setVideos([process.env.DRIFT_TESTVIDEO]); await wait(2500); ipcMain.emit('cmd', { sender: wc }, { type: 'share-start', hub: '' }); await wait(1500); await dump('clicked with video'); await wait(15000); await dump('15 s later'); }
     await js("document.querySelector('#shStop').click()"); await wait(2500); await dump('stopped');
   }
   if (process.env.DRIFT_TESTQUIT) {     // exercise the "Close Drift?" question: Esc asks, Esc again stays, closing the window asks too
@@ -2407,6 +3690,70 @@ async function runShots() {
     }
     srv.close(); web.close(); await wait(800);
     } catch (e) { log.push('keys test failed: ' + (e && e.stack || e)); web.close(); }
+  }
+  if (process.env.DRIFT_TESTPARK) {       // Surf put away (Scenes) and shown again (Surf): its page is the same one, not loaded again (with DRIFT_TESTGPU=1, drawn offscreen)
+    try {
+    const gpuRun = !!process.env.DRIFT_TESTGPU;
+    if (gpuRun) { patch({ surfGpu: true }); await wait(300); }
+    let loads = 0;
+    const srv = http.createServer((_q, r) => { loads++; r.writeHead(200, { 'Content-Type': 'text/html' }); r.end('<!DOCTYPE html><title>park</title><body>park</body>'); });
+    await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+    const url = `http://127.0.0.1:${srv.address().port}/`, sw = visWins[0].win.webContents;
+    const click = (t) => sw.executeJavaScript(`document.querySelector('.tabs button[data-tab=${t}]').click()`);
+    web.act({ do: 'go', text: url }, visWins[0].key); await wait(4000);
+    const front = () => webContents.getAllWebContents().find((x) => !x.isDestroyed() && x.getURL() === url);
+    const see = async () => { const pg = front(); return `info.open=${web.info().open} parked=${web.info().parked || '-'} marker=${pg ? await pg.executeJavaScript('window.mark || "none"') : 'no page'} loads=${loads} ` + await sw.executeJavaScript("`body.web=${document.body.classList.contains('web')} views=${document.querySelectorAll('webview').length} shown=${document.querySelectorAll('webview.on').length} gpu=${!!document.querySelector('#webGpu')}`"); };
+    for (let i = 0; i < 20 && !front(); i++) await wait(500);
+    if (!front()) throw new Error('the page never loaded: ' + JSON.stringify(web.info()));
+    await front().executeJavaScript('window.mark = "kept"');
+    log.push(`park (${gpuRun ? 'gpu' : 'webview'}) open: ` + await see());
+    await click('scenes'); await wait(1500); log.push('park after Scenes: ' + await see());
+    await click('surf'); await wait(1500); log.push('park after Surf again: ' + await see());
+    if (gpuRun) patch({ surfGpu: false });
+    srv.close(); web.close(); await wait(800);
+    } catch (e) { log.push('park test failed: ' + (e && e.stack || e)); web.close(); }
+  }
+  if (process.env.DRIFT_TESTMIX) {       // the volume mixer: Surf's level reaches a page's sound (and a frame's), the page still sees its own volume; and a picture of the mixer
+    try {
+    const PAGE = '<!DOCTYPE html><title>mix</title><audio id="a"></audio><script>a.volume = 0.8; window.n = new Audio(); n.volume = 0.5;</script><iframe src="/f"></iframe>';
+    const srv = http.createServer((q, r) => { r.writeHead(200, { 'Content-Type': 'text/html' }); r.end(q.url === '/f' ? '<!DOCTYPE html><audio id="b"></audio><script>b.volume = 0.6</script>' : PAGE); });
+    await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+    const url = `http://127.0.0.1:${srv.address().port}/`, sw = visWins[0].win.webContents;
+    web.act({ do: 'go', text: url }, visWins[0].key);
+    const front = () => webContents.getAllWebContents().find((x) => !x.isDestroyed() && x.getURL() === url);
+    for (let i = 0; i < 30 && !front(); i++) await wait(500);
+    await wait(1000);
+    const pg = front();
+    if (!pg) throw new Error('the page never loaded');
+    const raw = "Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'volume').get";       // read in a world of its own: what is really applied
+    const see = async () => {
+      const f = pg.mainFrame.frames[0];
+      const said = await pg.executeJavaScript('[a.volume, n.volume].join("/")');
+      const real = await pg.executeJavaScriptInIsolatedWorld(999, [{ code: `${raw}.call(document.getElementById('a')).toFixed(2)` }]).catch((e) => 'err ' + e.message);
+      const fr = f ? (await f.executeJavaScript('b.volume.toFixed(2)').catch(() => '?')) + ' applied '
+        + await pg.executeJavaScriptInIsolatedWorld(999, [{ code: `${raw}.call(document.querySelector('iframe').contentDocument.getElementById('b')).toFixed(2)` }]).catch((e) => 'err ' + e.message) : 'no frame';
+      return `page says ${said}, <audio> applied ${real}, frame says ${fr}`;
+    };
+    log.push('mix start: ' + await see());
+    patch({ mixer: { surf: 0.5 } }); await wait(500); log.push('mix surf 50%: ' + await see());
+    patch({ mixer: { master: 0.5 } }); await wait(500); log.push('mix + master 50%: ' + await see());
+    await pg.executeJavaScript('a.volume = 1'); log.push('mix page sets 1: ' + await see());
+    patch({ mixer: { surfMute: true } }); await wait(500); log.push('mix surf muted: ' + await see());
+    patch({ mixer: { surfMute: false } }); await wait(300);
+    web.hide(); await wait(500);
+    await sw.executeJavaScript("document.querySelector('.tabs button[data-tab=scenes]').click()"); await wait(800);
+    await sw.executeJavaScript("document.querySelector('#panel').classList.remove('open'); document.body.dispatchEvent(new MouseEvent('mousemove', { screenX: 400, screenY: 400, bubbles: true })); document.body.dispatchEvent(new MouseEvent('mousemove', { screenX: 420, screenY: 420, bubbles: true })); document.querySelector('#mixBtn').click()"); await wait(700);
+    log.push('mixer open: ' + await sw.executeJavaScript("(() => { const m = document.querySelector('#mixer'), r = m.getBoundingClientRect(); return m.className + ' ' + getComputedStyle(m).display + ' ' + JSON.stringify([r.x, r.y, r.width, r.height].map(Math.round)); })()"));
+    await snap('mixer');
+    log.push('mixer rows: ' + await sw.executeJavaScript("[...document.querySelectorAll('.mixRow')].filter((r) => r.style.display !== 'none').map((r) => r.dataset.id + '=' + r.querySelector('output').textContent + (r.classList.contains('off') ? '(muted)' : '')).join(' ')"));
+    log.push('mixer over the panel: ' + await sw.executeJavaScript("(() => { const m = document.querySelector('#mixer').getBoundingClientRect(), b = document.querySelector('#mixBtn').getBoundingClientRect(), hit = document.elementFromPoint(m.left + 20, m.top + 20); return `panel ${document.querySelector('#panel').className} opacity ${getComputedStyle(document.querySelector('#panel')).opacity}; mixer bottom ${Math.round(m.bottom)} above speaker top ${Math.round(b.top)}: ${m.bottom <= b.top}, its parent ${document.querySelector('#mixer').parentElement.tagName}, on top: ${!!hit.closest('#mixer')}`; })()"));
+    await sw.executeJavaScript("document.querySelector('.mixRow[data-id=ambient] .mixIco').click()"); await wait(500);
+    log.push('ambient icon clicked: ambientMute=' + state.mixer.ambientMute);
+    await sw.executeJavaScript("document.querySelector('.mixRow[data-id=media] .mixIco').click()"); await wait(500);
+    log.push('media icon clicked: mediaMute=' + state.mixer.mediaMute);
+    patch({ mixer: { master: 1, surf: 1, ambientMute: false, mediaMute: false } });
+    srv.close(); web.close(); await wait(800);
+    } catch (e) { log.push('mix test failed: ' + (e && e.stack || e)); web.close(); }
   }
   if (process.env.DRIFT_TESTMIRROR && visWins.length > 1) {       // Surf mirrored on the other monitors (run with DRIFT_FAKE_DISPLAYS=2): the picture arrives, and a click there reaches the page. With DRIFT_TESTGPU=1, drawn offscreen
     try {

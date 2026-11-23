@@ -301,6 +301,8 @@ option C isn't recommended. Drift's licence text should also say the software is
 2. **Attachments**: chunked upload, re-encoding images and stripping EXIF, sandboxed viewing, Mark of the Web, the
    warning for files that run, quotas.
 3. **Voice**: mesh and relay, signed fingerprints, push-to-talk, per-person volume, moderator mute, the speaking ring, the voice bar.
+   (Superseded 2026-11-22 by one voice room per hub: `broadcast.md` §1 and its "Phase 1 as built". What follows is
+   the call as first built; the signing and relay are unchanged.)
    **Phase 3 as built (2026-11-21):** one call per hub, up to 8 people, a mesh, relayed through the hub by default.
    The threat model: the hub only passes setup messages along and may be hostile (swap DTLS fingerprints to sit in the
    middle, replay old setup messages, drop signatures, invent a member). It must never be able to hear a call without

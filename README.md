@@ -125,6 +125,13 @@ key away: scenes, colour, speed, brightness, music, video and volume.
 - **Spotify**: there is nothing to set up. While a song plays in the Spotify app on your PC and Drift
   has no video or music of its own on, the toolbar's play, pause, skip and volume control Spotify, with
   the song's name beside them, and the visuals react to it. No login.
+- **Volume mixer**: click the speaker in the toolbar for a slider per sound, as in Windows' own mixer:
+  Drift as a whole (it turns down everything below and friends' voices together); **Ambient**, the
+  generated music with the rain, waves, wind and fire; **Media**, your videos and music from the Media
+  tab; Surf's web pages; and Spotify when it's playing. Click a row's icon
+  to mute it. The slider beside the speaker is for whatever you're on; on the Surf tab it turns down every
+  web page at once (a page's own volume control still works inside that). Sound a page makes only through
+  Web Audio, as some games do, isn't reached.
 
 ## Video, done properly
 
@@ -145,24 +152,32 @@ key away: scenes, colour, speed, brightness, music, video and volume.
 
 ## Watch together
 
-The **Together** tab is where your friends are: a *hub* with channels to chat in and a call to talk in,
-hosted by your Drift. Press **Share what I'm watching** and everyone in the hub gets a **Join** button in
-the chat. Up to eight of them see the same video, in step: play, pause and skipping stay together for
-everyone. The video streams straight from your PC to theirs, encrypted, with no server, upload or account
+The **Together** tab is where your friends are: a *hub* with channels to chat in and a voice room to talk in,
+hosted by your Drift. Each hub has two streams everyone in it watches together: the **media stream** (a video
+or music) and the **Surf stream** (one web browser for the whole hub). While you're online in one,
+picking a video or music in **Media** streams it there, and everyone online in the
+hub watches it without pressing anything. Up to eight of them see the same thing, in step: play, pause and skipping stay together
+for everyone. It streams straight from your PC to theirs, encrypted, with no server, upload or account
 involved. A friend who already has the file plays their own copy, and everyone picks their own subtitles.
-Press **Start a call** to talk while you watch: up to eight people, end-to-end encrypted, and Drift shows
-a lock on each connection it has verified.
+If nothing's on, yours starts straight away. If someone else's is on, a card pops up over everyone's
+video asking whether to switch. If more than half of the people online agree within 30 seconds, theirs
+stops and yours goes on. Drift doesn't connect to your hubs when it starts: you're online in one, and on
+its streams, once you click it. If you'd rather not watch, disconnect from the hub.
+Open a hub and you're in its voice room, listening; press **Talk** to be heard. It's end-to-end
+encrypted, and Drift shows a lock on each connection it has verified.
 
-## Surf, alone or together
+## Surf, alone or with your hub
 
 <p align="center">
   <img src="docs/images/surf-home.jpg" width="820" alt="Surf's start page: a large clock, a search box and tiles for lo-fi radio, rain sounds, ambient 4K, jazz, YouTube, Twitch, SoundCloud and a random article">
 </p>
 
 The **Surf** tab puts a web browser on any screen, opening on Drift's own start page: a clock, a search
-box and a few places to drift to. Share it from **Together** and your friends see and hear the page with
-you. If you let them, they can click, scroll and type in it from their own PC too. Everyone's mouse shows
-over the page as a coloured arrow with their name, so you can point things out to each other. Close Drift
+box and a few places to drift to. While you're online in a hub, the Surf tab is the hub's **Surf stream**
+instead: one browser everyone in the hub shares, running on the host's PC. Anyone can open a page, click,
+scroll, type and change tabs, and everyone sees and hears the same thing at the same moment. Everyone's mouse
+shows over the page as a coloured arrow with their name, so you can point things out to each other. Your own
+browser is put away meanwhile and comes back, with its tabs, when you disconnect. Close Drift
 with the browser open and your tabs come back next time, without anything starting to play by itself.
 With more than one monitor, the two-screens button in the browser's bar shows the page on all your other
 monitors too, and you can click, scroll and type in it from any of them. Choosing **Mirror** in Settings while a page is
@@ -214,10 +229,10 @@ quitting (`Enter` closes, `Esc` again stays), and from there you can also close 
 
 ### Watch together in detail
 
-Play a video, open the **Together** tab and press **Share what I'm watching**. If you aren't in a hub
-yet, Drift hosts one for you. Press **Copy an invite** and send the code to friends; they paste it into
-the same tab and press **Join**. From then on they're in the hub, and whenever anyone in it shares,
-the others get a card in the chat with a **Join** button. Up to eight friends can watch at once.
+Open the **Together** tab and host a hub, then press **Copy an invite** and send the code to friends; they
+paste it into the same tab and press **Join**. From then on they're in the hub. Click it to be online there,
+then play a video or music and it's on everyone's screen; open Surf and you're on the hub's Surf stream. What's playing also shows as a card
+in the chat. Up to eight friends can watch at once.
 
 - Chat: channels anyone in the hub can make, replies, editing (↑ edits your last message), deleting, and
   a little formatting (`**bold**`, `*italic*`, `` `code` ``, `||spoiler||`, `> quote`). Links open in Surf
@@ -233,30 +248,34 @@ the others get a card in the chat with a **Join** button. Up to eight friends ca
 - A hub invite works for 7 days. It holds the hub's addresses and the fingerprint of its certificate,
   so nobody else can pretend to be the hub. Each person is a key made by their Drift, kept encrypted
   by Windows; there are no accounts or passwords. The hub uses port 47900, TCP for the chat and UDP for
-  calls.
+  voice.
 
-**Calls.** Each hub has one call, for up to eight people. Press **Start a call** (or **Join the call**) in
-the Together tab. While you're in it, a small bar over the scenes shows who is there, rings whoever is
-speaking, and has **Mute**, **Deafen** and **Leave**; the tray shows a light, grey while nobody can hear
-you and red while they can. Each person has their own volume slider, for you only. The microphone is only
-open while you're in a call. *Hold a key to talk* (in *Options*) works even while another program has the
-keyboard: the key under Esc, Right Ctrl, or a mouse's side buttons.
+**Voice.** Each hub has one voice room, for up to 16 people with 8 talking at once. Being online in a hub
+puts you in its room, listening: there's nothing to start or join. You're in one hub's room at a time, the
+one open in Together (or the one you **Keep voice here**). Your microphone stays closed until you press
+**Talk**, and closes again when you press **Mute**; it starts closed every time Drift starts, unless you
+turn on *Keep my microphone on between sessions*. While you're in a room, a small bar over the scenes shows
+the hub, rings whoever is speaking, and has **Talk** / **Mute**, **Don't listen** and **Disconnect** (go
+offline from that hub without leaving it; click the hub to come back). It stays bright while your
+microphone is open. The tray shows a light, grey while your microphone is closed and red while it's open;
+clicking it turns Talk on or off. Each person has their own volume slider, for you only. *Hold a key to
+talk* (in *Options*) works even while another program has the keyboard: the key under Esc, Right Ctrl, or
+a mouse's side buttons.
 
 - **End-to-end encrypted, even from the hub.** The sound goes from your PC to each friend's, encrypted
   (DTLS-SRTP). The hub only passes on the messages that set each connection up, and your Drift signs each
   of those with your key; theirs checks the signature, and then checks that the connection really uses the
   certificate you signed. So a hub can't listen in without it showing. Each connection that passes gets a
-  🔒, and *End-to-end encrypted in calls of up to 8* only appears when every connection in your call has
-  one. If a check fails, Drift doesn't connect to that person and says so: *Couldn't verify Ana. The hub
+  🔒, and *End-to-end encrypted* only appears when every connection you have in the room has one. If a check fails, Drift doesn't connect to that person and says so: *Couldn't verify Ana. The hub
   may be interfering.*
-- **Your address stays private.** Calls go through the hub's PC by default, so nobody in a call learns
-  anyone else's IP address (the hub passes the sound on, but can't hear it). *Connect directly in calls*
+- **Your address stays private.** Voice goes through the hub's PC by default, so nobody in the room learns
+  anyone else's IP address (the hub passes the sound on, but can't hear it). *Connect directly*
   lowers the delay a little, for friends who don't mind seeing each other's addresses.
 - **Safety numbers.** Click someone's name under *People* to see a 12-digit safety number for the two of
   you. Compare it in person or on the phone; if yours match, nobody (not even the hub) is pretending to be
   either of you, and you can mark them verified. Drift remembers who it has met in each hub, and warns if
   a name you know turns up with a different key.
-- For echo cancelling to remove the sound of what you're watching, play both the video and the call on
+- For echo cancelling to remove the sound of what you're watching, play both the video and voice on
   Windows' default sound output.
 
 - Play, pause, seeking and moving to the next video stay in step on every PC (untick *Friends can play,
@@ -300,12 +319,11 @@ of a second after you do). There is nothing to set up: put music on and it reach
 During a session each tab in the panel carries a small number: how many people (you included) are on it
 right now, so you can see who has wandered off to Settings or is looking at the same page as you.
 
-### Surf: a browser in Drift, alone or together
+### Surf: a browser in Drift, alone or with your hub
 
 The **Surf** tab is a small web browser. Choose it and the browser opens on that screen, in place of the
 scene, on Drift's own start page: a clock, a search box (an address, or something to search Google for)
-and a few places to drift to. While you are sharing (in **Together**), friends see and hear the tab in
-front too: its picture and sound are streamed to them from your PC.
+and a few places to drift to. While you're online in a hub it's that hub's Surf stream (below).
 
 - **The bar at the top.** Move the mouse to the very top edge of the screen and a floating bar drops down
   with your tabs, **+** for a new tab, back, forward, reload, home and the address. It slips away again
@@ -316,35 +334,24 @@ front too: its picture and sound are streamed to them from your PC.
   the last tab closed, `Ctrl+Tab` / `Ctrl+Shift+Tab` (or `Ctrl+PgDn` / `Ctrl+PgUp`) next and previous tab,
   `Ctrl+1`…`Ctrl+8` a tab, `Ctrl+9` the last tab, `Ctrl+L` / `Alt+D` / `F6` the address, `Ctrl+R` / `F5`
   reload (`Ctrl+Shift+R` / `Ctrl+F5` past the cache), `Alt+Left` / `Alt+Right` back and forward, `Alt+Home`
-  the start page, and `Ctrl` with `+`, `-`, `0` or the mouse wheel to zoom. Friends who may control the page
-  can use them too.
+  the start page, and `Ctrl` with `+`, `-`, `0` or the mouse wheel to zoom. They work on a hub's Surf
+  stream too.
 - **Drift's own panel.** The page takes the mouse and keyboard while it is showing. Move the mouse to the
   very bottom edge of the screen for the panel, or press `Esc` in the page (when a video is full screen,
   the first `Esc` leaves that). With Surf selected, the panel's previous / next buttons go back and
   forward, and the video progress bar is hidden.
 - **Leaving Surf.** Choosing Scenes or Media on the browser's screen puts the browser away so you can
-  see them. Your tabs are kept and their pages load again when you come back to Surf. Together and
+  see them. Your tabs stay open behind them, exactly as you left them, so coming back to Surf shows
+  them again straight away without loading them again. A video playing in one keeps playing, as in a
+  background tab. Together and
   Settings leave the browser where it is. Closing the last tab closes the browser.
 - **Next time.** If the browser is open when Drift closes, its tabs, the tab in front and its monitor come
   back when Drift starts again. Video and music in those pages stay paused until you click or press a key
   in the page.
 - The browser is on one monitor; the others carry on with their scenes. Choosing Surf on another monitor
   moves it there (the pages load again).
-- With *Friends can play, pause and skip, and use a web page* ticked (in Together), friends can click,
-  scroll and type in the page from their own PC, and use the same bar for tabs and the address, as you:
-  they act in whatever accounts you are signed in to there. Untick it and they only watch. Pasting is
-  never passed on, so your clipboard stays yours.
-- Everyone sees everyone else's mouse over the page, as a small coloured arrow with their name, so you
-  can point at things. A pointer that stops moving fades after a few seconds. A friend's own mouse is
-  drawn the same way on their screen, so they see what the others see.
-- Only the sharing PC loads the pages, so an account is only needed there. Sign-ins made in Drift are kept
-  apart from your normal browser.
-- The stream goes straight from PC to PC (WebRTC, encrypted), at 30 frames a second and up to about
-  8 Mbit/s of upload for each friend. With *Let friends join from outside my home network* ticked,
-  both PCs ask a public STUN server (Google's) what their internet address is so they can find each other;
-  nothing of the page passes through it. Some networks can't be connected this way: a VPN such as
-  Tailscale on both PCs gets round that.
-- Copy-protected video (Widevine) plays, and friends see it too. The first time Surf opens, Chromium downloads
+- Sign-ins made in Drift are kept apart from your normal browser.
+- Copy-protected video (Widevine) plays, and the hub sees it too on the Surf stream. The first time Surf opens, Chromium downloads
   Widevine from Google (a few MB) and keeps it up to date. Netflix also needs a release that castLabs has
   signed (see Building). Like other Chromium-based browsers apart from Chrome and Edge, Surf gets these
   services' lower quality, usually 720p.
@@ -356,6 +363,41 @@ front too: its picture and sound are streamed to them from your PC.
   lists up to date by itself. Sites fight blockers, so now and then an advert gets through, or a page
   misbehaves: untick it and the pages reload without blocking. uBlock Origin is
   [gorhill/uBlock](https://github.com/gorhill/uBlock), GPLv3. Drift doesn't include it; it fetches it.
+
+### The Surf stream: one browser for the whole hub
+
+Online in a hub, the Surf tab is the hub's Surf stream: a browser running on the host's PC that everyone in
+the hub shares. It runs side by side with the media stream, so one person's video can be on while another
+scrolls a page. Nobody owns it and there's no vote: anyone online can open a page, click, scroll, type and
+open or close tabs, and two people typing at once interleave, as at one keyboard.
+
+- **On the host's PC** it's a second browser in a profile of its own, signed out of everything, with none of
+  the host's cookies, history or sign-ins. The host's Surf tab shows it straight from the graphics card while
+  they're online in their hub; disconnecting brings their own browser back while the hub's carries on for
+  everyone else. Its tabs are kept while the hub runs and across restarts, until the host presses
+  **Settings → Your hub's Surf stream → Clear**. It starts the first time anyone opens Surf while online.
+- **Everyone else** gets a picture of it with its sound, streamed from the host's PC: 1080p at 30 frames a
+  second, H.264 when the graphics card can encode it, up to about 8 Mbit/s of the host's upload for each
+  person watching, and up to seven watching at once. It's relayed through the hub (so nobody sees anyone's
+  address) unless *Connect directly* is on, end-to-end encrypted, and every setup message is signed, as in
+  voice. Watching starts when you open the Surf tab, and its sound keeps playing at the mixer's Surf level
+  while you're on another tab, so it can be the hub's radio.
+- **The bar along the top** shows its tabs and address, and a line says whose Surf stream it is, with the
+  faces of whoever is watching. The hub bar shows its front tab next to what's on the media stream.
+- **What can't happen**, because it would happen on the host's PC: pop-up windows (a link asking for a new
+  window opens a tab instead), file pickers, page dialogs, permissions (camera, microphone, location),
+  reaching the host's own network (their router, other PCs, Drift's own ports: the check is on the address a
+  name really resolves to, and the host can allow particular local addresses in Settings), and downloads the
+  host hasn't agreed to.
+- **Downloads** wait for the host. A card on the host's screens says who wants what, from where, with
+  **Save** and **Refuse**. Save puts it in the host's Downloads folder; Refuse, or no answer in a minute,
+  deletes it. The file never leaves the host's PC. The host can refuse them all in Settings.
+- **Signed in for everyone.** Anything signed into on the Surf stream is signed in for everyone in the hub,
+  and Drift says so the first time someone types into a password box there. Password boxes still can't be
+  turned into plain text. Pages load from the host's internet connection, so sites see the host's address;
+  the host is told the first time it starts.
+- **Blocking** someone hides their pointer from you. Their input still reaches the page, since it's one
+  shared browser. The host can remove someone from the hub.
 - `Alt+←` / `Alt+→` (or the mouse's side buttons) go back and forward.
 
 ### Video conversion
@@ -450,14 +492,19 @@ settings (two copies on one PC can share with each other), `DRIFT_SHARE_LOCAL=1`
 `DRIFT_FAKE_HDR=0|1` pretends the screens are SDR or HDR, `DRIFT_HIDDEN=1` and `DRIFT_MUTE=1` run without
 windows or sound. `DRIFT_SHOTS=<folder>` runs the screenshot tour (add `DRIFT_ONLY=<scene,...>`,
 `DRIFT_PALETTE=<name>`, `DRIFT_PANEL=1` and `DRIFT_SHOTWAIT=<ms>` to wait longer per scene); the README images
-were made with it. Add `DRIFT_TESTSURF=1` for the picture of Surf's start page. `DRIFT_TESTMIRROR=1` with `DRIFT_FAKE_DISPLAYS=2` checks Surf's mirroring (`DRIFT_FAKE_WIDTHS=1,2` makes the fake monitors different widths; add `DRIFT_TESTGPU=1` for the graphics-card drawing, and `DRIFT_HIDDEN=1` so your own mouse can't reach the test page). `DRIFT_TESTKEYS=1` presses Surf's keyboard shortcuts in a test page (add `DRIFT_TESTGPU=1` for the offscreen page). The picture of a page shared in
-Surf comes from two copies run at once with `DRIFT_TESTWEB=host` and `=guest` (with the same `DRIFT_TESTCODE`
-file, `DRIFT_TESTURL` and `DRIFT_SHARE_LOCAL=1`); `DRIFT_TESTNAME` sets each one's name.
+were made with it. Add `DRIFT_TESTSURF=1` for the picture of Surf's start page. `DRIFT_TESTMIRROR=1` with `DRIFT_FAKE_DISPLAYS=2` checks Surf's mirroring (`DRIFT_FAKE_WIDTHS=1,2` makes the fake monitors different widths; add `DRIFT_TESTGPU=1` for the graphics-card drawing, and `DRIFT_HIDDEN=1` so your own mouse can't reach the test page). `DRIFT_TESTKEYS=1` presses Surf's keyboard shortcuts in a test page (add `DRIFT_TESTGPU=1` for the offscreen page). `DRIFT_TESTMIX=1` checks the volume mixer's Surf and master levels inside a test page and its frame, and takes a picture of the mixer. `DRIFT_TESTPARK=1` checks that a Surf page put away (Scenes) and shown again is the same page, not loaded again (`DRIFT_TESTGPU=1` works here too). 
+`node scripts/test-surf-stream.js` runs two copies through a hub's Surf stream (`DRIFT_TESTSS=host|guest`), and
+`node scripts/test-surf-lan.js` checks its guard against the host's own network (no Electron needed).
 Chat and calls have their own checks: `node scripts/test-chat.js` and `node scripts/test-voice.js` (no
 Electron needed; both also run under `ELECTRON_RUN_AS_NODE=1`), and `node scripts/test-calls.js`, which
 runs three copies of Drift in a call (`DRIFT_TESTVOICE=host|guest|third`) honestly and with the hub
 misbehaving on purpose (`DRIFT_HUB_TAMPER=fingerprint|unsigned|replay|swapkey`, aimed with
-`DRIFT_HUB_TAMPER_PAIR=From>To`).
+`DRIFT_HUB_TAMPER_PAIR=From>To`). `node scripts/test-broadcast-ui.js` runs two copies through the Broadcast
+tab (`DRIFT_TESTBCUI=host|guest`), pressing its real buttons, and `node scripts/test-broadcast.js [modes...]`
+runs three copies through a whole broadcast (`DRIFT_TESTBC=host|guest|third`, with `DRIFT_TESTBROADCAST`
+sending a test pattern): watching in the Broadcast view, opt-in cursor sharing, Switch source, Pause and Stop,
+and sound (it plays a quiet 1 kHz tone for a minute or so, which the viewers must receive), honestly and with the
+hub tampering (`fingerprint`, `unsigned`).
 To try updating, run a packaged copy with `DRIFT_FAKE_VERSION=1.0.0` (it then thinks the latest release is
 newer) and `DRIFT_UPDATE_AUTOINSTALL=1` (it installs and restarts as soon as the download is ready).
 

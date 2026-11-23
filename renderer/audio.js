@@ -12,9 +12,19 @@
   const master = G(0), comp = ctx.createDynamicsCompressor(), analyser = ctx.createAnalyser();
   comp.threshold.value = -14; comp.ratio.value = 4; comp.attack.value = 0.02; comp.release.value = 0.4;
   analyser.fftSize = 2048; analyser.smoothingTimeConstant = 0.75;
-  master.connect(comp); comp.connect(analyser); analyser.connect(ctx.destination);
+  // out: the volume mixer's master, after the analyser so the visuals still have the music to follow
+  const out = ctx.createGain();
+  const outLevel = () => { const x = S.mixer || {}; return x.mute ? 0 : (isFinite(x.master) ? x.master : 1); };
+  out.gain.value = outLevel();
+  master.connect(comp); comp.connect(analyser); analyser.connect(out); out.connect(ctx.destination);
   const musicBus = G(0), natureBus = G(1), genBus = G(0), fileBus = G(1);
-  musicBus.connect(master); natureBus.connect(master); genBus.connect(musicBus); fileBus.connect(musicBus);
+  // the volume mixer's two levels: Ambient (the generated music and the nature sounds: music.volume) and Media (music from the
+  // Media tab, with the videos: video.volume)
+  const ambLvl = G(0), natLvl = G(1), mediaLvl = G(0);
+  musicBus.connect(master); natureBus.connect(natLvl); natLvl.connect(master); genBus.connect(ambLvl); ambLvl.connect(musicBus); fileBus.connect(mediaLvl); mediaLvl.connect(musicBus);
+  const mix = () => S.mixer || {};
+  const ambGain = () => (mix().ambientMute ? 0 : S.music.volume * S.music.volume);
+  const mediaGain = () => (mix().mediaMute ? 0 : S.video.volume * S.video.volume);
 
   // reverb (generated impulse response) + echo for bells
   const reverb = ctx.createConvolver();
@@ -316,13 +326,13 @@
     const now = Date.now();
     if (gpc && gpc.connectionState === 'connected') gGood = now; else if (now - Math.max(gAsked, gGood) > 6000) ask();
   }, 2000);
-  function syncShare(videoSound) {
-    const m = S.music, p = S.p2p || {}, t = T();
+  function syncShare(hush) {
+    const m = S.music, p = S.p2p || {}, t = T(), videoSound = S.video.sound && !!S.videoLeader && !S.video.paused;
     if (p.role !== 'host') for (const id of [...pcs.keys()]) dropPeer(id);
-    shareBus.gain.setTargetAtTime(m.playing && (m.source === 'files' || m.source === 'generative') && !videoSound ? 1 : 0, t, m.playing ? 0.1 : 0.35);       // when a video's sound takes over here, it does for friends too
+    shareBus.gain.setTargetAtTime(m.playing && (m.source === 'files' || m.source === 'generative') && !hush ? 1 : 0, t, m.playing ? 0.1 : 0.35);       // when the music gives way here, it does for friends too
     const want = theirs() && p.status === 'connected';
     if (want && !gWant) { gWant = true; ask(); } else if (!want && gWant) { gWant = false; hangUp(); }
-    remoteBus.gain.setTargetAtTime(theirs() && !videoSound ? m.volume * m.volume * 1.4 : 0, t, 0.08);
+    remoteBus.gain.setTargetAtTime(theirs() && !videoSound ? (S.p2p.music.src === 'files' ? mediaGain() : ambGain()) * 1.4 : 0, t, 0.08);       // their music, at the level of its kind here
   }
 
   // ---------- apply state ----------
@@ -331,9 +341,16 @@
     if (ctx.state === 'suspended') ctx.resume();
     const m = S.music, t = T();
     if (!fading) master.gain.setTargetAtTime(m.playing ? 1 : 0, t, 0.35);
-    const videoSound = S.video.sound && !!S.videoLeader;   // the video's own soundtrack takes over from the music
-    syncShare(videoSound);
-    musicBus.gain.setTargetAtTime(m.source === 'off' || videoSound || theirs() ? 0 : m.volume * m.volume * 1.4, t, videoSound ? 0.5 : 0.08);
+    out.gain.setTargetAtTime(outLevel(), t, 0.05);
+    const videoSound = S.video.sound && !!S.videoLeader && !S.video.paused;   // the video's own soundtrack takes over from the music (while it plays: a paused video left on one monitor in Mix shouldn't silence it)
+    // Settings' "Pause ambient music for other media" (on unless turned off): the generated music waits while a video or a Surf
+    // page plays sound. Off, it carries on underneath. Music from the library always gives way to a video.
+    const yieldAmb = S.ambientYields !== false, other = videoSound || !!(S.web || {}).audible;
+    const hush = m.source === 'off' || theirs() || (m.source === 'files' ? videoSound : yieldAmb && other);
+    syncShare(hush);
+    musicBus.gain.setTargetAtTime(hush ? 0 : 1.4, t, other ? 0.5 : 0.08);
+    ambLvl.gain.setTargetAtTime(ambGain(), t, 0.08); mediaLvl.gain.setTargetAtTime(mediaGain(), t, 0.08);
+    natLvl.gain.setTargetAtTime(Math.min(1.6, ambGain() / 0.36), t, 0.08);       // the nature sounds as they always were at the usual Ambient level (60%)
     for (const k of Object.keys(N)) N[k].gain.setTargetAtTime(Math.pow(m.nature[k] || 0, 1.6), t, 0.1);
     // files
     const wantFiles = m.source === 'files' && m.playing && m.playlist.length > 0 && !theirs();
