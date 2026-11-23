@@ -3344,6 +3344,21 @@ async function runShots() {
         const hubSes = session.fromPartition(`persist:hub-${hubWebId}`);
         await session.fromPartition('persist:web').cookies.set({ url: base, name: 'mine', value: 'secret' });
         tl('its own profile: none of my browser\'s cookies', !(await hubSes.cookies.get({ url: base })).some((c) => c.name === 'mine'));
+        {       // the hub bar over the page: out of sight (it sat on sites' logos), back with Surf's own bar, in its place at the left
+          const bar = () => pageRun(wc, () => {       // (runs in the page)
+            const b = document.querySelector('#callBar'), s = document.querySelector('#surfBar');
+            const r = (e) => { const x = e.getBoundingClientRect(); return { l: Math.round(x.left), t: Math.round(x.top), r: Math.round(x.right), b: Math.round(x.bottom) }; };
+            return { on: b.classList.contains('on'), op: getComputedStyle(b).opacity, bar: r(b), surf: r(s), text: b.innerText.replace(/\n+/g, ' | ') };
+          });
+          wc.send('cmd', { type: 'hide-panel' }); await js("document.querySelector('#panel').classList.remove('show', 'open')"); await js("document.querySelector('#surfBar').classList.remove('show')"); await wait(600);
+          await js("document.head.append(Object.assign(document.createElement('style'), { id: 'noAnim', textContent: '* { transition: none !important; animation: none !important; }' }))");       // (a hidden window never runs its transitions)
+          const h0 = await bar(); log.push('surf host: hub bar hidden ' + JSON.stringify(h0));
+          tl('over a Surf page the hub bar is out of sight, and says nothing of the Surf stream', h0.on && +h0.op === 0 && !/Surf|Test one/.test(h0.text));
+          await js("document.querySelector('#surfEdge').dispatchEvent(new MouseEvent('mouseenter'))"); await wait(500);       // the mouse reaching the top edge
+          const h1 = await bar(); log.push('surf host: hub bar shown ' + JSON.stringify(h1));
+          tl('...and comes back with the Surf bar, at the left, level with it and clear of it', +h1.op === 1 && h1.bar.l === 18 && h1.bar.t === h1.surf.t && h1.bar.r + 16 <= h1.surf.l);
+          await js("document.querySelector('#noAnim').remove()");
+        }
         await step('ready');
         need('a member watching: the stream window opens', await until(() => !!ssWin && ssWatchers().length === 1, 60000));
         need('...and connects to them', await until(() => Object.values(ssPeers).includes('connected'), 40000));
@@ -3351,21 +3366,6 @@ async function runShots() {
         let st = null;
         tl('...relayed through the hub, sending picture and sound', await until(async () => { st = ssWin && await pageJs(ssWin.webContents, 'window.surfStreamTest()').catch(() => null); return !!st && Object.values(st.peers).some((p) => /relay/.test(p.path || '') && p.framesOut > 10 && p.audioOut > 0); }, 20000));
         log.push('surf host: stream ' + JSON.stringify(st));
-        {       // the hub bar over the page: out of sight, back under the browser's bar (not beside it, not over the page's top left)
-          const bar = () => pageRun(wc, () => {       // (runs in the page)
-            const b = document.querySelector('#callBar'), s = document.querySelector('#surfBar');
-            const r = (e) => { const x = e.getBoundingClientRect(); return { l: Math.round(x.left), t: Math.round(x.top), r: Math.round(x.right), b: Math.round(x.bottom) }; };
-            return { on: b.classList.contains('on'), op: getComputedStyle(b).opacity, bar: r(b), surf: r(s), text: b.innerText.replace(/\n+/g, ' | '), faces: b.querySelectorAll('.cbSurf .face').length };
-          });
-          wc.send('cmd', { type: 'hide-panel' }); await js("document.querySelector('#panel').classList.remove('show', 'open')"); await js("document.querySelector('#surfBar').classList.remove('show')"); await wait(600);
-          await js("document.head.append(Object.assign(document.createElement('style'), { id: 'noAnim', textContent: '* { transition: none !important; animation: none !important; }' }))");       // (a hidden window never runs its transitions)
-          const h0 = await bar(); log.push('surf host: hub bar hidden ' + JSON.stringify(h0));
-          tl('over a Surf page the hub bar is out of sight, showing who is on the Surf stream instead of the page title', h0.on && +h0.op === 0 && /Surf/.test(h0.text) && !/Test one/.test(h0.text) && h0.faces === 1);
-          await js("document.querySelector('#surfEdge').dispatchEvent(new MouseEvent('mouseenter'))"); await wait(500);       // the mouse reaching the top edge
-          const h1 = await bar(); log.push('surf host: hub bar shown ' + JSON.stringify(h1));
-          tl('...and comes back with the Surf bar, centred under it, not over the page top left', +h1.op === 1 && h1.bar.t >= h1.surf.b && Math.abs((h1.bar.l + h1.bar.r) / 2 - (h1.surf.l + h1.surf.r) / 2) <= 2);
-          await js("document.querySelector('#noAnim').remove()");
-        }
         const cpu0 = app.getAppMetrics(); await wait(3000);       // what it costs this PC: every process's processor use while streaming to one
         log.push('surf host: cpu ' + JSON.stringify(app.getAppMetrics().filter((x) => x.cpu.percentCPUUsage > 1).map((x) => `${x.type}:${x.cpu.percentCPUUsage.toFixed(0)}%`)));
         void cpu0;

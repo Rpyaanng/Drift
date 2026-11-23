@@ -24,9 +24,7 @@
     play: '<path d="M7 5l12 7-12 7z" fill="currentColor"/>',
     stop: '<rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/>',
     plug: '<path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4"/>',
-    door: '<path d="M14 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4M10 16l-4-4 4-4M6 12h10"/>',
-    globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/>',
-  };
+    door: '<path d="M14 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4M10 16l-4-4 4-4M6 12h10"/>',  };
   function icon(name) {
     const el = h('span.ico');
     el.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
@@ -346,8 +344,8 @@
   // but never while your microphone is open (.hot).
   function drawCall() {
     const bar = $('#callBar'), c = info.call, live = info.live, x = info.hubs.find((y) => y.id === activeHubId() && y.status === 'connected');
-    const inRoom = !!(x && x.room && x.room.in), watching = p2p.role === 'host' || p2p.role === 'guest', surfing = !!(x && x.surf && x.surf.on);
-    if (!inRoom && !watching && !surfing) { bar.classList.remove('on', 'hot'); bar.replaceChildren(); return; }
+    const inRoom = !!(x && x.room && x.room.in), watching = p2p.role === 'host' || p2p.role === 'guest';
+    if (!inRoom && !watching) { bar.classList.remove('on', 'hot'); bar.replaceChildren(); document.documentElement.style.setProperty('--cbw', '0px'); return; }
     const parts = [];
     if (inRoom) {
       const n = c && c.hub === x.id ? e2eNote(x) : { text: '' };
@@ -387,15 +385,9 @@
       parts.push(h('span.cbWhere.cbWatch', { title: host ? (p2p.peers || []).map((p) => p.name || p).join(', ') : '' }, h('span.spdot'), what),
         h('button.cbBtn.leave', { title: host ? 'Stop sharing with everyone' : 'Stop watching together', onclick: () => api.cmd({ type: 'share-stop' }) }, host ? 'Stop sharing' : 'Leave'));
     }
-    if (surfing) {       // the hub's Surf stream (docs/plans/streams.md §9): who's on it, not what page (that's Surf's own bar); a click opens it
-      const ws = x.surf.watchers || [], names = ws.map((id) => (id === info.me.id ? 'You' : nameOf(x, id)));
-      if (inRoom || watching) parts.push(h('span.cbSep'));
-      parts.push(h('button.cbBtn.cbSurf', { title: `The Surf stream: one browser for everyone in ${x.name || 'the hub'}. ${ws.length ? 'On it: ' + names.join(', ') : 'Nobody on it right now'}. Click to open Surf.`,
-        onclick: () => { const b = document.querySelector('#bar .tabs button[data-tab="surf"]'); if (b) b.click(); } },
-        icon('globe'), 'Surf', ws.length ? h('span.cbFaces', {}, ws.slice(0, 4).map((id) => face(x, id, '.small'))) : null, ws.length > 4 ? h('span.cbMore', {}, '+' + (ws.length - 4)) : null));
-    }
     bar.replaceChildren(...parts.filter(Boolean));
     bar.classList.add('on');
+    document.documentElement.style.setProperty('--cbw', bar.offsetWidth + 'px');       // Surf's bar leaves room for it beside them (style.css)
     bar.classList.toggle('hot', inRoom && (!!voiceSet.talk || !!(info.bc && info.bc.mine)));       // never faded while your mic is open or you're live
     speaking();
   }
