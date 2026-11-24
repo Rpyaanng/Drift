@@ -750,7 +750,8 @@ function publicState() {
     videoUrl: c ? (c.path ? pathToFileURL(c.path).href : c.src) : '', videoName: c ? c.name : '', videoPath: c ? c.path : '', videoLeader: lead && c ? lead.key : '',
     sceneFps: sceneFps(), screens: visWins.length, spotify: { ...spotify, lead: spotifyLead() }, videoAudio, videoInfo, audioBase: audioPort && c ? local(`/a?i=${c.index}`) : '',
     xc: { ...xc, ...xcWant(), base: xcBase() }, encoders: xcoder.list(), canTonemap: !xcoder.ready() || xcoder.canTonemap(),
-    p2p: { ...p2p.info(), ctrl: !remote || !!remote.ctrl, own: !!(c && c.remote && c.path), viaHost: viaHost(), quality: shareQuality(), waitingFor: heldFor || [], defaultName: shareName(true), file: remote ? remote.file || '' : '', music: remote ? remote.music : null, chatHub: sessionHub(), lan: createP2P.localAddrs().find((a) => a.includes('.')) || '' },       // music: a friend's, playing here in place of ours; chatHub: the hub this session is in; lan: this PC's address on its network (Help)
+    p2p: { ...p2p.info(), ctrl: !remote || !!remote.ctrl, own: !!(c && c.remote && c.path), viaHost: viaHost(), quality: shareQuality(), waitingFor: heldFor || [], defaultName: shareName(true), file: remote ? remote.file || '' : '', music: remote ? remote.music : null, chatHub: sessionHub(), lan: createP2P.localAddrs().find((a) => a.includes('.')) || '' },
+    mediaSolo: mediaSolo ? mediaSolo.text : '',       // why what this PC plays isn't on the hub's stream (mediaRefused)       // music: a friend's, playing here in place of ours; chatHub: the hub this session is in; lan: this PC's address on its network (Help)
     update: updater ? updater.info() : null,
     // this PC's own browser, or a hub's Surf stream (here on the hub's host; a picture from the host's PC elsewhere)
     web: surfView(), bcView: bcViewInfo(), hosting: !!(chat && chat.hostedHub()), hubHeld: heldView(), hubSurf: { noDownloads: state.hubSurf.noDownloads, allowLan: state.hubSurf.allowLan.join(', '), showSpecs: state.hubSurf.showSpecs, showBrowsing: state.hubSurf.showBrowsing } };
@@ -1042,6 +1043,13 @@ function hubBrowser() {
       showcase: () => ({ specs: state.hubSurf.showSpecs, browsing: state.hubSurf.showBrowsing }),       // the host's choice, in Settings
       owner: () => web.home,
       cursor: ssCursor,
+      // Enter that the page didn't take (web.js "Enter"): the chat box of whoever pressed it, the host's here, a member's on their PC
+      chatOk: (who) => { const h = chat && chat.info().hubs.find((x) => x.id === hubWebId); return !!(h && h.channels.length) && (who !== chat.myId() || h.status === 'connected'); },
+      chat: (who, from) => {
+        if (who !== chat.myId()) { toSs({ t: 'send', to: who, m: { t: 'chat' } }); return; }
+        const x = visWins.find((y) => !y.win.isDestroyed() && y.win.webContents === from);
+        if (x) { x.win.webContents.focus(); x.win.webContents.send('cmd', { type: 'chat-quick' }); }
+      },
       note: (what) => { if (what === 'password' && !hubPwTold) { hubPwTold = true; const t = 'Everyone in the hub can use what you sign in to here.'; if (surfMode() === 'hub') say(t); ssNote(t); } },
     }, { partition: `persist:hub-${id}`, headless: true });
   }
@@ -1232,6 +1240,10 @@ function onSsDc(m) {       // from the host, over the data channel (the screen w
     const c = String(m.c || '');
     if (/^[a-z-]{1,24}$/.test(c)) { ssCurSeen.add(c); toScreen({ type: 'web-cursor', c }); }
   } else if (m.t === 'note') say(String(m.text || '').slice(0, 200));
+  else if (m.t === 'chat') {       // our Enter wasn't for the page (web.js "Enter"): the chat box, over the stream
+    const x = visWins.find((y) => y.key === screenFor(surfKey));
+    if (x && !x.win.isDestroyed()) x.win.webContents.send('cmd', { type: 'chat-quick' });
+  }
 }
 const ssCurSeen = new Set();       // (the pointers the host has sent: tests read it)
 function surfView() {
@@ -1315,6 +1327,16 @@ const p2p = createP2P({
   publicIp,
   say,
   changed: () => pushState(),
+  // A hub's media stream we couldn't get to: unless its PC was found to be reachable (then the trouble is likely at this end),
+  // the hub is told, and takes it off the stream so everyone is on the same thing (hub.js "reach").
+  unreached: (code) => {
+    const h = chat && chat.info().hubs.find((x) => x.status === 'connected' && (x.lives || []).some((l) => l.code === code));
+    const l = h && h.lives.find((x) => x.code === code);
+    if (!l || l.reach === 'internet') return '';
+    chat.liveFail(h.id, code);
+    const who = ((h.members || []).find((m) => m.id === l.from) || {}).name || 'your friend';
+    return `Couldn't connect to ${who}'s PC: their router isn't letting friends in. It's off the hub's stream now, so everyone stays on the same thing.`;
+  },
 });
 
 async function publicIp() { const r = await net.fetch('https://api.ipify.org', { signal: AbortSignal.timeout(5000) }); const ip = (await r.text()).trim(); return /^\d{1,3}(\.\d{1,3}){3}$/.test(ip) ? ip : ''; }
@@ -1348,7 +1370,7 @@ function startChat() {
       if (String(m.t).startsWith('voice-')) { onVoiceEvent(hub, m); return; }       // for the call's window, not the panels
       if (String(m.t).startsWith('ss-')) { onSsEvent(hub, m); return; }       // the Surf stream's: for its windows
       if (m.t === 'media-vote') onMediaVote(hub, m.vote);
-      if (m.t === 'live-no' && p2p.role() === 'host' && liveHub === hub) { liveHub = ''; p2p.stop(); say('Someone else put something on first'); return; }
+      if (m.t === 'live-no' && p2p.role() === 'host' && liveHub === hub) { mediaRefused(hub, m); return; }
       if ((m.t === 'bc-off' || m.t === 'bc-watch-off') && m.why && m.why !== 'ended') say(m.why);       // e.g. the host stopped your broadcast
       if (m.t === 'bc-thumb') { onBcEvent(hub, m); return; }       // a still, for the Broadcast scene only (it fetches it with bcStill)
       if (String(m.t).startsWith('bc-')) onBcEvent(hub, m);       // for the broadcast window and the screen showing one (the panels hear of it too)
@@ -1502,7 +1524,11 @@ function shareTitle() {
 function syncLive() {
   if (!chat) return;
   const p = p2p.info();
-  const live = p.role === 'host' && liveHub && p.code && !p.settling ? { code: p.code, title: shareTitle(), watching: (p.peers || []).map((x) => x.name).slice(0, 8) } : null;
+  // reach: can friends elsewhere get to this PC (p2p.js openInternet)? 'internet' yes; 'lan' no, only those on this network can
+  // (or so it turned out: someone couldn't, mediaRefused); 'manual' couldn't be checked. The hub uses it to keep the share off
+  // the stream while someone online couldn't watch it (hub.js "reach").
+  const reach = p.reach === 'manual' && mediaUnreached.has(liveHub) ? 'lan' : p.reach || 'lan';
+  const live = p.role === 'host' && liveHub && p.code && !p.settling ? { code: p.code, title: shareTitle(), watching: (p.peers || []).map((x) => x.name).slice(0, 8), reach } : null;
   const key = JSON.stringify([liveHub, live]);
   if (key === liveSent) return;
   liveSent = key;
@@ -1529,6 +1555,25 @@ async function mediaShare() {
   if (!h || p2p.role() === 'host') return;       // not online in a hub (just play it here), or already sharing (the session plays it)
   liveHub = h.id; mediaIn = h.id;
   await p2p.share({ port: state.share.port, internet: state.share.internet, wait: state.share.wait, name: shareName(), local: !!process.env.DRIFT_SHARE_LOCAL });
+}
+// The hub didn't list this PC's share, or took it off: someone else's came first, or someone online can't reach this PC, whose
+// router doesn't let friends in (hub.js "reach"). Then it isn't shared at all, so nobody is left looking at something the others
+// can't get: it plays here only, and the Media tab says why (mediaSolo) until something of this PC's is on the stream again.
+let mediaSolo = null;       // { hub, text }
+const mediaUnreached = new Set();       // hubs where someone couldn't connect to this PC's share: its port turned out to be closed
+function mediaRefused(hub, m) {
+  const why = String(m.why || ''), p = p2p.info();
+  liveHub = ''; p2p.stop();
+  if (why !== 'reach' && why !== 'unreached') { say('Someone else put something on first'); return; }
+  if (why === 'unreached') mediaUnreached.add(hub);
+  const who = (Array.isArray(m.who) ? m.who : []).map((n) => String(n || '').replace(/[\x00-\x1f<>]/g, '').trim().slice(0, 24)).filter(Boolean).slice(0, 3);
+  const names = who.length ? who.join(', ') : 'Someone in the hub', one = who.length === 1;
+  const fix = state.share.internet === false ? 'Sharing over the internet is off in Options, so only people on this network can watch.'
+    : /shares one address/.test(p.note || '') ? 'Your internet provider shares one address between several homes, so nobody outside can connect to this PC. A VPN such as Tailscale on both PCs gets round it.'
+    : `Your router doesn't let friends in by itself: forward TCP port ${p.port || state.share.port || 47800} to this PC in the router's settings, or turn on UPnP there.`;
+  mediaSolo = { hub, text: `Not shared to the hub: ${names} ${why === 'unreached' ? 'couldn\'t connect' : one ? 'isn\'t on your network and can\'t reach' : 'aren\'t on your network and can\'t reach'} this PC, so what you play stays here. ${fix}` };
+  say(`Playing for you only: ${names} can't reach this PC`);
+  pushState();
 }
 // Playing something of your own while watching someone else's: leave theirs (it isn't joined again), then share yours.
 async function mediaOwn() { if (remote) { mediaTried = joinedCode; await p2p.stop(); } }
@@ -1568,6 +1613,7 @@ function mediaCheck() {
   if (role === 'off') mediaIn = '';
   else if (role === 'host' && liveHub) mediaIn = liveHub;
   else { const sh = sessionHub(); if (sh) mediaIn = sh; }
+  if (mediaSolo && (hubs.find((x) => x.id === mediaSolo.hub) || {}).status !== 'connected') { mediaSolo = null; pushState(); }       // (off that hub: its stream is nothing to do with what plays here)
   if (mediaIn && (hubs.find((x) => x.id === mediaIn) || {}).status === 'away') {       // disconnected from the hub: off the stream
     mediaTried = joinedCode; mediaIn = ''; liveHub = '';
     p2p.stop();
@@ -1575,6 +1621,7 @@ function mediaCheck() {
   }
   if (role === 'host' && liveHub) {
     const h = hubs.find((x) => x.id === liveHub), mine = h && (h.lives || []).find((l) => l.from === me), t = mediaTop(h);
+    if (mine && mediaSolo && mediaSolo.hub === liveHub) { mediaSolo = null; pushState(); }       // on the stream after all
     if (mine && t && t.from !== me) {       // someone put something else on: stop ours, and watch theirs
       const who = (h.members.find((m) => m.id === t.from) || {}).name || 'Someone';
       liveHub = '';
@@ -2746,7 +2793,7 @@ ipcMain.on('cmd', async (e, c) => {
     case 'web-input':       // mouse and keyboard over a friend's web page, or over our own page mirrored on another monitor
       if (!c.e || typeof c.e !== 'object') break;
       if (surfMode() === 'stream') ssOut({ t: 'in', e: c.e });       // over another hub's Surf stream: to its host
-      else if (surfMode() === 'hub') { if (hubWeb && visWins.some((x) => x.win.webContents === e.sender)) hubWeb.input(c.e, true, chat.myId()); }       // over the hub's own, on this PC
+      else if (surfMode() === 'hub') { if (hubWeb && visWins.some((x) => x.win.webContents === e.sender)) hubWeb.input(c.e, true, chat.myId(), e.sender); }       // over the hub's own, on this PC
       else if (visWins.some((x) => x.win.webContents === e.sender && (x.key !== web.info().key ? state.surfMirror : web.info().gpu))) web.input(c.e, true);       // (the Surf monitor's own, when the page is drawn offscreen)
       break;
     case 'share-join': { joinedCode = mediaTried = String(c.code || ''); const r = await p2p.join(c.code, shareName()); if (!r.ok) say(r.error); break; }
@@ -3435,7 +3482,8 @@ async function runShots() {
     wc.send('chat', { type: 'notify', hub: hubId, msg: { ...last, text: '' }, overlay: true });
     tl('videoOverlay', await until(() => pageRun(wc, () => { const p = document.querySelector('#coList .coMsg .chPic img'); return !!p && p.closest('.chPic').style.width === '240px' && p.src.startsWith('data:image/webp'); })));
     // Enter: with the panel away, the quick box (here not watching anything: it says where the message went); with the Hub tab
-    // open, its own box; never from a text box, nor over Surf. Surf's bar has a button for it instead.
+    // open, its own box; never from a text box. A slider just used still lets it through (Enter does nothing to one). Over Surf,
+    // with the page not holding the keys, the quick box too (a page holding them is asked: web.js "Enter").
     const enter = () => pageRun(wc, () => { if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur(); dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', cancelable: true })); return { quick: document.activeElement === document.querySelector('#coInput'), main: document.activeElement === document.querySelector('#chInput'), where: document.querySelector('#coWhere').textContent }; });
     const quick = await enter();
     await pageRun(wc, () => { const c = document.querySelector('#coInput'); c.value = 'quick hello'; c.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', cancelable: true })); });
@@ -3444,8 +3492,18 @@ async function runShots() {
     wc.send('cmd', { type: 'show-panel', tab: 'hub' }); await wait(600);
     tl('enterHubTab', await enter());
     tl('enterInTextBox', await pageRun(wc, () => { const t = document.querySelector('#chCode'); t.focus(); t.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); return document.activeElement === t; }));
-    await pageRun(wc, () => { document.querySelector('#panel').classList.remove('open'); document.body.classList.add('surfing'); });
+    const fromControl = (sel) => pageRun(wc, (s) => {
+      document.querySelector('.tabs [data-tab="scenes"]').click(); document.querySelector('#panel').classList.add('show', 'open');
+      const el = document.querySelector(s); el.focus(); const had = document.activeElement === el;
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      const r = { had, quick: document.activeElement === document.querySelector('#coInput') };
+      if (window.chatUI) window.chatUI.closeQuick();
+      return r;
+    }, sel);
+    tl('enterFromSlider', { slider: await fromControl('#speed'), box: await fromControl('#cycleShuffle') });
+    await pageRun(wc, () => { const p = document.querySelector('#panel'); p.classList.remove('open', 'show'); document.body.classList.add('surfing'); });
     tl('enterOverSurf', await enter());
+    await pageRun(wc, () => { if (window.chatUI) window.chatUI.closeQuick(); });
     const btnLit = () => pageRun(wc, () => getComputedStyle(document.querySelector('#coBtn')).pointerEvents === 'auto');
     tl('surfButtonFades', { still: !(await btnLit()), moved: await (async () => { wc.send('cmd', { type: 'pointer-moved' }); await wait(200); return btnLit(); })(), after: await (async () => { await wait(2900); return !(await btnLit()); })() });
     tl('surfButton', await pageRun(wc, async () => {
@@ -3460,6 +3518,29 @@ async function runShots() {
       r.goneOffSurf = getComputedStyle(b).display === 'none';
       return r;
     }));
+    // a share the hub keeps off its stream because someone online can't reach this PC (hub.js "reach"): it stops being shared,
+    // plays here only, and the Media tab says why
+    liveHub = hubId;
+    await p2p.share({ port: 47850, internet: false, wait: false, name: 'Hosty', local: true });
+    await until(() => p2p.info().role === 'host' && !!p2p.info().code);
+    chat._fromHub(hubId, { t: 'live-no', why: 'reach', who: ['Ben'] });
+    const stopped = await until(() => p2p.info().role === 'off' && !!publicState().mediaSolo);
+    wc.send('cmd', { type: 'show-panel', tab: 'media' }); await wait(600);
+    tl('mediaRefused', { stopped, note: await pageRun(wc, () => document.querySelector('#mShare').textContent), toast: await pageRun(wc, () => document.querySelector('#toast').textContent) });
+    // Enter over the hub's Surf page, pressed on this PC (web.js "Enter"): the page's while a text box in it is selected, the quick
+    // box once nothing is. (A member's goes the same way, over the stream: scripts/test-surf-stream.js.)
+    {
+      const hw = hubStart(), f = () => hw && hw.captureFrame();
+      const ready = await until(() => !!f(), 20000);
+      const quickOn = () => pageRun(wc, () => document.querySelector('#chatOverlay').classList.contains('typing'));
+      const press = async () => { hw.input({ k: 'key', d: true, key: 'Enter', m: [] }, true, chat.myId(), wc); hw.input({ k: 'key', d: false, key: 'Enter', m: [] }, true, chat.myId(), wc); await wait(1000); return { page: ready ? await f().executeJavaScript('window.enters').catch((e) => e.message) : -1, quick: await quickOn() }; };
+      if (ready) await f().executeJavaScript("window.enters = 0; addEventListener('keydown', (e) => { if (e.key === 'Enter') window.enters++; }, true); const i = document.createElement('input'); document.body.append(i); i.focus(); true");
+      const inBox = await press();
+      if (ready) await f().executeJavaScript('document.activeElement.blur(); true');
+      const off = await press();
+      await pageRun(wc, () => { if (window.chatUI) window.chatUI.closeQuick(); });
+      tl('enterOverHubPage', { ready, inBox, off });
+    }
     // the picture over a game you broadcast: the overlay window, sent what bcOvSync sends it (the message, then its picture)
     const ov = new BrowserWindow({ show: false, webPreferences: { preload: path.join(__dirname, 'bc-overlay-preload.js'), sandbox: true, contextIsolation: true } });
     await ov.loadFile(path.join(__dirname, 'renderer', 'bc-overlay.html'));
@@ -3670,7 +3751,7 @@ async function runShots() {
           if (q.url === '/') page('Test one', `<canvas id=c width=640 height=360 style="position:fixed;right:0;bottom:0"></canvas><a href="/page2" style="position:fixed;left:0;top:0;width:50%;height:50%;background:#0a0;display:block">go</a><script>
             const g = c.getContext('2d'); let n = 0; (function f() { n++; g.fillStyle = 'hsl(' + n % 360 + ' 80% 50%)'; g.fillRect(0, 0, 640, 360); requestAnimationFrame(f); })();
             const a = new AudioContext(), o = a.createOscillator(), v = a.createGain(); v.gain.value = 0.3; o.connect(v).connect(a.destination); o.start();</script>`);
-          else if (q.url === '/page2') page('page two', `<input id=i autofocus style="font-size:40px" oninput="document.title = 'typed:' + this.value"><script>i.focus()</script>`);
+          else if (q.url === '/page2') page('page two', `<input id=i autofocus style="font-size:40px" oninput="document.title = 'typed:' + this.value" onkeydown="if (event.key === 'Enter') document.body.dataset.enters = (+document.body.dataset.enters || 0) + 1"><script>i.focus()</script>`);
           else if (q.url === '/pop') page('pop', `<button id=b style="position:fixed;inset:0;font-size:60px" onclick="window.open('/page2', 'x', 'width=300,height=300')">open a window</button>`);
           else if (q.url === '/pick') page('pick', `<input type=file id=f style="position:fixed;inset:0;width:100%;height:100%"><script>
             let n = 0; f.addEventListener('click', () => n++); alert('hello'); document.title = 'pick:' + (confirm('ok?') ? 'yes' : 'no');
@@ -3724,6 +3805,10 @@ async function runShots() {
         await step('watching');
         tl('the member clicks the link over the picture: the page goes there', await until(() => hubWeb.info().title === 'page two', 30000));
         tl('...and types into the box', await until(() => hubWeb.info().title === 'typed:hi', 30000));
+        // Enter (web.js "Enter"): in the box it's the page's; with nothing in the page selected it opens their chat box instead
+        const enters = async () => { const f = hubWeb.captureFrame(); return f ? +(await f.executeJavaScript('document.body.dataset.enters || 0').catch(() => 0)) : 0; };
+        tl('...Enter in the box goes to the page', await until(async () => (await enters()) === 1, 20000));
+        tl('...but not once nothing in the page is selected', await until(async () => !(await hubWeb.captureFrame().executeJavaScript('document.activeElement === document.querySelector("#i")')), 20000) && (await wait(1500), (await enters()) === 1));
         tl('...their pointer reaches me', await until(() => pointers.has(chat.info().ss.host.watchers[0]), 15000));
         {       // one page, one mouse: the hover is one person's at a time (web.js takeHover). (Over the empty right of page two.)
           // (the scroll is the member's own: the last to click or scroll is who a download is put down to, and theirs comes next)
@@ -3800,6 +3885,16 @@ async function runShots() {
         await wait(800);
         for (const k of ['h', 'i']) { input({ k: 'key', d: true, key: k, m: [] }); input({ k: 'key', d: false, key: k, m: [] }); }
         tl('typing: my bar shows it', await until(() => surfView().title === 'typed:hi', 30000));
+        const enter = () => { input({ k: 'key', d: true, key: 'Enter', m: [] }); input({ k: 'key', d: false, key: 'Enter', m: [] }); };
+        const quickOpen = () => js("document.querySelector('#chatOverlay').classList.contains('typing')");
+        enter();       // in the page's box: the page's (the host checks it got there)
+        await wait(1500);
+        tl('Enter in the page\'s text box: no chat box here', !(await quickOpen()));
+        click(0.9, 0.8);       // (off the box: nothing in the page is selected)
+        await wait(800);
+        enter();
+        tl('Enter with nothing in the page selected: the hub chat\'s quick box opens over the stream', await until(quickOpen, 15000));
+        await js('window.chatUI.closeQuick()');
         for (let i = 0; i < 10; i++) ipcMain.emit('cmd', { sender: wc }, { type: 'web-ptr', x: 0.6, y: 0.6 + i / 100 });
         // Scenes chosen: the picture is put away, its sound plays on (decision §11.1); Surf again: the same connection, shown again
         surf('hide');

@@ -105,6 +105,8 @@ let uaSet = false;
 //   owner()        the host's own browser's start-page data (its browsing stats)
 //   cursor(who, c) the pointer the page asks for (CSS: 'pointer' over a link…) is for member `who`, the one with the hover (see
 //                  input()); '' when it's this PC's own
+//   chatOk(who)    can `who` (a member, or this PC's own id) write in the hub's chat? Then Enter the page isn't taking opens it
+//   chat(who, from) open `who`'s chat box: `from` is the Drift window the key was pressed in, for this PC's own (see "Enter")
 // opts: { partition, headless, size: { w, h } (a headless browser's pages, in pixels) }
 module.exports = function createWeb(hooks, opts = {}) {
   const PART = opts.partition || 'persist:web', headless = !!opts.headless;
@@ -596,8 +598,9 @@ module.exports = function createWeb(hooks, opts = {}) {
   const source = (hostWc) => (out && out.id && holder === hostWc ? out.id : null);
   // Plays back what a friend did over their picture of the page, or (local) what this PC did over a picture of it on one of its
   // monitors. Positions are fractions of the page's width and height.
-  // `who`: whose input it is (the hub's browser remembers, to name who started a download)
-  function input(e, local, who) {
+  // `who`: whose input it is (the hub's browser remembers, to name who started a download); `from`: where on this PC it came from
+  // (handed back to hooks.chat)
+  function input(e, local, who, from) {
     if (out || !alive() || !e || typeof e !== 'object') return;       // friends can't click in the PC's own browser
     if (!headless && (parked || !holder || holder.isDestroyed())) return;
     const wc = cur().wc, win = BrowserWindow.fromWebContents(wc.drift ? wc : holder);
@@ -627,10 +630,55 @@ module.exports = function createWeb(hooks, opts = {}) {
         const s = surfKey(k, modifiers);       // the browser's shortcuts, for friends too (they can use the bar's buttons anyway)
         if (s) { if (e.d && s.do !== 'url') act(s); return; }       // (Ctrl+L is for the bar of the screen it was pressed on: the window sees to that)
         if (!code || k === 'Escape' || (!local && cmd && /^v$/i.test(k))) return;       // Esc is for Drift's controls; a friend pasting would hand over this PC's clipboard
+        if (k === 'Enter' && !modifiers.length && hooks.chatOk && hooks.chatOk(who ? String(who) : '')) { enter(wc, !!e.d, who ? String(who) : '', from); return; }
         wc.sendInputEvent({ type: e.d ? 'keyDown' : 'keyUp', keyCode: code, modifiers });
         if (e.d && !cmd && !modifiers.includes('alt') && (ch || k === 'Enter')) wc.sendInputEvent({ type: 'char', keyCode: k === 'Enter' ? '\r' : k, modifiers });       // what the key types
       }
     } catch { /* not something the page can be sent */ }
+  }
+  // ---- Enter: the page's, or the hub chat's ----
+  // Enter opens the hub chat's quick box everywhere in Drift (renderer/chat.js), Surf included, unless the page is taking it, as it
+  // would in any browser: a text box, a list or anything inside a frame is selected, or something reached with the keyboard (a
+  // link or a button tabbed to). The page is asked as the key comes, in a world of Drift's own (it shares the page's elements but
+  // not its scripts, so the page can't answer for itself). A page that doesn't answer in time keeps its Enter.
+  // hooks.chatOk(who) says whether `who` ('' this PC) has a chat to write in; hooks.chat(who, from) opens their box.
+  const TYPING = `(() => {
+    let a = document.activeElement;
+    while (a && a.shadowRoot && a.shadowRoot.activeElement) a = a.shadowRoot.activeElement;
+    if (!a || a === document.body || a === document.documentElement) return false;
+    if (/^(IFRAME|FRAME|EMBED|OBJECT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable) return true;
+    if (a.tagName === 'INPUT' && !/^(checkbox|radio|range|color|file|button|submit|reset|image)$/i.test(a.type)) return true;
+    if (/^(textbox|searchbox|combobox|spinbutton)$/i.test(a.getAttribute('role') || '')) return true;
+    return a.matches(':focus-visible');
+  })()`;
+  const typing = (wc) => Promise.race([
+    wc.executeJavaScriptInIsolatedWorld(1071, [{ code: TYPING }]).then((v) => v !== false, () => true),
+    new Promise((ok) => setTimeout(() => ok(true), 400)),
+  ]);
+  // One Enter at a time for each person: where its press went ('wait' while the page is asked, 'page' or 'chat'), so a key held
+  // down repeats where it went, and its release follows it (a release that comes while the page is being asked waits for the answer).
+  // One that opened the chat is forgotten at once: its release lands in the chat's box, not here. (A release that never comes, the
+  // picture having lost the keyboard, is forgotten too: a press long after the last one is a new one.)
+  const enters = new Map();       // who ('' this PC) -> { wc, to, up, at }
+  function enter(wc, down, who, from) {
+    const send = (d) => { if (wc.isDestroyed()) return; try { wc.sendInputEvent({ type: d ? 'keyDown' : 'keyUp', keyCode: 'Enter' }); if (d) wc.sendInputEvent({ type: 'char', keyCode: '\r' }); } catch { /* gone */ } };
+    const was = enters.get(who), now = Date.now();
+    if (!down) {
+      if (!was) return;
+      if (was.to === 'wait') { was.up = true; return; }
+      enters.delete(who);
+      if (was.wc === wc) send(false);
+      return;
+    }
+    if (was && was.wc === wc && now - was.at < 800) { was.at = now; if (was.to === 'page') send(true); return; }       // held down: it repeats in the page (still being asked: dropped)
+    const me = { wc, to: 'wait', up: false, at: now };
+    enters.set(who, me);
+    typing(wc).then((yes) => {
+      if (enters.get(who) !== me) return;
+      if (yes) { me.to = 'page'; send(true); if (me.up) { enters.delete(who); send(false); } return; }
+      enters.delete(who);
+      if (hooks.chat) hooks.chat(who, from);
+    });
   }
   // ---- the hover: one page, one mouse, several people ----
   // A page has only one mouse. Played back as they came, everyone's moves made the hover jump between them whenever two people

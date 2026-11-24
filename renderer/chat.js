@@ -973,8 +973,6 @@
     while (coList.children.length > 8) coList.firstChild.remove();
     setTimeout(() => row.classList.add('old'), 12000);
   }
-  // The hub to answer in: the watch-together session's, else that of the broadcast this screen shows. (Over the Surf stream,
-  // Enter belongs to the page.)
   // The hub the quick box writes to: that of what you're watching (a video together, a broadcast), else your active hub (the
   // one whose voice room you're in, or that's open in the Hub tab), else any hub you're online in. '' when you're in none.
   const upHub = (id) => !!id && info.hubs.some((y) => y.id === id && y.status === 'connected' && y.channels.length);
@@ -998,8 +996,10 @@
   }
   function closeCompose() { co.classList.remove('typing'); coTarget = null; if (document.activeElement === coInput) coInput.blur(); }
   // Enter, while online in a hub and nothing else is using the key: Drift's window has the keyboard, and it's not in a text box,
-  // a list or a web page (a button only counts while it's been reached with the keyboard: one just clicked doesn't). With the
-  // Hub tab open that's its own message box; anywhere else, the quick box over the screen. Never over Surf: Enter is the page's.
+  // a list or a web page (a button only counts while it's been reached with the keyboard: one just clicked doesn't, nor does a
+  // slider, a tick box or a list of choices just used with the mouse, since Enter does nothing to them). With the Hub tab open
+  // that's its own message box; anywhere else, the quick box over the screen. Over a Surf page the page is asked first (web.js
+  // "Enter"): it keeps Enter while it has a text box selected, and otherwise main.js opens the box with 'chat-quick' (app.js).
   // The chat button over Surf shows while the mouse moves and for 2.5 s after. Over a web page this window doesn't see the mouse,
   // so main.js says when it moves (pointer-moved).
   let coWakeT = 0;
@@ -1009,11 +1009,14 @@
   const enterFree = () => {
     const a = document.activeElement;
     if (!a || a === document.body || a.classList.contains('bcVid')) return true;
-    return (a.tagName === 'BUTTON' || a.tagName === 'A') && !a.closest('#chPick') && !a.matches(':focus-visible');
+    if (a.closest('#chPick')) return false;
+    if (a.closest('#panel') && !$('#panel').classList.contains('show')) return true;       // left in the panel as it went away: nobody can see it
+    if (a.tagName === 'INPUT' && /^(range|checkbox|radio)$/.test(a.type)) return true;       // (Enter does nothing to these, however they were reached)
+    return ['BUTTON', 'A', 'SELECT'].includes(a.tagName) && !a.matches(':focus-visible');
   };
   addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' || e.defaultPrevented || e.repeat || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
-    if (!enterFree() || $('#confirm').classList.contains('on') || document.querySelector('.chLight') || document.body.classList.contains('surfing')) return;
+    if (!enterFree() || $('#confirm').classList.contains('on') || document.querySelector('.chLight')) return;
     if (looking() && !input.disabled) { e.preventDefault(); input.focus(); return; }
     if (openCompose()) e.preventDefault();
   });
@@ -1089,7 +1092,7 @@
   });
   refresh();
   window.chatUI = { hub: () => sel.hub,       // app.js shares into this hub
-    quick: () => openCompose(), closeQuick: () => closeCompose(),       // the chat button over Surf (app.js): the quick box, as Enter opens it elsewhere
+    quick: () => openCompose(), closeQuick: () => closeCompose(),       // over Surf (app.js): the chat button, and Enter the page didn't want
     overlay: () => [...coList.children].map((r) => r.innerText.replace(/\n+/g, ' ')), compose: (t) => { if (!openCompose()) return false; coInput.value = t; coInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); return true; },
     info: () => info, sel: () => sel, pick, vote: () => (voteBox.hidden ? null : { text: voteBox.innerText.replace(/\n+/g, ' | '), btns: [...voteBox.querySelectorAll('button')].map((b) => b.textContent) }), voteClick: (label) => { const b = [...voteBox.querySelectorAll('button')].find((x) => x.textContent === label); if (b) b.click(); return !!b; }, activeHub: () => activeHubId(), face: (hub, id, cls) => face(info.hubs.find((y) => y.id === hub), id, cls), nameOf: (hub, id) => nameOf(info.hubs.find((y) => y.id === hub), id), toast: (t) => toast(t), canBeHeard: (hub, id) => canBeHeard(info.hubs.find((y) => y.id === hub), id), send: (t) => { input.value = t; input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); } };       // (and main.js's checks)
 })();

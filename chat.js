@@ -322,7 +322,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
       case 'channels': c.channels = Array.isArray(m.list) ? m.list : []; changed(); break;
       case 'lives': c.lives = Array.isArray(m.list) ? m.list : []; changed(); break;
       case 'media-vote': if (!m.vote || typeof m.vote !== 'object') return; c.mediaVote = m.vote.result ? null : { ...m.vote, at: Date.now() }; changed(); break;       // a vote to change what's on (the hub counts it)
-      case 'live-no': break;       // the hub didn't list our share: someone else's is on
+      case 'live-no': break;       // the hub didn't list our share, or took it off: someone else's is on, or someone can't reach this PC (why: 'reach', 'unreached'; who: their names)
       case 'msg': if (m.msg && blocked.has(m.msg.from)) return; if (m.msg) m.msg = unblocked(m.msg); break;
       case 'react': if (Array.isArray(m.reacts)) m.reacts = unblocked({ reacts: m.reacts }).reacts || []; break;
       case 'typing': if (blocked.has(m.from)) return; break;
@@ -1188,6 +1188,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
     invite: (id) => ask(id, { t: 'invite' }),
     withdrawInvites: (id) => ask(id, { t: 'withdraw-invites' }),
     removeMember: (id, member) => ask(id, { t: 'remove', member }),
+    liveFail: (id, code) => { const c = conns.get(id); if (c && c.wire && c.status === 'connected') c.wire.send({ t: 'live-fail', code: String(code || '').slice(0, 400) }); },       // couldn't connect to that share (hub.js "reach")
     mediaAsk: (id, title) => ask(id, { t: 'media-ask', title: String(title || '').slice(0, 200) }),
     mediaVote: (id, vote, yes) => ask(id, { t: 'media-vote', id: String(vote || ''), yes: !!yes }),
     mediaCancel: (id, vote) => ask(id, { t: 'media-cancel', id: String(vote || '') }),
