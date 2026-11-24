@@ -953,6 +953,7 @@ function guestCmd(m) {
 // tabs, once you disconnect.
 const SURF = ['go', 'home', 'new', 'tab', 'close', 'back', 'fwd', 'reload', 'hard', 'reopen', 'step', 'nth', 'zoom'];       // (the last five: keyboard shortcuts)
 const screenFor = (key) => (visWins.some((x) => x.key === key) ? key : (visWins.find((x) => (allDisplays().find((d) => d.key === x.key) || {}).primary) || visWins[0] || { key: 'd0' }).key);
+const SURF_FIT_MIN = 0.85;       // while mirroring, the least the Surf monitor shrinks the page to make room for other monitors' shapes (pageSize)
 const web = createWeb({
   changed: () => pushState(),
   screen: screenFor,
@@ -975,16 +976,26 @@ const web = createWeb({
   gain: () => mixGain().surf,
   win: (key) => { const x = visWins.find((y) => y.key === key); return x && !x.win.isDestroyed() ? x.win : null; },
   display: (key) => { const x = visWins.find((y) => y.key === key); return x && !x.win.isDestroyed() ? screen.getDisplayMatching(x.win.getBounds()) : null; },
-  // The size in pixels to draw the page at: that of the widest monitor it shows on (its own, and every other one while mirroring).
-  // Monitors of another shape show it whole, with black bars.
+  // The size in pixels to draw the page at, with the browser on monitor `key`. Its layout is that monitor's own, at its scale: it's
+  // the one the page is used on. While mirroring, a monitor of another shape (an ultrawide, a portrait one) stretches the page toward
+  // its own shape, so it shows smaller bars, but only so far that the Surf monitor still shows the page at SURF_FIT_MIN of its size or
+  // more: the bars are shared out, and no monitor's size or scale can make the page tiny on another (it used to take the widest
+  // monitor's pixels, which shrank and barred the page on a smaller or differently shaped Surf monitor). Monitors show it whole.
   pageSize: (key) => {
-    let best = null;
-    for (const x of visWins) {
-      if (x.win.isDestroyed() || (x.key !== key && !state.surfMirror)) continue;
-      const k = screen.getDisplayMatching(x.win.getBounds()).scaleFactor || 1, [w, h] = x.win.getContentSize(), px = { w: Math.round(w * k), h: Math.round(h * k) };
-      if (!best || px.w > best.w || (px.w === best.w && px.h > best.h)) best = px;
+    const own = visWins.find((x) => x.key === key && !x.win.isDestroyed());
+    if (!own) return null;
+    const k = screen.getDisplayMatching(own.win.getBounds()).scaleFactor || 1, [sw, sh] = own.win.getContentSize();
+    if (!sw || !sh) return null;
+    let w = sw, h = sh;
+    if (state.surfMirror) for (const x of visWins) {
+      if (x === own || x.win.isDestroyed()) continue;
+      const [mw, mh] = x.win.getContentSize();
+      if (!mw || !mh) continue;
+      const a = mw / mh;       // (a wider monitor widens the page, a taller one makes it taller)
+      w = Math.max(w, Math.min(sh * a, sw / SURF_FIT_MIN));
+      h = Math.max(h, Math.min(sw / a, sh / SURF_FIT_MIN));
     }
-    return best;
+    return { w: Math.round(w * k), h: Math.round(h * k) };
   },
 });
 let webAway = false;
@@ -2507,7 +2518,7 @@ function patch(p) {
   applySideEffects(prev);
   if (JSON.stringify(prev.mixer) !== JSON.stringify(state.mixer)) { web.gainChanged(); hubSound(); toVoice({ t: 'master', v: mixGain().master }); }       // (a voice room not open yet takes it as it starts)
   if (prev.surfGpu !== state.surfGpu) web.gpuChanged();       // the browser goes up again the other way
-  else if (prev.surfMirror !== state.surfMirror) web.resized();       // the page's size follows the widest monitor it is on
+  else if (prev.surfMirror !== state.surfMirror) web.resized();       // the page's shape meets the other monitors' partway while mirroring (pageSize)
   const pv = prev.video, nv = state.video;
   if (pv.enc !== nv.enc) encFallback = false;
   // anything that changes what the converted stream looks like, or who needs it, starts a new one
@@ -4475,7 +4486,7 @@ async function runShots() {
     log.push('surf monitor: ' + JSON.stringify(await see(sw)) + ' mirror monitor (off): ' + JSON.stringify(await see(mw)));
     patch({ surfMirror: true }); await wait(4000);
     log.push('mirror on: ' + JSON.stringify(await see(mw)) + ' page=' + await pageSays());
-    {       // the page takes the widest monitor's size; the narrower Surf monitor shows it whole with black bars, and a real click there lands where it should
+    {       // the page's shape meets the other monitor's partway (pageSize); the Surf monitor shows it whole, at most a little smaller, and a real click there lands where it should
       const size = () => pageJs(page(), 'innerWidth + "x" + innerHeight + "@" + devicePixelRatio');
       const img = (await sw.capturePage()).toBitmap(), [W, H] = sw.getOwnerBrowserWindow().getContentSize(), px = (x, y) => { const i = (y * W + x) * 4; return [img[i + 2], img[i + 1], img[i]]; };
       log.push(`page size with mirroring: ${await size()} (monitors ${visWins.map((v) => v.win.getContentSize().join('x')).join(', ')}); surf monitor corner=${px(4, 4)} middle=${px(W >> 1, H >> 1)}`);

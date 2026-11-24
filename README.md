@@ -181,8 +181,9 @@ browser is put away meanwhile and comes back, with its tabs, when you disconnect
 with the browser open and your tabs come back next time, without anything starting to play by itself.
 With more than one monitor, the two-screens button in the browser's bar shows the page on all your other
 monitors too, and you can click, scroll and type in it from any of them. Choosing **Mirror** in Settings while a page is
-open does the same, and Span or Mix puts it back on its own monitor. While mirrored, the page is drawn at the size of your
-widest monitor, so it stays sharp there; monitors of another shape show it whole, with black bars.
+open does the same, and Span or Mix puts it back on its own monitor. While mirrored, the page keeps the layout of the
+monitor you browse on, stretched a little toward the shape of your other monitors (an ultrawide or a portrait screen) so
+the black bars are shared out: the monitor you browse on never shows it more than 15% smaller, and every monitor shows it whole.
 Mirrored pages are sent to your other monitors as a video stream. For a sharper, smoother picture at your screen's
 full frame rate, try **Settings → Draw Surf on the graphics card** (experimental): pages are then drawn off screen and
 handed to every monitor straight from the graphics card, with no video encoding in between.

@@ -93,7 +93,7 @@ let uaSet = false;
 //   profile()      the folder the outside browser keeps Drift's profile in
 //   gpu()          should pages be drawn offscreen and handed to the windows as textures? (read each time the browser is put somewhere)
 //   win(key)       monitor `key`'s Drift window, and display(key) its display (for the offscreen page's size, scale and frame rate)
-//   pageSize(key)  { w, h }: the pixels to draw the page at, with the browser on monitor `key` (the widest monitor showing it)
+//   pageSize(key)  { w, h }: the pixels to draw the page at, with the browser on monitor `key` (that monitor's own size, stretched a little toward mirrors' shapes)
 //   gain()         the volume mixer's level for the pages' sound, 0..1
 // and for the hub's browser (`headless`) only:
 //   muted()        should its pages be silent on this PC (a capture still has their sound: spike S1)
