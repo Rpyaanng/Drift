@@ -2794,6 +2794,7 @@ else {
     screen.on('display-removed', onDisplays);
     screen.on('display-metrics-changed', onDisplays);
     if (SHOT_DIR) runShots();
+    if (process.env.DRIFT_CATCOST) setTimeout(() => catCost().catch((e) => console.log('[catcost] ' + e.message)), 20000);
     updater = createUpdater({
       app, net, version: process.env.DRIFT_FAKE_VERSION || app.getVersion(),       // dev: pretend to be an older copy
       enabled: () => !SHOT_DIR || !!process.env.DRIFT_FAKE_VERSION,
@@ -2832,6 +2833,39 @@ function pageJs(wc, code, ...more) {
   return wc.executeJavaScript(code, ...more);
 }
 const pageRun = (wc, fn, ...args) => pageJs(wc, `(${fn})(...${JSON.stringify(args)})`);
+// dev: DRIFT_CATCOST=1, in a normal (visible) run: what the cats cost. 20 s after starting (time to get a video playing in
+// Surf), the CPU of the GPU process and of the windows over 10 s each: cats off, awake, asleep, awake with the chat's
+// blurred boxes unblurred, and off again. Hidden test windows don't animate, so this can't be a test. Printed, and written
+// to cat-cost.txt in the user data folder.
+async function catCost() {
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms)), out = [], wasCat = state.cat;
+  const say = (t) => { console.log('[catcost] ' + t); out.push(t); };
+  const all = (fn, ...a) => Promise.all(visWins.map((v) => pageRun(v.win.webContents, fn, ...a).catch(() => null)));
+  const force = (f) => all((x) => { window.catForce = x; }, f);
+  const blur = (on) => all((x) => {
+    let s = document.querySelector('#catCostNoBlur');
+    if (x) { if (s) s.remove(); return; }
+    if (!s) { s = document.createElement('style'); s.id = 'catCostNoBlur'; s.textContent = '#chatOverlay * { backdrop-filter: none !important; }'; document.head.append(s); }
+  }, on);
+  const cpu = (ms) => ms.reduce((n, m) => n + m.cpu.percentCPUUsage, 0).toFixed(0) + '%';
+  say(`screens ${screen.getAllDisplays().map((d) => `${d.size.width}x${d.size.height}@${d.displayFrequency}Hz`).join(', ')}; cats ${state.catsUnlocked ? state.catCount : 1}; Surf audible ${!!surfView().audible}`);
+  const measure = async (tag) => {
+    await wait(2000); app.getAppMetrics();       // (settle; each reading is since the one before)
+    await wait(10000); const m = app.getAppMetrics();
+    const cats = await all(() => [document.querySelectorAll('.coCat.here').length, document.querySelector('#chatOverlay').classList.contains('asleep')]);
+    say(`${tag.padEnd(22)} GPU process ${cpu(m.filter((x) => x.type === 'GPU')).padStart(5)}   windows ${cpu(m.filter((x) => x.type === 'Tab')).padStart(5)}   cats per screen ${cats.map((c) => c ? c[0] + (c[1] ? 'z' : '') : '?').join(' ')}`);
+  };
+  try {
+    patch({ cat: false }); await force(''); await measure('off');
+    patch({ cat: true }); await force('awake'); await measure('awake');
+    await force('asleep'); await measure('asleep');
+    await force('awake'); await blur(false); await measure('awake, no blur');
+    await blur(true); patch({ cat: false }); await force(''); await measure('off again');
+  } finally { await blur(true); await force(''); patch({ cat: wasCat }); }
+  try { fs.writeFileSync(path.join(app.getPath('userData'), 'cat-cost.txt'), out.join('\n') + '\n'); } catch { /* printed anyway */ }
+  say('done: ' + path.join(app.getPath('userData'), 'cat-cost.txt'));
+}
+
 async function runShots() {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   fs.mkdirSync(SHOT_DIR, { recursive: true });
@@ -2866,6 +2900,55 @@ async function runShots() {
     patch({ scene: 'aurora', overlay: 'wave', palette: 'cycle', cycleSecs: 10 }); await wait(2600); await snap('ov-wave');
     patch({ scene: 'nebula', overlay: 'halo', palette: 'aurora' }); await wait(2600); await snap('ov-halo');
     patch({ overlay: 'none', palette: 'aurora' });
+  }
+  if (process.env.DRIFT_TESTCATS) {     // the cats as images drawn once (renderer/cats.js, scripts/test-cats.js): drawn, stacked to look as the one drawing did, asleep, and drawn again for a new palette
+    const res = {}, tl = (k, v) => { res[k] = v; log.push(`cats: ${k} ${JSON.stringify(v).slice(0, 600)}`); };
+    const until = async (f, ms = 15000) => { for (let t = 0; t < ms; t += 250) { if (await f()) return true; await wait(250); } return !!(await f()); };
+    const end = () => { fs.writeFileSync(path.join(SHOT_DIR, 'cats.json'), JSON.stringify(res, null, 1)); fs.writeFileSync(path.join(SHOT_DIR, 'log.txt'), log.join('\n')); quitting = true; app.quit(); };
+    await Promise.all(visWins.map((v) => pageRun(v.win.webContents, () => document.querySelector('#panel').classList.remove('show', 'open')).catch(() => {})));
+    patch({ cat: true, catsUnlocked: true, catCount: 12, palette: 'aurora' });
+    const here = (v) => pageRun(v.win.webContents, () => document.querySelectorAll('.coCat.here').length).catch(() => 0);
+    let v = null;
+    tl('catsShow', await until(async () => { for (const x of visWins) if (await here(x) > 0) { v = x; return true; } return false; }));
+    if (!v) { end(); return; }
+    const wc = v.win.webContents;
+    const drawn = () => pageRun(wc, () => [...document.querySelectorAll('.coCat.here img[data-l]')].every((i) => i.src.startsWith('data:image/png')));
+    tl('drawn', await until(drawn));
+    const look = () => pageRun(wc, async () => {
+      const cats = [...document.querySelectorAll('.coCat.here')], c = cats[0], imgs = [...c.querySelectorAll('img[data-l]')];
+      await Promise.all(imgs.map((i) => i.decode().catch(() => {})));
+      const alpha = (i) => { const k = document.createElement('canvas'); k.width = i.naturalWidth; k.height = i.naturalHeight; const x = k.getContext('2d'); x.drawImage(i, 0, 0); const d = x.getImageData(0, 0, k.width, k.height).data; let n = 0; for (let p = 3; p < d.length; p += 4) if (d[p] > 8) n++; return n; };
+      const layers = {};
+      for (const i of imgs) { const cs = getComputedStyle(i); layers[i.dataset.l] = { w: i.naturalWidth, h: i.naturalHeight, shown: cs.display !== 'none', anim: cs.animationName, origin: cs.transformOrigin, lit: alpha(i) }; }
+      const root = getComputedStyle(document.documentElement), wcs = getComputedStyle(c), r = (e) => { return [e.offsetLeft, e.offsetTop, e.offsetWidth, e.offsetHeight]; };       // (untransformed: the cat may be mid-breath)
+      const vars = Object.fromEntries(['--cat-pad', '--cat-iw', '--cat-ih', '--cat-tail-o', '--cat-eyes-o', '--cat-w'].map((n) => [n, root.getPropertyValue(n).trim()]));
+      const shared = imgs.every((i) => cats.every((o) => o.querySelector(`img[data-l="${i.dataset.l}"]`).src === i.src));
+      // the awake layers stacked at rest, against the whole cat drawn as one with CSS's drop-shadow (as it was shown before)
+      const ref = new Image(); ref.src = await window.Cats.reference(); await ref.decode();
+      const W = ref.naturalWidth, H = ref.naturalHeight, mk = () => { const k = document.createElement('canvas'); k.width = W; k.height = H; return k; };
+      const A = mk(), B = mk(); for (const i of imgs) if (i.classList.contains('catAwake')) A.getContext('2d').drawImage(i, 0, 0); B.getContext('2d').drawImage(ref, 0, 0);
+      const S = mk(); for (const i of imgs) if (i.classList.contains('catAsleep')) S.getContext('2d').drawImage(i, 0, 0);       // asleep with all three z's, to look at
+      const a =A.getContext('2d').getImageData(0, 0, W, H).data, b = B.getContext('2d').getImageData(0, 0, W, H).data;
+      let sum = 0, big = 0, max = 0;       // (premultiplied: a see-through pixel's colour doesn't count)
+      for (let p = 0; p < a.length; p++) { const q = p - (p % 4) + 3, d = p % 4 === 3 ? Math.abs(a[p] - b[p]) : Math.abs(a[p] * a[q] - b[p] * b[q]) / 255; sum += d; if (d > max) max = d; if (d > 40) big++; }
+      // asleep (only the CSS: the frame loop sets it back next frame)
+      const o = document.querySelector('#chatOverlay'), was = [o.className, o.dataset.z], asleep = {};
+      for (const z of ['0', '1', '3']) { o.classList.add('asleep'); o.dataset.z = z; asleep[z] = imgs.filter((i) => getComputedStyle(i).display !== 'none').map((i) => i.dataset.l); }
+      o.className = was[0]; o.dataset.z = was[1] || '';
+      return { cats: cats.length, layers, vars, shared, wrapper: { filter: wcs.filter, clip: wcs.clipPath, anim: wcs.animationName, box: r(c), clipBox: r(c.querySelector('.catClip')), imgBox: r(imgs[0]) },
+        diff: { mean: +(sum / a.length).toFixed(3), max, big, px: W * H }, asleep, body: c.querySelector('.cl-body').src.length, A: A.toDataURL(), B: B.toDataURL(), S: S.toDataURL(), dpr: devicePixelRatio };
+    });
+    const save = (name, url) => fs.writeFileSync(path.join(SHOT_DIR, name), Buffer.from(url.split(',')[1], 'base64'));
+    const r1 = await look(); save('cats-layers-aurora.png', r1.A); save('cats-reference-aurora.png', r1.B); save('cats-asleep-aurora.png', r1.S); delete r1.A; delete r1.B; delete r1.S;
+    tl('aurora', r1);
+    const src = () => pageRun(wc, () => document.querySelector('.coCat.here .cl-body').src);
+    const before = await src();
+    patch({ palette: 'mono' });
+    tl('redrawnForPalette', await until(async () => (await src()) !== before, 8000));
+    const r2 = await look(); save('cats-layers-mono.png', r2.A); save('cats-reference-mono.png', r2.B); save('cats-asleep-mono.png', r2.S); delete r2.A; delete r2.B; delete r2.S;
+    tl('mono', r2);
+    patch({ cat: false, catsUnlocked: false, catCount: 3 });
+    end(); return;
   }
   if (process.env.DRIFT_CAT) {       // dev: the cat in the chat overlay, with the panel hidden, as just its bar, and open
     const panelJs = (js) => Promise.all(visWins.map((v) => pageJs(v.win.webContents, `(() => { const p = document.querySelector('#panel'); ${js} })()`).catch(() => {})));

@@ -481,17 +481,13 @@
   const U = me.union, cx = U.x + U.width / 2, cy = U.y + U.height / 2, b = me.bounds;
   const isCenter = cx >= b.x && cx < b.x + b.width && cy >= b.y && cy < b.y + b.height;
   const clockEl = $('#clockFace'), breathEl = $('#breath'), coEl = $('#chatOverlay'), ring = $('#breath .ring'), breathTxt = $('#breath span');
-  // the cats: the drawing in index.html is the first, the rest are copies of it with their own ids (each keeps its own
-  // gradients, so a copy still draws when the first is on another screen). They sit in a row under the chat.
+  // the cats: the drawing in index.html is only a template. cats.js draws its pieces once into small images, and each cat is
+  // a stack of those (all the cats share them), which CSS only moves. They sit in a row under the chat.
   const catEls = (() => {
-    const first = $('#coCat'), row = document.createElement('div'), out = [first];
-    row.id = 'coCats'; first.replaceWith(row); row.append(first);
-    for (let k = 1; k < CAT_MAX; k++) {
-      const t = document.createElement('div');
-      t.innerHTML = first.outerHTML.replace(' id="coCat"', '').replace(/(id="|url\(#)(cat\w+)/g, `$1$2${k}`);
-      out.push(row.appendChild(t.firstElementChild));
-    }
-    out.forEach((c, k) => { c.classList.add('coCat'); c.style.animationDelay = `0s, ${(.7 + (k * 1.1) % 3.6).toFixed(1)}s`; });       // they breathe out of step
+    const tpl = $('#coCat'), row = document.createElement('div'), out = [];
+    row.id = 'coCats'; tpl.replaceWith(row); Cats.start(tpl);
+    for (let k = 0; k < CAT_MAX; k++) out.push(row.appendChild(Cats.make()));
+    out.forEach((c, k) => { c.style.animationDelay = `0s, ${(.7 + (k * 1.1) % 3.6).toFixed(1)}s`; });       // they breathe out of step
     // each has its own name (the same cat k on every screen), shown in a little tag above it while the mouse is on it
     const tag = document.createElement('span'); tag.id = 'coCatTag'; row.append(tag);
     out.forEach((c, k) => {
@@ -574,7 +570,11 @@
     // While a video plays (on any screen: they all draw in Chromium's one GPU process) the cats fall asleep. Awake, their breathing,
     // blinking and tail have every window drawn again 60 times a second, and with a 4K video that left no room for its frames: it
     // froze. Asleep, only their "z Z Z" changes: a letter about once a second, then a beat with none.
-    const asleep = !!S.videoLeader && !S.video.paused && coEl.classList.contains('cat'), zStep = Math.floor(Date.now() / 1100) % 5;
+    // The same while Surf plays something (a page making sound) or shows a friend's live Surf stream: even drawn once and
+    // only moved (cats.js), awake cats have every window composited again each frame, and a 60 fps video in Surf stuttered.
+    // (window.catForce: DRIFT_CATCOST in main.js holds them 'awake' or 'asleep' to measure what they cost)
+    const w = S.web || {}, surfPlays = !!w.audible || (!!w.open && !!w.stream && !!w.live);
+    const asleep = coEl.classList.contains('cat') && (window.catForce ? window.catForce === 'asleep' : (!!S.videoLeader && !S.video.paused) || surfPlays), zStep = Math.floor(Date.now() / 1100) % 5;
     coEl.classList.toggle('asleep', asleep);
     const z = asleep ? String(zStep > 3 ? 0 : zStep) : '';
     if (coEl.dataset.z !== z) coEl.dataset.z = z;
