@@ -774,7 +774,7 @@
     for (const k of ['autoCycle', 'quality', 'fps']) $('#' + k).value = String(S[k]);
     for (const k of ['cycleShuffle', 'clock', 'breathing', 'cat', 'keepAwake', 'onTop', 'autoUpdate', 'surfGpu', 'ambientYields']) $('#' + k).checked = !!S[k];
     $('#hsCard').hidden = !S.hosting;       // the hub's Surf stream: its host's to set
-    if (S.hubSurf) { $('#hsNoDl').checked = !!S.hubSurf.noDownloads; if (document.activeElement !== $('#hsLan')) $('#hsLan').value = S.hubSurf.allowLan || ''; }
+    if (S.hubSurf) { $('#hsNoDl').checked = !!S.hubSurf.noDownloads; $('#hsSpecs').checked = !!S.hubSurf.showSpecs; $('#hsBrowsing').checked = !!S.hubSurf.showBrowsing; if (document.activeElement !== $('#hsLan')) $('#hsLan').value = S.hubSurf.allowLan || ''; }
     if (S.hubHeld && JSON.stringify(S.hubHeld.map((d) => d.id)) !== JSON.stringify(heldList.map((d) => d.id))) drawHeld(S.hubHeld);       // (a window that opened while one waits)
     syncUpdate();
     $('#shuffle').checked = !!S.music.shuffle;
@@ -880,7 +880,7 @@
     if (mirEl && w.sid !== msid) { msid = w.sid; mirAsk(); }       // a new page, or another tab came to the front
     // (a hub's Surf stream put away on this screen, Scenes or Media chosen: its picture goes, its sound plays on, decision §11.1)
     const streamHere = !!w.stream && (here || w.parked === me.key);
-    if (vidEl && !streamHere) { vidEl.meEl.remove(); vidEl.remove(); vidEl = null; hangUp(); gsid = ''; }
+    if (vidEl && !streamHere) { vidEl.remove(); vidEl = null; hangUp(); gsid = ''; }
     if (streamHere && !vidEl) { makeStreamView(); if (here) { edgeHint(); surfPeek(); } }
     if (vidEl) { const was = vidEl.classList.contains('parked'); vidEl.classList.toggle('parked', !here); if (was && here) { edgeHint(); surfPeek(); vidEl.focus(); } else if (!here && document.activeElement === vidEl) { vidEl.blur(); window.focus(); } }
     if (vidEl) vidEl.volume = mixSurf();       // the Surf stream: the mixer's Surf level here (it keeps playing on other tabs: decision §11.1)
@@ -1683,17 +1683,13 @@
     };
     const mods = (e) => [e.shiftKey && 'shift', e.ctrlKey && 'control', e.altKey && 'alt', e.metaKey && 'meta'].filter(Boolean);
     const send = (e, p, more) => { if (p) api.cmd({ type: 'web-input', e: { ...p, ...more, m: mods(e) } }); };
-    // over the page this PC's own mouse is drawn as the others see it: the same arrow, colour and name
-    const meEl = v.meEl = document.createElement('div'); meEl.className = 'ptr me'; meEl.innerHTML = PTR; meEl.style.display = 'none';
-    ptrBox.appendChild(meEl);
-    const myName = () => String((S.share || {}).name || (S.p2p || {}).defaultName || '').replace(/[\x00-\x1f<>]/g, '').trim().slice(0, 24) || 'Friend';
-    const meAt = (e) => { const n = myName(); meEl.lastChild.textContent = n; meEl.style.setProperty('--c', ptrColor(n)); meEl.style.left = e.clientX + 'px'; meEl.style.top = e.clientY + 'px'; meEl.style.display = ''; };
-    v.addEventListener('mouseleave', () => { meEl.style.display = 'none'; });
+    // This PC's own mouse is its real pointer, in the shape the page asks for (a hand over a link) while the page's hover is ours
+    // (web.js takeHover; the host sends it: 'web-cursor'). It used to be drawn as the others see it, an arrow with our own name on
+    // it, which never changed shape, so nothing on the page looked clickable.
     let move = null, ptrAt = 0;
     const point = (e, gone) => { const q = gone ? null : at(e); ptrAt = Date.now(); api.cmd(q ? { type: 'web-ptr', x: q.x, y: q.y } : { type: 'web-ptr', x: -1, y: -1 }); };       // so the others can see where this mouse is
     v.addEventListener('mouseleave', (e) => point(e, true));
     v.addEventListener('mousemove', (e) => {       // at most one a frame
-      meAt(e);
       if (Date.now() - ptrAt > 45) point(e);
       if (!may()) return;
       const first = !move; move = e;
@@ -2197,6 +2193,8 @@
   // Settings: the hub's Surf stream, for its host
   $('#hsNoDl').addEventListener('change', (e) => api.patch({ hubSurf: { noDownloads: e.target.checked } }));
   $('#hsLan').addEventListener('change', (e) => api.patch({ hubSurf: { allowLan: e.target.value } }));
+  $('#hsSpecs').addEventListener('change', (e) => api.patch({ hubSurf: { showSpecs: e.target.checked } }));
+  $('#hsBrowsing').addEventListener('change', (e) => api.patch({ hubSurf: { showBrowsing: e.target.checked } }));
   $('#hsClear').addEventListener('click', () => api.cmd({ type: 'hub-surf-clear' }));
   $('#forgetSurf').addEventListener('click', (e) => {
     const b = e.currentTarget;
@@ -2337,7 +2335,7 @@
     else if (c.type === 'bc-ptrs') { if (c.bc === bcFull) bcDrawPtrs(Array.isArray(c.list) ? c.list : []); }       // (pointers show only over the one full screen)
     else if (c.type === 'bc-ping') { if (c.p && c.bc === bcFull) bcRipple(c.p); }
     else if (c.type === 'hub-held') drawHeld(Array.isArray(c.list) ? c.list : []);
-    else if (c.type === 'web-cursor') { if (gpuEl && /^[a-z-]{1,24}$/.test(c.c)) gpuEl.style.cursor = c.c; }       // the pointer the offscreen page wants
+    else if (c.type === 'web-cursor') { const el = gpuEl || vidEl; if (el && /^[a-z-]{1,24}$/.test(c.c)) el.style.cursor = c.c; }       // the pointer the page wants, while its hover is ours (web.js takeHover)
     else if (c.type === 'cats') catAt = Array.isArray(c.at) ? c.at : [];
     else if (c.type === 'music-pos') musicPos = { t: +c.t || 0, d: +c.d || 0, at: performance.now() };
     else if (c.type === 'ptrs') showPtrs(Array.isArray(c.list) ? c.list : []);

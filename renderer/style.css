@@ -34,8 +34,7 @@ webview.web { position: fixed; inset: 0; background: #000; visibility: hidden; b
 webview.web.on { visibility: visible; }       /* the tab in front */
 /* a friend's web page, streamed here */
 video#webStream.parked { display: none; }       /* put away: heard, not seen */
-video#webStream { position: fixed; inset: 0; width: 100%; height: 100%; background: #000; object-fit: contain; outline: none; cursor: none; }       /* this PC's pointer is drawn the way the others see it */
-.ptr.me { transition: none; z-index: 1; }
+video#webStream { position: fixed; inset: 0; width: 100%; height: 100%; background: #000; object-fit: contain; outline: none; }       /* (the pointer's shape is the page's: app.js 'web-cursor') */
 /* this PC's own page, mirrored from the monitor it is on. The mouse here is this PC's own, so it shows as usual */
 video#webMirror { position: fixed; inset: 0; width: 100%; height: 100%; background: #000; object-fit: contain; outline: none; }
 /* a page drawn offscreen, drawn here frame by frame (preload.js) */

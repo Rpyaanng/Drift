@@ -22,6 +22,7 @@ const crypto = require('crypto');
 const createOutside = require('./outside');
 const ublock = require('./surf-ublock');
 const createLanGuard = require('./surf-lan');
+const createHome = require('./surf-home');       // the start page's data: its settings, quotes, weather, news and stats
 const surfKey = require('./renderer/surf-keys');       // the browser's keyboard shortcuts (Ctrl+T, Ctrl+W, Ctrl+Tab…)
 
 const isWeb = (u) => /^https?:\/\//i.test(String(u || ''));
@@ -100,6 +101,10 @@ let uaSet = false;
 //   holdDir()      the folder downloads wait in (never the Downloads folder itself)
 //   allowLan()     the local addresses the host lets the hub's browser reach (surf-lan.js)
 //   note(what)     a page noticed something: 'password' (someone is typing into a password box)
+//   showcase()     { specs, browsing }: what the host shows guests on the start page (their PC's specs, their own browsing)
+//   owner()        the host's own browser's start-page data (its browsing stats)
+//   cursor(who, c) the pointer the page asks for (CSS: 'pointer' over a link…) is for member `who`, the one with the hover (see
+//                  input()); '' when it's this PC's own
 // opts: { partition, headless, size: { w, h } (a headless browser's pages, in pixels) }
 module.exports = function createWeb(hooks, opts = {}) {
   const PART = opts.partition || 'persist:web', headless = !!opts.headless;
@@ -123,6 +128,11 @@ module.exports = function createWeb(hooks, opts = {}) {
   const cur = () => tabs.find((t) => t.id === active) || null;
   const live = (t) => !!t && !!t.wc && !t.wc.isDestroyed();
   const alive = () => live(cur());
+  // The hub's browser is everyone's: its start page shows the host's specs and browsing only as hooks.showcase() allows, and only
+  // the host may change it, which they're taken to be doing when the last click or key in its pages was theirs (`lastHand`).
+  let lastHand = false;
+  const home = createHome(PART, { private: headless, tabs: () => tabs.length, front: () => (on && !parked && !out && alive() ? cur().url : ''),
+    showcase: hooks.showcase, owner: hooks.owner, hostTouched: () => lastHand });
   const restream = () => { sid = (alive() && cur().ready) || (out && out.id) ? `${run}-${++made}` : ''; };       // a page still on its way in can't be captured yet
 
   function sess() {
@@ -173,11 +183,12 @@ module.exports = function createWeb(hooks, opts = {}) {
     ses.protocol.handle('drift', async (req) => {
       const u = new URL(req.url);
       if (u.host !== 'home') return new Response('', { status: 404 });
+      if (u.pathname.startsWith('/api/')) return home.api(req);
       if (u.pathname === '/go') {
         const to = address(u.searchParams.get('q')) || HOME;
         return new Response(`<!DOCTYPE html><meta charset="utf-8"><script>location.replace(${JSON.stringify(to).replace(/</g, '\\u003c')})</script>`, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
       }
-      try { return new Response(await fs.promises.readFile(HOME_FILE), { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } }); } catch { return new Response('', { status: 404 }); }
+      try { return await home.page(HOME_FILE); } catch { return new Response('', { status: 404 }); }
     });
     return ses;
   }
@@ -290,7 +301,7 @@ module.exports = function createWeb(hooks, opts = {}) {
     page.setWindowOpenHandler((d) => opened(d, page, hostWc, mine));
     page.on('did-create-window', (w) => popup(w, page, hostWc, mine));
     const ready = () => { if (!mine() || t.ready || !isPage(page.getURL())) return; t.ready = true; if (t.id === active) restream(); };       // its first real page is in
-    const moved = () => { if (!mine()) return; const u = page.getURL(); if (isPage(u)) t.url = u; ready(); hooks.changed(); };
+    const moved = () => { if (!mine()) return; const u = page.getURL(); if (isPage(u)) { if (u !== t.url) home.visit(u); t.url = u; } ready(); hooks.changed(); };
     page.on('did-navigate', moved);
     page.on('did-stop-loading', () => { if (mine() && !t.ready) { ready(); hooks.changed(); } });
     page.on('did-navigate-in-page', (_e, _u, main) => { if (main) moved(); });
@@ -590,13 +601,18 @@ module.exports = function createWeb(hooks, opts = {}) {
     if (out || !alive() || !e || typeof e !== 'object') return;       // friends can't click in the PC's own browser
     if (!headless && (parked || !holder || holder.isDestroyed())) return;
     const wc = cur().wc, win = BrowserWindow.fromWebContents(wc.drift ? wc : holder);
+    const mouse = e.k === 'move' || e.k === 'down' || e.k === 'up' || e.k === 'wheel';
+    const took = mouse ? takeHover(who ? String(who) : local ? 'here' : 'friend', !!local, e) : false;
+    if (took === null) return;       // someone else has the hover: their pointer still shows, the page doesn't follow it
     if (who && e.k !== 'move') touchedBy.set(wc, { who: String(who), at: Date.now() });
-    if (headless && e.k !== 'move' && e.k !== 'wheel') touched.set(wc, Date.now());
+    if (headless && e.k !== 'move' && e.k !== 'wheel') { touched.set(wc, Date.now()); lastHand = !!local; }
     if (!win) return;
     const [w, h] = wc.drift ? win.getContentSize() : pageDips();       // the page's own size, which may be bigger than its monitor (see pageSize)
     const x = Math.round(unit(e.x) * w), y = Math.round(unit(e.y) * h);
     const modifiers = (Array.isArray(e.m) ? e.m : []).filter((m) => MODS.includes(m));
     try {
+      if (took && e.k !== 'move') wc.sendInputEvent({ type: 'mouseMove', x, y, modifiers });       // the hover changed hands with a click or a scroll: it comes over first, so the page is under them as it lands
+      if (took) cursorOut();
       if (e.k === 'move') wc.sendInputEvent({ type: 'mouseMove', x, y, modifiers: [...modifiers, ...HELD.filter((_n, i) => e.bt & (1 << i))] });       // held buttons make it a drag
       else if (e.k === 'down' || e.k === 'up') {
         if (e.b === 3 || e.b === 4) { if (e.k === 'down') nav(e.b === 3 ? -1 : 1); return; }       // the mouse's side buttons
@@ -616,6 +632,25 @@ module.exports = function createWeb(hooks, opts = {}) {
       }
     } catch { /* not something the page can be sent */ }
   }
+  // ---- the hover: one page, one mouse, several people ----
+  // A page has only one mouse. Played back as they came, everyone's moves made the hover jump between them whenever two people
+  // moved at once: menus opening and shutting, links lighting up under nobody's pointer, and the pointer the page asked for (a hand
+  // over a link) shown to someone whose mouse was somewhere else. So the hover is one person's at a time. A click, a scroll or
+  // a drag takes it at once; anyone else's moves take it once its holder has been still for HOVER_HOLD (or has let go of a drag:
+  // HOVER_DRAG, in case the release never comes). Everyone's pointer is drawn either way (main.js ptrSet).
+  const HOVER_HOLD = 600, HOVER_DRAG = 8000;
+  let hover = { who: '', here: false, at: 0, held: false };
+  // Returns null when the move is someone else's to make, true when the hover has just changed hands, false otherwise.
+  function takeHover(by, here, e) {
+    const now = Date.now(), theirs = hover.who === by;
+    const free = !hover.who || now - hover.at > (hover.held ? HOVER_DRAG : HOVER_HOLD);
+    if (e.k === 'move' && !theirs && !free) return null;
+    hover.at = now;
+    if (e.k === 'down') hover.held = true; else if (e.k === 'up') hover.held = false; else if (e.k === 'move') hover.held = !!((e.bt | 0) & 7);
+    if (theirs) return false;
+    hover.who = by; hover.here = here;
+    return true;
+  }
 
   // Forgets everything sites have kept in Surf: sign-ins, cookies, site storage, the cache and the tabs' history. The browser closes
   // first, so no open page writes any of it back.
@@ -624,6 +659,7 @@ module.exports = function createWeb(hooks, opts = {}) {
     const s = sess();
     await Promise.all([s.clearStorageData(), s.clearCache(), s.clearAuthCache(), s.clearHostResolverCache()]);
     await s.cookies.flushStore().catch(() => {});
+    home.forget();       // and what was browsed (the start page's own layout stays)
   }
 
   // ---- the page in the PC's own browser ----
@@ -742,18 +778,25 @@ module.exports = function createWeb(hooks, opts = {}) {
     if (!yes) { viewers.delete(wc); if (headless && !viewers.size) painting(); return; }
     if (!viewers.has(wc)) { viewers.add(wc); wc.once('destroyed', () => { viewers.delete(wc); if (headless && !viewers.size) painting(); }); }
     if (alive() && cur().wc.drift) repaint(cur().wc);
-    if (lastCursor) wc.send('cmd', { type: 'web-cursor', c: lastCursor });
+    if (lastCursor) wc.send('cmd', { type: 'web-cursor', c: hereCursor() });
   }
-  // The pointer the page wants (a hand over a link, a bar over text…), as CSS names it
+  // The pointer the page wants (a hand over a link, a bar over text…), as CSS names it. It's for whoever has the hover: this PC's
+  // windows show it while the hover is this PC's (or nobody's yet), the plain arrow otherwise; a member with it is told (hooks.cursor).
   const CURSORS = { pointer: 'default', hand: 'pointer', nodrop: 'no-drop', 'm-panning': 'all-scroll', custom: 'default' };
   let lastCursor = '';
+  const hereCursor = () => (!hover.who || hover.here ? lastCursor || 'default' : 'default');
   function cursor(type) {
     const c = CURSORS[type] || (/^[a-z-]+$/.test(type) && !/panning/.test(type) ? type : 'default');
     if (c === lastCursor) return;
     lastCursor = c;
+    cursorOut();
+  }
+  function cursorOut() {
+    const c = hereCursor();
     for (const v of viewers) if (!v.isDestroyed()) v.send('cmd', { type: 'web-cursor', c });
+    if (hooks.cursor) hooks.cursor(hover.who && !hover.here ? hover.who : '', lastCursor || 'default');
   }
 
-  return { host, attached, act, show, hide, close, nav, shared, frame, source, input, info, blockChanged, forget, outside: goOutside, saved, restore, viewer, gpuChanged, resized, gainChanged,
-    start, captureFrame, audioChanged, running: () => on, stop: () => { close(); if (lan) lan.close(); } };
+  return { home, host, attached, act, show, hide, close, nav, shared, frame, source, input, info, blockChanged, forget, outside: goOutside, saved, restore, viewer, gpuChanged, resized, gainChanged,
+    start, captureFrame, audioChanged, hover: () => hover.who, running: () => on, stop: () => { close(); if (lan) lan.close(); } };
 };

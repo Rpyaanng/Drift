@@ -3,95 +3,921 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; form-action drift:">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src https: data:; form-action drift:">
 <title>New tab</title>
-<!-- Drift's own start page for the Surf tab, served as drift://home/ by web.js -->
+<!-- Drift's own start page for the Surf tab, served as drift://home/ by web.js. Its data (quotes, weather, news, stats) and its
+     saved layout come from drift://home/api/… (surf-home.js). -->
 <style>
-  :root { --bg: #040816; --deep: #0b3a52; --accent: #22c08a; --hi: #b58cff; --ink: rgba(255,255,255,.92); --dim: rgba(255,255,255,.55); --line: rgba(255,255,255,.1); --glass: rgba(11,13,19,.5); }
+  :root { --bg: #05070d; --accent: #22c08a; --hi: #b58cff; --up: #2bd48f; --down: #ff5d6c; --ink: rgba(255,255,255,.94); --dim: rgba(255,255,255,.56); --faint: rgba(255,255,255,.34);
+    --line: rgba(255,255,255,.09); --card: rgba(14,17,26,.62); --card-hi: rgba(22,26,38,.72); --r: 16px; --gap: 14px; --pad: 18px; }
+  :root[data-density="compact"] { --gap: 10px; --pad: 13px; --r: 12px; }
   * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); overflow: hidden;
-    font: 14px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
-  /* the sky: slow aurora light drifting behind everything */
-  .sky { position: fixed; inset: -20vmax; filter: blur(70px) saturate(130%); opacity: .9; pointer-events: none; }
+  [hidden] { display: none !important; }
+  /* the colour is the page's (html) only: a background on body would be a box drawn over the backdrop (.bg, at z-index -1) */
+  html { background: var(--bg); }
+  html, body { margin: 0; height: 100%; color: var(--ink);
+    font: 13.5px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  body { overflow-y: auto; overflow-x: hidden; }
+  body::-webkit-scrollbar { width: 10px; } body::-webkit-scrollbar-thumb { background: rgba(255,255,255,.12); border-radius: 10px; border: 3px solid transparent; background-clip: content-box; }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  a { color: inherit; text-decoration: none; }
+
+  /* ---- backdrops ---- */
+  .bg { position: fixed; inset: 0; pointer-events: none; z-index: -1; }
+  .sky { position: absolute; inset: -20vmax; filter: blur(70px) saturate(130%); opacity: .75; }
   .sky i { position: absolute; border-radius: 50%; mix-blend-mode: screen; animation: drift 38s ease-in-out infinite alternate; }
-  .sky i:nth-child(1) { width: 70vmax; height: 46vmax; left: 8vmax; top: 30vmax; background: radial-gradient(closest-side, var(--accent), transparent); opacity: .42; }
-  .sky i:nth-child(2) { width: 60vmax; height: 50vmax; left: 52vmax; top: 18vmax; background: radial-gradient(closest-side, var(--hi), transparent); opacity: .32; animation-duration: 46s; animation-delay: -12s; }
-  .sky i:nth-child(3) { width: 90vmax; height: 60vmax; left: 20vmax; top: 64vmax; background: radial-gradient(closest-side, var(--deep), transparent); opacity: .9; animation-duration: 54s; animation-delay: -30s; }
-  .sky i:nth-child(4) { width: 36vmax; height: 30vmax; left: 70vmax; top: 60vmax; background: radial-gradient(closest-side, #2fd3c3, transparent); opacity: .22; animation-duration: 33s; animation-delay: -8s; }
-  @keyframes drift { 0% { transform: translate(0, 0) scale(1) rotate(0deg); } 50% { transform: translate(6vmax, -4vmax) scale(1.12) rotate(8deg); } 100% { transform: translate(-5vmax, 3vmax) scale(.94) rotate(-6deg); } }
-  /* faint stars */
-  .stars { position: fixed; inset: 0; pointer-events: none; opacity: .5;
-    background-image: radial-gradient(1px 1px at 12% 18%, #fff, transparent), radial-gradient(1px 1px at 78% 12%, #fff, transparent), radial-gradient(1.5px 1.5px at 34% 72%, #fff, transparent),
-      radial-gradient(1px 1px at 62% 44%, #fff, transparent), radial-gradient(1px 1px at 88% 66%, #fff, transparent), radial-gradient(1.5px 1.5px at 22% 48%, #fff, transparent),
-      radial-gradient(1px 1px at 52% 88%, #fff, transparent), radial-gradient(1px 1px at 6% 82%, #fff, transparent), radial-gradient(1px 1px at 94% 34%, #fff, transparent); }
-  .vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,.55)); }
+  .sky i:nth-child(1) { width: 70vmax; height: 46vmax; left: 4vmax; top: 34vmax; background: radial-gradient(closest-side, var(--accent), transparent); opacity: .36; }
+  .sky i:nth-child(2) { width: 60vmax; height: 50vmax; left: 56vmax; top: 14vmax; background: radial-gradient(closest-side, var(--hi), transparent); opacity: .28; animation-duration: 46s; animation-delay: -12s; }
+  .sky i:nth-child(3) { width: 90vmax; height: 60vmax; left: 20vmax; top: 66vmax; background: radial-gradient(closest-side, #0b3a52, transparent); opacity: .9; animation-duration: 54s; animation-delay: -30s; }
+  @keyframes drift { 0% { transform: translate(0, 0) scale(1); } 50% { transform: translate(6vmax, -4vmax) scale(1.12); } 100% { transform: translate(-5vmax, 3vmax) scale(.94); } }
+  .grain { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 0%, transparent 30%, rgba(0,0,0,.6)); }
+  .photo { position: absolute; inset: 0; background-size: cover; background-position: center; display: none; }
+  .photo::after { content: ""; position: absolute; inset: 0; background: linear-gradient(rgba(0,0,0,.35), rgba(0,0,0,.7)); }
+  :root[data-bg="solid"] .sky { display: none; }
+  :root[data-bg="grid"] .sky { opacity: .35; }
+  :root[data-bg="grid"] .grain { background: linear-gradient(var(--line) 1px, transparent 1px) 0 0 / 40px 40px, linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0 / 40px 40px, radial-gradient(ellipse at 50% 0%, transparent 20%, rgba(0,0,0,.85)); }
+  :root[data-bg="photo"] .sky { display: none; } :root[data-bg="photo"] .photo { display: block; }
+  /* neon: a synthwave horizon drawn on a canvas (drawNeon), with scanlines over it */
+  #neon { position: absolute; inset: 0; width: 100%; height: 100%; display: none; }
+  .scan { position: absolute; inset: 0; display: none; background: repeating-linear-gradient(to bottom, rgba(255,255,255,.025) 0 1px, transparent 1px 3px); mix-blend-mode: overlay; }
+  :root[data-bg="neon"] .sky { display: none; } :root[data-bg="neon"] #neon, :root[data-bg="neon"] .scan { display: block; }
+  :root[data-bg="neon"] .grain { background: radial-gradient(ellipse at 50% 45%, transparent 45%, rgba(0,0,0,.55)); }
+  /* glassier cards, so the scene shows through them */
+  :root[data-bg="neon"] .w { background: rgba(8,6,18,.42); backdrop-filter: blur(10px) saturate(160%); border-color: color-mix(in srgb, var(--hi) 28%, transparent);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 0 0 24px color-mix(in srgb, var(--hi) 8%, transparent); }
+  /* kitty: Drift's cat (the mascot from index.html's #coCat) in a cozy dusk, built by kitty() when chosen */
+  .kitty { position: absolute; inset: 0; display: none; overflow: hidden;
+    background: radial-gradient(ellipse at 50% 110%, color-mix(in srgb, var(--hi) 30%, #2a1236), transparent 60%),
+      linear-gradient(#0c0a1e, color-mix(in srgb, var(--accent) 14%, #171030) 55%, color-mix(in srgb, var(--hi) 22%, #22113a)); }
+  :root[data-bg="kitty"] .sky { display: none; } :root[data-bg="kitty"] .kitty { display: block; }
+  :root[data-bg="kitty"] .grain { background: radial-gradient(ellipse at 50% 40%, transparent 50%, rgba(0,0,0,.4)); }
+  :root[data-bg="kitty"] .w { background: rgba(18,12,34,.55); border-color: color-mix(in srgb, var(--hi) 22%, transparent); border-radius: calc(var(--r) + 6px); }
+  :root[data-bg="kitty"] .clock { text-shadow: 0 0 30px color-mix(in srgb, var(--hi) 45%, transparent); }
+  .kitty .moon { position: absolute; right: 12%; top: 9%; width: 110px; height: 110px; border-radius: 50%; background: radial-gradient(circle at 38% 36%, #fff8e6, #f6dcb4 60%, #e9c393);
+    box-shadow: 0 0 60px 18px rgba(255,230,190,.18), 0 0 140px 50px color-mix(in srgb, var(--hi) 14%, transparent); }
+  .kitty .moon::after { content: ""; position: absolute; left: 26%; top: 52%; width: 16px; height: 12px; border-radius: 50%; background: rgba(210,170,130,.35); box-shadow: 34px -22px 0 -3px rgba(210,170,130,.3); }
+  .kitty .twinkle { position: absolute; width: 3px; height: 3px; border-radius: 50%; background: #fff; animation: twinkle 3s ease-in-out infinite; }
+  @keyframes twinkle { 50% { opacity: .2; transform: scale(.6); } }
+  .kitty .cloud { position: absolute; height: 60px; border-radius: 60px; background: color-mix(in srgb, var(--hi) 18%, rgba(255,255,255,.08)); filter: blur(6px); animation: cloud linear infinite; }
+  .kitty .cloud::before, .kitty .cloud::after { content: ""; position: absolute; border-radius: 50%; background: inherit; }
+  .kitty .cloud::before { width: 55%; height: 140%; left: 14%; bottom: 20%; } .kitty .cloud::after { width: 38%; height: 110%; right: 14%; bottom: 30%; }
+  @keyframes cloud { from { transform: translateX(-30vw); } to { transform: translateX(130vw); } }
+  .kitty .floaty { position: absolute; bottom: -40px; animation: floaty linear infinite; }
+  .kitty .floaty svg { display: block; width: 100%; height: 100%; animation: sway 4s ease-in-out infinite alternate; }
+  @keyframes floaty { 0% { transform: translateY(0); opacity: 0; } 8% { opacity: var(--o); } 85% { opacity: var(--o); } 100% { transform: translateY(-112vh); opacity: 0; } }
+  @keyframes sway { from { transform: translateX(-14px) rotate(-12deg); } to { transform: translateX(14px) rotate(12deg); } }
+  /* the cat: layers of one drawing (same viewBox), each only moved: the tail swishes, the body breathes, the eyes blink and the
+     pupils follow the mouse */
+  /* (as wide as the margin beside the cards allows, so it sits beside them on a wide screen) */
+  .kittycat .cat { position: absolute; right: 1.5vw; bottom: -1.6vw; width: clamp(150px, calc(50vw - 660px), 340px); aspect-ratio: 1360 / 820; pointer-events: auto; cursor: pointer;
+    filter: drop-shadow(0 6px 0 rgba(10,6,24,.35)); transform-origin: 50% 100%; }       /* (a flat cast shadow, as in a cel: no glow over its ink) */
+  .kitty .scene { position: absolute; inset: 0; width: 100%; height: 100%; }
+  /* the cat's colours, as index.html mixes them from the accent: on the layer, where the gradients that use them are too */
+  .kittycat {
+    --cat-base: var(--accent); --cat-mid: color-mix(in oklab, var(--accent), white 22%); --cat-hi: color-mix(in oklab, var(--accent), white 62%);
+    --cat-rim: color-mix(in oklab, var(--accent), white 80%); --cat-shade: color-mix(in oklab, var(--accent), black 48%);
+    --cat-deep: color-mix(in oklab, var(--accent), black 50%); --cat-dark: color-mix(in oklab, var(--accent), black 72%); }
+  .kittycat .cat > *, .kittycat .cat .eyes > svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  .kittycat .cat .tail { transform-origin: 75.7% 86%; animation: swish 3.2s ease-in-out infinite alternate; }
+  .kittycat .cat .bodyl { transform-origin: 50% 100%; animation: breathe 3.6s ease-in-out infinite; }
+  .kittycat .cat .eyes { transform-origin: 50% 53.7%; animation: blink 6s infinite; }
+  .kittycat .cat .eyes .pupils { transition: transform .25s ease-out; }
+  @keyframes swish { from { transform: rotate(-5deg); } to { transform: rotate(7deg); } }
+  @keyframes breathe { 50% { transform: scale(1.015, 1.03); } }
+  @keyframes blink { 0%, 92%, 100% { transform: scaleY(1); } 94% { transform: scaleY(.08); } 96% { transform: scaleY(1); } }
+  .kittycat .cat.hop { animation: hop .55s cubic-bezier(.3, 1.6, .5, 1); }
+  @keyframes hop { 40% { transform: translateY(-14%) scale(.97, 1.04); } 70% { transform: translateY(0) scale(1.04, .96); } }
+  .kittycat .pop { position: absolute; width: 28px; height: 28px; pointer-events: none; animation: pop 1.4s ease-out forwards; }
+  @keyframes pop { from { transform: translate(-50%, 0) scale(.4); opacity: 1; } to { transform: translate(-50%, -140px) scale(1.3); opacity: 0; } }
+  /* the cat's own layer: above the page's boxes (so it can be clicked), below the cards, which come after it */
+  .kittycat { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; display: none; }
+  :root[data-bg="kitty"] .kittycat { display: block; }
+  @media (prefers-reduced-motion: reduce) { .kitty *, .kittycat * { animation: none !important; } }
+  :root[data-bg="neon"] .clock { text-shadow: 0 0 24px color-mix(in srgb, var(--hi) 55%, transparent), 0 0 60px color-mix(in srgb, var(--accent) 30%, transparent); }
 
-  main { position: relative; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px; padding: 0 24px 6vh; }
-  .brand { display: flex; align-items: center; gap: 10px; font: 600 11px/1 "Segoe UI Variable Text", "Segoe UI", system-ui; letter-spacing: .32em; text-transform: uppercase; color: var(--dim); }
-  .brand svg { width: 22px; height: 22px; }
-  .clock { font: 200 clamp(64px, 13vh, 150px)/1 "Segoe UI Variable Display", "Segoe UI Light", system-ui; letter-spacing: .03em; font-variant-numeric: tabular-nums;
-    text-shadow: 0 4px 50px rgba(0,0,0,.35); margin-top: -6px; }
-  .hello { margin-top: -14px; font: 300 clamp(16px, 2.4vh, 22px)/1.3 "Segoe UI Variable Display", system-ui; color: rgba(255,255,255,.72); letter-spacing: .02em; }
+  /* ---- layout ---- */
+  .wrap { width: min(1240px, 100%); margin: 0 auto; padding: 22px 28px 40px; }
+  header.top { display: flex; align-items: center; gap: 14px; height: 36px; }
+  .brand { display: flex; align-items: center; gap: 9px; font-weight: 600; font-size: 11px; line-height: 1; letter-spacing: .3em; text-transform: uppercase; color: var(--dim); }
+  .brand svg { width: 20px; height: 20px; }
+  .spacer { flex: 1; }
+  .chip { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line); background: rgba(255,255,255,.04);
+    color: var(--dim); cursor: pointer; transition: background .2s, color .2s, border-color .2s; font-size: 12.5px; }
+  .chip:hover { background: rgba(255,255,255,.09); color: var(--ink); }
+  .chip.on { border-color: var(--accent); color: var(--ink); }
+  .chip svg { width: 15px; height: 15px; }
 
-  form { width: min(640px, 100%); position: relative; }
-  form input { width: 100%; padding: 15px 22px 15px 50px; border-radius: 999px; border: 1px solid var(--line); outline: none; color: var(--ink); font: inherit; font-size: 15px;
-    background: rgba(11,13,19,.66); backdrop-filter: blur(30px) saturate(150%); box-shadow: 0 24px 80px rgba(0,0,0,.5); transition: border-color .25s; }
-  form input::placeholder { color: var(--dim); }
-  form input::-webkit-search-cancel-button { display: none; }
-  form input:focus { border-color: var(--accent); }
-  form svg { position: absolute; z-index: 1; left: 20px; top: 50%; width: 17px; height: 17px; transform: translateY(-50%); opacity: .55; pointer-events: none; }
+  .hero { display: grid; grid-template-columns: 1fr minmax(0, 560px); align-items: end; gap: 28px; margin: 26px 0 22px; }
+  .clock { font: 200 clamp(56px, 9vw, 104px)/.9 "Segoe UI Variable Display", "Segoe UI Light", system-ui; letter-spacing: .01em; font-variant-numeric: tabular-nums; }
+  .clock small { font-size: .32em; font-weight: 300; color: var(--dim); margin-left: .25em; letter-spacing: .04em; }
+  .hello { margin-top: 10px; font: 300 18px/1.3 "Segoe UI Variable Display", system-ui; color: rgba(255,255,255,.75); }
+  .hello b { font-weight: 500; color: var(--ink); }
+  .date { margin-top: 2px; color: var(--dim); font-size: 13px; }
+  :root[data-clock="off"] .clock { display: none; }
 
-  .tiles { display: grid; grid-template-columns: repeat(4, 132px); gap: 14px; }
-  .tile { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 18px 10px 14px; border-radius: 18px; text-decoration: none; color: var(--ink);
-    background: rgba(255,255,255,.04); border: 1px solid var(--line); backdrop-filter: blur(20px); transition: transform .25s, background .25s, border-color .25s; }
-  .tile:hover, .tile:focus-visible { transform: translateY(-3px); background: rgba(255,255,255,.09); border-color: rgba(255,255,255,.22); outline: none; }
-  .tile b { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; font: 600 17px/1 "Segoe UI Variable Display", system-ui;
-    background: linear-gradient(135deg, var(--c1), var(--c2)); box-shadow: 0 6px 22px color-mix(in srgb, var(--c1) 40%, transparent); color: #fff; }
-  .tile span { font-size: 12.5px; color: rgba(255,255,255,.8); white-space: nowrap; }
-  h2 { margin: 6px 0 -12px; font: 600 10.5px/1 "Segoe UI Variable Text", "Segoe UI", system-ui; letter-spacing: .18em; text-transform: uppercase; color: var(--dim); }
-  .hint { margin-top: 8px; text-align: center; color: rgba(255,255,255,.36); font-size: 12px; letter-spacing: .02em; }
-  @media (max-width: 640px) { .tiles { grid-template-columns: repeat(2, 132px); } .hint { display: none; } }
-  @media (prefers-reduced-motion: reduce) { .sky i { animation: none; } }
+  form.search { position: relative; }
+  form.search input { width: 100%; height: 52px; padding: 0 120px 0 48px; border-radius: 14px; border: 1px solid var(--line); outline: none; font-size: 15px;
+    background: rgba(12,14,22,.7); backdrop-filter: blur(30px) saturate(150%); box-shadow: 0 20px 60px rgba(0,0,0,.45); transition: border-color .2s, box-shadow .2s; }
+  form.search input:focus { border-color: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent), 0 20px 60px rgba(0,0,0,.45); }
+  form.search input::placeholder { color: var(--faint); }
+  form.search > svg { position: absolute; z-index: 1; left: 17px; top: 50%; width: 17px; height: 17px; transform: translateY(-50%); opacity: .5; pointer-events: none; }
+  form.search select { position: absolute; right: 8px; top: 8px; height: 36px; border-radius: 9px; border: 1px solid var(--line); background: rgba(255,255,255,.05); padding: 0 8px; color: var(--dim); outline: none; cursor: pointer; }
+  form.search select option { background: #141824; color: #fff; }
+
+  /* ---- widgets ---- */
+  .grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: var(--gap); grid-auto-flow: row dense; }
+  .w { grid-column: span 4; background: var(--card); border: 1px solid var(--line); border-radius: var(--r); padding: var(--pad); backdrop-filter: blur(24px) saturate(140%);
+    min-width: 0; position: relative; display: flex; flex-direction: column; gap: 12px; }
+  .w[data-size="s"] { grid-column: span 3; } .w[data-size="m"] { grid-column: span 4; } .w[data-size="l"] { grid-column: span 6; } .w[data-size="xl"] { grid-column: span 12; }
+  .w > h3 { margin: 0; display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 10.5px; line-height: 1; letter-spacing: .16em; text-transform: uppercase; color: var(--dim); }
+  .w > h3 .sub { margin-left: auto; letter-spacing: .02em; text-transform: none; font-weight: 400; color: var(--faint); font-size: 11.5px; }
+  .w > h3 .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+  .empty { color: var(--faint); font-size: 12.5px; padding: 6px 0; }
+  .empty button { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+  .skel { height: 14px; border-radius: 6px; background: linear-gradient(90deg, rgba(255,255,255,.05), rgba(255,255,255,.1), rgba(255,255,255,.05)); background-size: 200% 100%; animation: sh 1.4s infinite; }
+  @keyframes sh { to { background-position: -200% 0; } }
+  .num { font-variant-numeric: tabular-nums; }
+  .up { color: var(--up); } .down { color: var(--down); }
+
+  /* shortcuts */
+  .links { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; }
+  .link { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 6px 10px; border-radius: 12px; border: 1px solid transparent; transition: background .2s, border-color .2s, transform .2s; }
+  .link:hover, .link:focus-visible { background: rgba(255,255,255,.06); border-color: var(--line); transform: translateY(-2px); outline: none; }
+  .ico { width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; background: rgba(255,255,255,.07); overflow: hidden; font-weight: 600; font-size: 15px; position: relative; }
+  .ico img { width: 22px; height: 22px; }
+  .link span { font-size: 12px; color: rgba(255,255,255,.78); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* markets */
+  .tick { display: grid; grid-template-columns: minmax(0, 1fr) 84px 92px; align-items: center; gap: 12px; padding: 8px 6px; border-radius: 10px; }
+  .tick:hover { background: rgba(255,255,255,.04); }
+  .tick + .tick { border-top: 1px solid var(--line); }
+  .tick .sym { font-weight: 600; font-size: 13px; } .tick .nm { color: var(--faint); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tick svg { width: 84px; height: 28px; display: block; }
+  .tick .px { text-align: right; } .tick .px b { display: block; font-weight: 600; } .tick .px span { font-size: 11.5px; }
+  .pill { display: inline-block; padding: 1px 6px; border-radius: 6px; font-size: 11.5px; }
+  .pill.up { background: color-mix(in srgb, var(--up) 15%, transparent); } .pill.down { background: color-mix(in srgb, var(--down) 15%, transparent); }
+
+  /* weather */
+  .wx-now { display: flex; align-items: center; gap: 14px; }
+  .wx-now .big { font: 200 52px/1 "Segoe UI Variable Display", system-ui; }
+  .wx-now .icon { font-size: 34px; line-height: 1; }
+  .wx-now .what { color: var(--dim); font-size: 12.5px; line-height: 1.6; }
+  .wx-now .what b { color: var(--ink); font-weight: 500; font-size: 14px; }
+  .wx-days { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+  .wx-days div { text-align: center; padding: 8px 2px; border-radius: 10px; background: rgba(255,255,255,.03); font-size: 12px; }
+  .wx-days div span { display: block; color: var(--faint); font-size: 11px; } .wx-days div i { display: block; font-style: normal; font-size: 18px; margin: 3px 0; }
+  .wx-days div em { font-style: normal; color: var(--faint); }
+
+  /* stats */
+  .kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .kpi { padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,.035); }
+  .kpi b { display: block; font: 300 24px/1.1 "Segoe UI Variable Display", system-ui; font-variant-numeric: tabular-nums; }
+  .kpi span { font-size: 11px; color: var(--faint); letter-spacing: .02em; }
+  .bars { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; align-items: end; height: 78px; }
+  .bar { display: flex; flex-direction: column; align-items: center; gap: 5px; height: 100%; justify-content: flex-end; }
+  .bar i { width: 100%; max-width: 26px; border-radius: 5px 5px 2px 2px; background: color-mix(in srgb, var(--accent) 55%, transparent); min-height: 2px; }
+  .bar.now i { background: var(--accent); box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 50%, transparent); }
+  .bar span { font-size: 10.5px; color: var(--faint); }
+  .tops { display: flex; flex-direction: column; gap: 7px; }
+  .top { display: grid; grid-template-columns: 110px 1fr 52px; gap: 10px; align-items: center; font-size: 12px; }
+  .top .s { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: rgba(255,255,255,.8); }
+  .top .t { height: 6px; border-radius: 3px; background: rgba(255,255,255,.06); overflow: hidden; } .top .t i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--hi)); border-radius: 3px; }
+  .top .v { text-align: right; color: var(--faint); }
+  .meter { display: grid; grid-template-columns: 62px 1fr 64px; gap: 10px; align-items: center; font-size: 12px; }
+  .meter .t { height: 8px; border-radius: 4px; background: rgba(255,255,255,.06); overflow: hidden; } .meter .t i { display: block; height: 100%; border-radius: 4px; background: var(--accent); transition: width .6s; }
+  .meter .t i.warn { background: #f5b83d; } .meter .t i.hot { background: var(--down); }
+  .meter .v { text-align: right; } .meter > span:first-child { color: var(--dim); }
+  .sysline { color: var(--faint); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .specs { display: grid; grid-template-columns: 74px 1fr; gap: 7px 12px; font-size: 12.5px; }
+  .specs dt { color: var(--faint); } .specs dd { margin: 0; color: rgba(255,255,255,.88); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hubtag { border-color: color-mix(in srgb, var(--accent) 45%, transparent); color: var(--ink); cursor: default; }
+  .hubtag:hover { background: rgba(255,255,255,.04); }
+  .hubtag i { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+  .shout { font: 300 17px/1.5 "Segoe UI Variable Display", system-ui; color: rgba(255,255,255,.86); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .toast { position: fixed; left: 50%; bottom: 28px; transform: translate(-50%, 20px); opacity: 0; pointer-events: none; z-index: 20; transition: opacity .25s, transform .25s;
+    background: #161a26; border: 1px solid var(--line); border-radius: 12px; padding: 10px 16px; box-shadow: 0 16px 50px rgba(0,0,0,.5); font-size: 13px; }
+  .toast.on { opacity: 1; transform: translate(-50%, 0); }
+
+  /* news */
+  .news { display: flex; flex-direction: column; }
+  .story { display: grid; grid-template-columns: 22px 1fr; gap: 8px; padding: 8px 4px; border-radius: 8px; }
+  .story + .story { border-top: 1px solid var(--line); }
+  .story:hover { background: rgba(255,255,255,.04); }
+  .story .n { color: var(--faint); font-size: 11.5px; padding-top: 1px; text-align: right; }
+  .story b { font-weight: 500; font-size: 13px; display: block; }
+  .story span { color: var(--faint); font-size: 11.5px; }
+
+  /* notes */
+  textarea.notes { flex: 1; min-height: 140px; resize: vertical; border: 1px solid var(--line); border-radius: 10px; background: rgba(0,0,0,.2); padding: 10px 12px; outline: none; line-height: 1.5; }
+  textarea.notes:focus { border-color: var(--accent); }
+
+  footer.hint { margin-top: 22px; text-align: center; color: var(--faint); font-size: 12px; }
+
+  /* ---- customize drawer ---- */
+  .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.45); opacity: 0; pointer-events: none; transition: opacity .25s; z-index: 10; }
+  .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(400px, 100%); background: #0e111a; border-left: 1px solid var(--line); z-index: 11; transform: translateX(100%);
+    transition: transform .28s cubic-bezier(.2,.7,.2,1); display: flex; flex-direction: column; box-shadow: -30px 0 80px rgba(0,0,0,.5); }
+  body.custom .scrim { opacity: 1; pointer-events: auto; } body.custom .drawer { transform: none; }
+  .drawer header { display: flex; align-items: center; padding: 16px 18px; border-bottom: 1px solid var(--line); }
+  .drawer header h2 { margin: 0; font-size: 15px; font-weight: 600; flex: 1; }
+  .drawer .body { flex: 1; overflow-y: auto; padding: 6px 18px 30px; }
+  .drawer section { padding: 16px 0; border-bottom: 1px solid var(--line); }
+  .drawer h4 { margin: 0 0 10px; font-size: 10.5px; letter-spacing: .16em; text-transform: uppercase; color: var(--dim); font-weight: 600; }
+  .row { display: flex; align-items: center; gap: 10px; min-height: 34px; }
+  .row label { flex: 1; color: rgba(255,255,255,.82); }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+  .seg button { border: 0; background: none; padding: 5px 10px; font-size: 12px; color: var(--dim); cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button.on { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--ink); }
+  .field { width: 100%; height: 34px; border-radius: 9px; border: 1px solid var(--line); background: rgba(255,255,255,.04); padding: 0 10px; outline: none; }
+  .field:focus { border-color: var(--accent); }
+  .swatches { display: flex; gap: 8px; flex-wrap: wrap; }
+  .swatches button { width: 26px; height: 26px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; background: var(--c); box-shadow: inset 0 0 0 1px rgba(255,255,255,.15); }
+  .swatches button.on { border-color: #fff; }
+  .wl { display: flex; flex-direction: column; gap: 6px; }
+  .wl .item { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 10px; background: rgba(255,255,255,.035); border: 1px solid transparent; }
+  .wl .item.drag { opacity: .4; } .wl .item.over { border-color: var(--accent); }
+  .wl .grip { cursor: grab; color: var(--faint); padding: 0 2px; user-select: none; }
+  .wl .item label { flex: 1; display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  .ibtn { width: 26px; height: 26px; border-radius: 7px; border: 0; background: none; color: var(--dim); cursor: pointer; display: grid; place-items: center; }
+  .ibtn:hover { background: rgba(255,255,255,.08); color: var(--ink); }
+  .ibtn svg { width: 15px; height: 15px; }
+  input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; }
+  .linkrow { display: grid; grid-template-columns: 1fr 1.4fr 26px; gap: 6px; margin-bottom: 6px; }
+  .add { margin-top: 4px; border: 1px dashed var(--line); background: none; border-radius: 9px; height: 32px; width: 100%; color: var(--dim); cursor: pointer; }
+  .add:hover { color: var(--ink); border-color: rgba(255,255,255,.25); }
+  .note { color: var(--faint); font-size: 11.5px; margin-top: 6px; }
+  .danger { color: #ff8a95; }
+
+  @media (max-width: 1000px) { .w[data-size="s"], .w[data-size="m"] { grid-column: span 6; } .w[data-size="l"] { grid-column: span 12; } .hero { grid-template-columns: 1fr; align-items: start; } }
+  @media (max-width: 640px) { .wrap { padding: 16px 16px 30px; } .w { grid-column: span 12 !important; } footer.hint { display: none; } }
+  @media (prefers-reduced-motion: reduce) { .sky i, .skel { animation: none; } }
 </style>
 </head>
 <body>
-<div class="sky"><i></i><i></i><i></i><i></i></div>
-<div class="stars"></div>
-<div class="vignette"></div>
-<main>
-  <div class="brand">
-    <svg viewBox="0 0 24 24" fill="none" stroke-linecap="round"><path d="M3 9c3-3 6 3 9 0s6-3 9 0" stroke="#22c08a" stroke-width="1.8"/><path d="M3 15c3-3 6 3 9 0s6-3 9 0" stroke="#b58cff" stroke-width="1.8" opacity=".85"/></svg>
-    Drift
+<div class="bg"><div class="photo" id="photo"></div><canvas id="neon"></canvas><div class="kitty" id="kitty"></div><div class="sky"><i></i><i></i><i></i></div><div class="scan"></div><div class="grain"></div></div>
+<div class="kittycat" id="kittycat"></div>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" fill="none" stroke-linecap="round"><path d="M3 9c3-3 6 3 9 0s6-3 9 0" stroke="#22c08a" stroke-width="1.8"/><path d="M3 15c3-3 6 3 9 0s6-3 9 0" stroke="#b58cff" stroke-width="1.8" opacity=".85"/></svg>
+      Drift
+    </div>
+    <div class="spacer"></div>
+    <span class="chip hubtag" id="hubtag" hidden><i></i><span></span></span>
+    <button class="chip" id="refresh" title="Refresh the data"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>Refresh</button>
+    <button class="chip" id="customize"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>Customize</button>
+  </header>
+
+  <div class="hero">
+    <div>
+      <div class="clock" id="clock"></div>
+      <div class="hello" id="hello"></div>
+      <div class="date" id="date"></div>
+    </div>
+    <form class="search" id="search" action="drift://home/go" method="get" autocomplete="off">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.4-4.4"/></svg>
+      <input name="q" id="q" placeholder="Search or type an address" spellcheck="false" autofocus>
+      <select id="engine" title="Search with"></select>
+    </form>
   </div>
-  <div class="clock" id="clock"></div>
-  <div class="hello" id="hello"></div>
-  <form action="drift://home/go" method="get" autocomplete="off">
-    <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.4-4.4"/></svg>
-    <input name="q" id="q" placeholder="Search" spellcheck="false" autofocus>
-  </form>
-  <h2>Something to drift to</h2>
-  <nav class="tiles">
-    <a class="tile" href="https://www.youtube.com/results?search_query=lofi+hip+hop+radio+live" style="--c1:#22c08a;--c2:#0b3a52"><b>L</b><span>Lo-fi radio</span></a>
-    <a class="tile" href="https://www.nytimes.com/games/wordle/index.html" style="--c1:#6aaa64;--c2:#3d6b39"><b>W</b><span>Wordle</span></a>
-    <a class="tile" href="https://www.nytimes.com/games/connections" style="--c1:#ba81c5;--c2:#4a2a6e"><b>C</b><span>Connections</span></a>
-    <a class="tile" href="https://excalidraw.com/" style="--c1:#6965db;--c2:#2a2870"><b>E</b><span>Excalidraw</span></a>
-    <a class="tile" href="https://www.youtube.com/" style="--c1:#ff4d5e;--c2:#7a1022"><b>Y</b><span>YouTube</span></a>
-    <a class="tile" href="https://www.twitch.tv/" style="--c1:#9b6bff;--c2:#3a1d7a"><b>T</b><span>Twitch</span></a>
-    <a class="tile" href="https://soundcloud.com/" style="--c1:#ff8a3d;--c2:#7a3310"><b>S</b><span>SoundCloud</span></a>
-    <a class="tile" href="https://en.wikipedia.org/wiki/Special:Random" style="--c1:#8fa3b8;--c2:#2b3644"><b>?</b><span>Random article</span></a>
-  </nav>
-  <div class="hint">Mouse to the top edge for tabs and the address &nbsp;·&nbsp; to the bottom edge for Drift’s controls</div>
-</main>
+
+  <main class="grid" id="grid"></main>
+  <footer class="hint">Mouse to the top edge for tabs and the address &nbsp;·&nbsp; to the bottom edge for Drift’s controls</footer>
+</div>
+
+<div class="toast" id="toast" role="status"></div>
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-label="Customize">
+  <header><h2>Customize</h2><button class="ibtn" id="close" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></header>
+  <div class="body" id="panel"></div>
+</aside>
+
 <script>
-  const clock = document.getElementById('clock'), hello = document.getElementById('hello');
-  function tick() {
-    const d = new Date(), h = d.getHours();
-    clock.textContent = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    hello.textContent = h < 5 ? 'Still up? Take it slow.' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : h < 22 ? 'Good evening' : 'Winding down';
+(() => {
+  // ---------- settings ----------
+  const WIDGETS = {
+    links:   { name: 'Shortcuts', size: 'xl' },
+    markets: { name: 'Markets', size: 'l' },
+    news:    { name: 'Headlines', size: 'l' },
+    weather: { name: 'Weather', size: 'm' },
+    browsing:{ name: 'Your browsing', size: 'm' },
+    system:  { name: 'This PC', size: 'm' },
+    notes:   { name: 'Notes', size: 'l' },
+  };
+  const ENGINES = {
+    google: ['Google', 'https://www.google.com/search?q='], ddg: ['DuckDuckGo', 'https://duckduckgo.com/?q='], bing: ['Bing', 'https://www.bing.com/search?q='],
+    youtube: ['YouTube', 'https://www.youtube.com/results?search_query='], wiki: ['Wikipedia', 'https://en.wikipedia.org/w/index.php?search='],
+    perplexity: ['Perplexity', 'https://www.perplexity.ai/search?q='],
+  };
+  const ACCENTS = [['#22c08a', '#b58cff'], ['#4f8cff', '#22d3ee'], ['#ff7a59', '#ffcf5a'], ['#e85dff', '#7a5cff'], ['#f43f5e', '#fb923c'], ['#a3e635', '#22c08a'], ['#e2e8f0', '#94a3b8']];
+  const DEFAULTS = {
+    v: 1, name: '', clock24: false, seconds: false, clock: true, greeting: true, density: 'cozy', bg: 'aurora', photo: '', accent: 0, engine: 'google',
+    widgets: Object.keys(WIDGETS).map((id) => ({ id, on: true, size: WIDGETS[id].size })),
+    symbols: ['^GSPC', '^IXIC', 'AAPL', 'NVDA', 'MSFT', 'BTC-USD'],
+    city: '', unit: 'c', notes: '',
+    links: [
+      ['Lo-fi radio', 'https://www.youtube.com/results?search_query=lofi+hip+hop+radio+live'], ['YouTube', 'https://www.youtube.com/'], ['Twitch', 'https://www.twitch.tv/'],
+      ['SoundCloud', 'https://soundcloud.com/'], ['Wordle', 'https://www.nytimes.com/games/wordle/index.html'], ['Connections', 'https://www.nytimes.com/games/connections'],
+      ['Excalidraw', 'https://excalidraw.com/'], ['Random article', 'https://en.wikipedia.org/wiki/Special:Random'],
+    ],
+  };
+  const LS = 'drift-home';
+  const lsGet = () => { try { return JSON.parse(localStorage.getItem(LS)); } catch { return null; } };
+  const lsSet = (v) => { try { localStorage.setItem(LS, JSON.stringify(v)); } catch {} };
+  const merge = (s) => {
+    const o = { ...DEFAULTS, ...(s || {}) };
+    // keep any widget added since the layout was saved
+    const have = new Set((o.widgets || []).filter((w) => WIDGETS[w.id]).map((w) => w.id));
+    o.widgets = (o.widgets || []).filter((w) => WIDGETS[w.id]).concat(Object.keys(WIDGETS).filter((id) => !have.has(id)).map((id) => ({ id, on: false, size: WIDGETS[id].size })));
+    return o;
+  };
+  // Drift's data for this page (surf-home.js), which only answers requests carrying the token it served the page with
+  const TOKEN = '__DRIFT_HOME_TOKEN__';
+  const call = (p, init = {}) => fetch('/api/' + p, { ...init, headers: { ...(init.headers || {}), 'x-drift-home': TOKEN } });
+  let S = merge(lsGet());
+  // On the hub's browser (a stream everyone in the hub uses) the page belongs to the host: only they can change it, and their specs
+  // and browsing show only if they've turned that on in Drift's Settings. `canEdit` is whether the last click in it was theirs.
+  let MODE = { hub: false, canEdit: true, specs: true, browsing: true };
+  const owner = () => S.name || 'The host';
+  let saveTimer = 0;
+  function save(rerender = true) {
+    lsSet(S);
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => call('settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(S) })
+      .then((r) => { if (r.status === 403) { toast(`Only ${MODE.hub ? owner() : 'the host'} can change this page.`); document.body.classList.remove('custom'); reload(); } })
+      .catch(() => {}), 400);
+    if (rerender) { applyLook(); render(); }
   }
-  tick(); setInterval(tick, 1000);
+  // the saved settings (and on the hub, what may be shown): redraws if anything changed
+  async function reload() {
+    try {
+      const [m, s] = await Promise.all([call('mode').then((r) => r.json()), call('settings').then((r) => r.json())]);
+      const next = merge(s), changed = JSON.stringify(next) !== JSON.stringify(S) || m.specs !== MODE.specs || m.browsing !== MODE.browsing || m.hub !== MODE.hub;
+      MODE = m;
+      if (changed && !document.body.classList.contains('custom')) { S = next; lsSet(S); applyLook(); render(); }
+    } catch {}
+  }
+  let toastTimer = 0;
+  function toast(t) { const el = document.getElementById('toast'); el.textContent = t; el.classList.add('on'); clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('on'), 3200); }
+
+  // ---------- helpers ----------
+  const $ = (s, r = document) => r.querySelector(s);
+  const h = (tag, attrs = {}, ...kids) => {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (v == null || v === false) continue;
+      if (k === 'class') e.className = v; else if (k === 'style') e.style.cssText = v; else if (k.startsWith('on')) e.addEventListener(k.slice(2), v); else if (k === 'html') e.innerHTML = v; else e.setAttribute(k, v === true ? '' : v);
+    }
+    for (const k of kids.flat()) if (k != null && k !== false) e.append(k.nodeType ? k : document.createTextNode(k));
+    return e;
+  };
+  const api = async (p) => { const r = await call(p); const j = await r.json(); if (j && j.error && !Array.isArray(j)) throw new Error(j.error); return j; };
+  const host = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } };
+  const fmt = (n, d = 2) => n == null || isNaN(n) ? '–' : n.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+  const dur = (s) => { s = Math.round(s || 0); if (s < 60) return s ? '<1m' : '0m'; const m = Math.round(s / 60); return m < 60 ? `${m}m` : m < 2880 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m` : `${Math.floor(m / 1440)}d ${Math.floor((m % 1440) / 60)}h`; };
+  const bytes = (b) => `${(b / 1073741824).toFixed(1)} GB`;
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const icon = (d) => h('span', { html: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${d}</svg>` }).firstChild;
+  const I = { up: '<path d="M12 19V5M6 11l6-6 6 6"/>', down: '<path d="M12 5v14M6 13l6 6 6-6"/>', x: '<path d="M6 6l12 12M18 6L6 18"/>' };
+
+  function spark(vals, up) {
+    const s = document.createElementNS(svgNS, 'svg'); s.setAttribute('viewBox', '0 0 84 28'); s.setAttribute('preserveAspectRatio', 'none');
+    if (!vals || vals.length < 2) return s;
+    const lo = Math.min(...vals), hi = Math.max(...vals), r = hi - lo || 1;
+    const pts = vals.map((v, i) => [(i / (vals.length - 1)) * 84, 26 - ((v - lo) / r) * 24]);
+    const d = pts.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join('');
+    const c = up ? 'var(--up)' : 'var(--down)', id = 'g' + Math.random().toString(36).slice(2);
+    s.innerHTML = `<defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${up ? '#2bd48f' : '#ff5d6c'}" stop-opacity=".28"/><stop offset="1" stop-opacity="0" stop-color="#000"/></linearGradient></defs>`
+      + `<path d="${d}L84,28L0,28Z" fill="url(#${id})"/><path d="${d}" fill="none" stroke="${c}" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>`;
+    return s;
+  }
+  const WX = (c, day = true) => c === 0 ? [day ? '☀' : '☾', 'Clear'] : c <= 2 ? ['⛅', 'Partly cloudy'] : c === 3 ? ['☁', 'Overcast'] : c <= 48 ? ['🌫', 'Fog']
+    : c <= 57 ? ['🌦', 'Drizzle'] : c <= 67 ? ['🌧', 'Rain'] : c <= 77 ? ['❄', 'Snow'] : c <= 82 ? ['🌧', 'Showers'] : c <= 86 ? ['🌨', 'Snow showers'] : ['⛈', 'Thunderstorm'];
+
+  // ---------- look ----------
+  function applyLook() {
+    const root = document.documentElement, [a, b] = ACCENTS[S.accent] || ACCENTS[0];
+    root.style.setProperty('--accent', a); root.style.setProperty('--hi', b);
+    root.dataset.density = S.density; root.dataset.bg = S.bg; root.dataset.clock = S.clock ? 'on' : 'off';
+    const ph = $('#photo'); ph.style.backgroundImage = S.bg === 'photo' && /^https:\/\//i.test(S.photo) ? `url("${S.photo.replace(/["\\]/g, '')}")` : '';
+    const eng = $('#engine'); eng.innerHTML = '';
+    for (const [k, [n]] of Object.entries(ENGINES)) eng.append(h('option', { value: k, selected: k === S.engine }, n));
+    $('#hello').style.display = S.greeting ? '' : 'none';
+    neon(S.bg === 'neon'); kitty(S.bg === 'kitty');
+    const tag = $('#hubtag'); tag.hidden = !MODE.hub; tag.lastChild.textContent = S.name ? `${S.name}’s hub` : 'Hub stream';
+    tick();
+  }
+
+  // ---------- the neon backdrop ----------
+  // A synthwave horizon in the theme's two colours: a striped sun setting behind wireframe mountains, a perspective grid rolling
+  // toward you, twinkling stars and the odd meteor. Drawn at up to 30 frames a second, only while the page is on screen; with
+  // reduced motion asked for, one still frame.
+  const neon = (() => {
+    const cv = document.getElementById('neon'), cx = cv.getContext('2d');
+    let on = false, raf = 0, last = 0, W = 0, H = 0, stars = [], ridge = [], meteor = null;
+    const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const rnd = (a, b) => a + Math.random() * (b - a);
+    function size() {
+      const dpr = Math.min(devicePixelRatio || 1, 1.5);
+      W = innerWidth; H = innerHeight; cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      stars = Array.from({ length: Math.round((W * H) / 9000) }, () => ({ x: rnd(0, W), y: rnd(0, H * 0.56), r: rnd(0.3, 1.3), p: rnd(0, 6.3), s: rnd(0.6, 2) }));
+      // two ridges of mountains: far ones low and faint, near ones taller, both open in the middle where the sun sets
+      ridge = [0.55, 1].map((k) => { const pts = []; for (let x = -20; x <= W + 20; x += rnd(28, 70)) { const mid = Math.abs(x - W / 2) / (W / 2); pts.push([x, rnd(0.25, 1) * H * 0.13 * k * Math.min(1, mid * 1.8 + 0.08)]); } return pts; });
+    }
+    function frame(now) {
+      const t = now / 1000, css = getComputedStyle(document.documentElement);
+      const c1 = css.getPropertyValue('--accent').trim() || '#22c08a', c2 = css.getPropertyValue('--hi').trim() || '#b58cff';
+      const hz = H * 0.5;       // the horizon
+      // sky
+      const sky = cx.createLinearGradient(0, 0, 0, hz);
+      sky.addColorStop(0, '#02010a'); sky.addColorStop(0.6, '#0b0420'); sky.addColorStop(1, '#1c0a3a');
+      cx.globalAlpha = 1; cx.fillStyle = sky; cx.fillRect(0, 0, W, hz);
+      // stars
+      cx.fillStyle = '#fff';
+      for (const s of stars) { cx.globalAlpha = 0.25 + 0.55 * (0.5 + 0.5 * Math.sin(t * s.s + s.p)) * (1 - s.y / hz); cx.beginPath(); cx.arc(s.x, s.y, s.r, 0, 7); cx.fill(); }
+      // a meteor now and then
+      if (!meteor && Math.random() < 0.004) meteor = { x: rnd(W * 0.1, W * 0.9), y: rnd(0, hz * 0.4), at: t };
+      if (meteor) {
+        const k = (t - meteor.at) / 0.9; if (k > 1) meteor = null;
+        else { const x = meteor.x + k * 260, y = meteor.y + k * 110, g = cx.createLinearGradient(x - 140, y - 60, x, y);
+          g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(1, c2); cx.globalAlpha = 1 - k; cx.strokeStyle = g; cx.lineWidth = 1.6;
+          cx.beginPath(); cx.moveTo(x - 140, y - 60); cx.lineTo(x, y); cx.stroke(); }
+      }
+      // the sun's glow, then the sun, cut by bands of sky that thicken toward the horizon and slowly drift down
+      const R = Math.min(W, H) * 0.2, sx = W / 2, sy = hz - R * 0.35;
+      const glow = cx.createRadialGradient(sx, sy, R * 0.6, sx, sy, R * 2.6);
+      glow.addColorStop(0, c2); glow.addColorStop(1, 'rgba(0,0,0,0)');
+      cx.globalAlpha = 0.35; cx.fillStyle = glow; cx.fillRect(0, 0, W, hz);
+      const sun = cx.createLinearGradient(0, sy - R, 0, hz);       // (to the horizon: the part below it is never seen)
+      sun.addColorStop(0, '#fff3b0'); sun.addColorStop(0.35, c2); sun.addColorStop(1, c1);
+      cx.save(); cx.beginPath(); cx.rect(0, 0, W, hz); cx.clip();
+      cx.globalAlpha = 1; cx.fillStyle = sun; cx.beginPath(); cx.arc(sx, sy, R, 0, 7); cx.fill();
+      cx.fillStyle = sky; const drift = (t * 6) % 18;
+      const top = sy - R * 0.4;
+      for (let y = top + drift; y < hz; y += 18) { const k = (y - top) / (hz - top); cx.fillRect(sx - R, y, R * 2, 1 + k * 8); }
+      cx.restore();
+      // mountains: dark shapes edged in neon, far ridge first
+      ridge.forEach((pts, i) => {
+        cx.beginPath(); cx.moveTo(-20, hz); for (const [x, hgt] of pts) cx.lineTo(x, hz - hgt); cx.lineTo(W + 20, hz); cx.closePath();
+        cx.globalAlpha = 1; cx.fillStyle = i ? '#090316' : '#12062a'; cx.fill();
+        cx.strokeStyle = i ? c1 : c2; cx.globalAlpha = i ? 0.22 : 0.15; cx.lineWidth = 5; cx.stroke();
+        cx.globalAlpha = i ? 0.9 : 0.55; cx.lineWidth = 1.2; cx.stroke();
+      });
+      // the floor
+      const fl = cx.createLinearGradient(0, hz, 0, H);
+      fl.addColorStop(0, '#12052a'); fl.addColorStop(1, '#020108');
+      cx.globalAlpha = 1; cx.fillStyle = fl; cx.fillRect(0, hz, W, H - hz);
+      // the grid: lines to the vanishing point, and cross lines rolling toward you, brighter as they come near
+      const line = (x1, y1, x2, y2, a) => { cx.beginPath(); cx.moveTo(x1, y1); cx.lineTo(x2, y2); cx.globalAlpha = a * 0.18; cx.lineWidth = 5; cx.stroke(); cx.globalAlpha = a; cx.lineWidth = 1.1; cx.stroke(); };
+      cx.strokeStyle = c1;
+      const near = W / 9, n = 14;
+      for (let i = -n; i <= n; i++) line(W / 2 + i * near * 0.06, hz, W / 2 + i * near, H, 0.75);
+      const phase = (t * 0.55) % 1;
+      for (let k = 0; k < 26; k++) {
+        const d = 1 + (k - phase) * 0.9; if (d <= 0.35) continue;
+        const y = hz + (H - hz) * (0.55 / d); if (y > H) continue;
+        line(0, y, W, y, Math.min(0.9, 1.4 / d) * Math.min(1, (y - hz) / 18));
+      }
+      // haze along the horizon
+      const hzGlow = cx.createLinearGradient(0, hz - 40, 0, hz + 60);
+      hzGlow.addColorStop(0, 'rgba(0,0,0,0)'); hzGlow.addColorStop(0.45, c2); hzGlow.addColorStop(1, 'rgba(0,0,0,0)');
+      cx.globalAlpha = 0.32; cx.fillStyle = hzGlow; cx.fillRect(0, hz - 40, W, 100);
+      cx.globalAlpha = 1;
+    }
+    function loop(now) {
+      if (!on) return;
+      raf = requestAnimationFrame(loop);
+      if (document.hidden || now - last < 33) return;
+      last = now; frame(now);
+    }
+    addEventListener('resize', () => { if (on) { size(); frame(performance.now()); } });
+    return (want) => {
+      if (want === on) { if (on && still) frame(performance.now()); return; }       // (a still frame takes a new accent)
+      on = want; cancelAnimationFrame(raf);
+      if (!on) return;
+      size(); frame(performance.now());
+      if (!still) raf = requestAnimationFrame(loop);
+    };
+  })();
+
+  // ---------- the kitty backdrop ----------
+  // Drift's cat (the same drawing as index.html's #coCat, in the theme's accent) sitting in the corner of a cozy dusk, with
+  // paw prints, hearts and sparkles floating up. Built when chosen and emptied when not; everything in it only moves (CSS), and
+  // the pupils follow the mouse. A click makes it hop and send up a heart.
+  const kitty = (() => {
+    const box = document.getElementById('kitty'), layer = document.getElementById('kittycat');
+    let on = false, cat = null, pupils = null, raf = 0, mouse = null;
+    const VB = 'viewBox="150 90 1360 820" preserveAspectRatio="xMidYMid meet"';
+    const BODY = 'M345 355C340 250 380 150 440 125C510 105 590 160 645 225C710 205 790 205 845 225C900 160 980 105 1050 125C1110 150 1145 250 1140 355C1220 430 1260 560 1245 660C1230 760 1170 820 1080 835C900 860 600 860 420 835C320 820 250 740 240 620C235 520 270 420 345 355Z';
+    const TAIL = 'M1150 800C1300 812 1452 730 1456 590C1459 494 1400 440 1335 448C1284 455 1266 502 1284 532C1300 558 1334 582 1327 640C1319 702 1268 742 1196 762Z';
+    const INK = '#1a1230';       // the ink of the outlines, the cat's and the drawing's
+    const PAPER = '#fff1dc';     // the cat's sticker edge, just outside its ink, so the line reads on the dark ground too
+    const PAW = (dx) => `M${408 + dx} 820C${400 + dx} 760 ${450 + dx} 722 ${512 + dx} 722C${576 + dx} 722 ${620 + dx} 762 ${618 + dx} 812C${616 + dx} 850 ${560 + dx} 858 ${510 + dx} 858C${450 + dx} 858 ${412 + dx} 852 ${408 + dx} 820Z`;
+    const PAWSH = (dx) => `M${414 + dx} 826C${470 + dx} 842 ${566 + dx} 840 ${616 + dx} 816C${614 + dx} 850 ${560 + dx} 858 ${510 + dx} 858C${452 + dx} 858 ${416 + dx} 852 ${414 + dx} 826Z`;
+    const DEFS = `<svg width="0" height="0" style="position:absolute"><defs>
+      <radialGradient id="kFur" cx="42%" cy="26%" r="82%"><stop offset="0" style="stop-color:var(--cat-hi)"/><stop offset=".3" style="stop-color:var(--cat-mid)"/><stop offset="1" style="stop-color:var(--cat-mid)"/></radialGradient>
+      <radialGradient id="kPaw" cx="45%" cy="20%" r="85%"><stop offset="0" style="stop-color:var(--cat-hi)"/><stop offset=".5" style="stop-color:var(--cat-mid)"/><stop offset="1" style="stop-color:var(--cat-mid)"/></radialGradient>
+      <linearGradient id="kTail" x1="0" y1="1" x2=".6" y2="0"><stop offset="0" style="stop-color:var(--cat-shade)"/><stop offset=".4" style="stop-color:var(--cat-shade)"/><stop offset=".4" style="stop-color:var(--cat-mid)"/><stop offset="1" style="stop-color:var(--cat-mid)"/></linearGradient>
+      <linearGradient id="kRim" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--cat-rim)"/><stop offset=".6" style="stop-color:var(--cat-hi)" stop-opacity=".6"/><stop offset="1" style="stop-color:var(--cat-mid)" stop-opacity=".3"/></linearGradient>
+      <linearGradient id="kEar" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--cat-dark)"/><stop offset="1" style="stop-color:var(--cat-deep)"/></linearGradient>
+      <radialGradient id="kGround" cx="50%" cy="50%" r="50%"><stop offset="0" style="stop-color:var(--cat-base)" stop-opacity=".55"/><stop offset="1" style="stop-color:var(--cat-base)" stop-opacity="0"/></radialGradient>
+      <mask id="kLit" maskUnits="userSpaceOnUse" x="150" y="90" width="1360" height="820"><rect x="150" y="90" width="1360" height="820" fill="#fff"/><ellipse cx="672" cy="414" rx="584" ry="392" fill="#000"/></mask>
+      <filter id="kLight" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur in="SourceGraphic" stdDeviation="9" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+      <clipPath id="kClip"><path d="${BODY}"/></clipPath>
+      <filter id="kWobble" x="-10%" y="-10%" width="120%" height="120%"><feTurbulence type="fractalNoise" baseFrequency=".03" numOctaves="2" seed="7"/><feDisplacementMap in="SourceGraphic" scale="9"/></filter></defs></svg>`;
+    const CAT = `<div class="cat" title="Meow">
+      <svg class="tail" ${VB}><g fill="none" stroke-linejoin="round" filter="url(#kWobble)"><path d="${TAIL}" stroke="${PAPER}" stroke-width="128"/><path d="${TAIL}" stroke="${INK}" stroke-width="92"/></g><path d="${TAIL}" fill="url(#kTail)" stroke="url(#kRim)" stroke-width="5" stroke-linejoin="round"/></svg>
+      <svg class="bodyl" ${VB}>
+        <ellipse cx="760" cy="868" rx="560" ry="40" fill="url(#kGround)"/>
+        <g style="stroke:var(--cat-hi)" stroke-width="30" stroke-linecap="round" filter="url(#kLight)"><path d="M268 150L306 208"/><path d="M212 218L262 244"/></g>
+        <g filter="url(#kWobble)" fill="none" stroke-linejoin="round" stroke-linecap="round">
+          <g stroke="${PAPER}"><path d="${BODY}" stroke-width="140"/><path d="${PAW(0)}" stroke-width="120"/><path d="${PAW(510)}" stroke-width="120"/></g>
+          <g stroke="${INK}"><path d="${BODY}" stroke-width="104"/><path d="${PAW(0)}" stroke-width="84"/><path d="${PAW(510)}" stroke-width="84"/></g></g>
+        <path d="${BODY}" fill="url(#kFur)" stroke="url(#kRim)" stroke-width="6" stroke-linejoin="round"/>
+        <g clip-path="url(#kClip)">
+          <rect x="150" y="90" width="1360" height="820" style="fill:var(--cat-shade)" mask="url(#kLit)"/>
+          <ellipse cx="560" cy="290" rx="165" ry="54" fill="#fff" opacity=".5" transform="rotate(-16 560 290)"/><circle cx="770" cy="262" r="20" fill="#fff" opacity=".5"/>
+          <path d="${PAW(0)}" style="fill:var(--cat-dark)" opacity=".55" transform="translate(18 -22)"/><path d="${PAW(510)}" style="fill:var(--cat-dark)" opacity=".55" transform="translate(18 -22)"/>
+        </g>
+        <path d="M425 335C425 262 445 205 468 198C508 194 552 224 580 258C524 274 474 300 425 335Z" fill="url(#kEar)"/>
+        <path d="M1059 335C1059 262 1039 205 1016 198C976 194 932 224 904 258C960 274 1010 300 1059 335Z" fill="url(#kEar)"/>
+        <g fill="none" stroke="${INK}" stroke-width="34" stroke-linejoin="round" stroke-linecap="round" filter="url(#kWobble)">
+          <path d="M425 335C425 262 445 205 468 198C508 194 552 224 580 258C524 274 474 300 425 335Z"/><path d="M1059 335C1059 262 1039 205 1016 198C976 194 932 224 904 258C960 274 1010 300 1059 335Z"/></g>
+        <path d="${PAW(0)}" fill="url(#kPaw)" stroke="${INK}" stroke-width="34"/><path d="${PAW(510)}" fill="url(#kPaw)" stroke="${INK}" stroke-width="34"/>
+        <g fill="none" stroke="${INK}" stroke-width="12" stroke-linecap="round" opacity=".7"><path d="M478 790v40M548 790v40M988 790v40M1058 790v40"/></g>
+        <path d="${PAWSH(0)}" style="fill:var(--cat-shade)"/><path d="${PAWSH(510)}" style="fill:var(--cat-shade)"/>
+        <ellipse cx="470" cy="630" rx="58" ry="30" fill="#ff8fb8" opacity=".35"/><ellipse cx="1025" cy="630" rx="58" ry="30" fill="#ff8fb8" opacity=".35"/>
+        <path d="M690 552C690 594 738 596 750 562C762 596 810 594 810 552" fill="none" stroke="#f4fff4" stroke-width="22" stroke-linecap="round" stroke-linejoin="round" filter="url(#kLight)"/>
+      </svg>
+      <div class="eyes">
+        <svg ${VB}><g filter="url(#kLight)" fill="#f4fff4"><circle cx="545" cy="530" r="64"/><circle cx="950" cy="530" r="64"/></g>
+          <g fill="none" stroke="${INK}" stroke-width="30"><circle cx="545" cy="530" r="76"/><circle cx="950" cy="530" r="76"/></g></svg>
+        <svg class="pupils" ${VB}><g fill="#1b1030"><circle cx="545" cy="534" r="32"/><circle cx="950" cy="534" r="32"/></g><g fill="#fff"><circle cx="533" cy="520" r="10"/><circle cx="938" cy="520" r="10"/></g></svg>
+      </div></div>`;
+    const ICONS = {
+      paw: '<svg viewBox="0 0 24 24" fill="currentColor"><ellipse cx="12" cy="16" rx="5" ry="4.2"/><circle cx="6" cy="10" r="2.1"/><circle cx="10" cy="6.5" r="2.1"/><circle cx="14" cy="6.5" r="2.1"/><circle cx="18" cy="10" r="2.1"/></svg>',
+      heart: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 21s-7.5-4.6-9.5-9.2C1 8.4 3.2 4.5 7 4.5c2.1 0 3.6 1.2 5 3 1.4-1.8 2.9-3 5-3 3.8 0 6 3.9 4.5 7.3C19.5 16.4 12 21 12 21z"/></svg>',
+      star: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.2 7.8L22 12l-7.8 2.2L12 22l-2.2-7.8L2 12l7.8-2.2z"/></svg>',
+    };
+    const rnd = (a, b) => a + Math.random() * (b - a);
+    // The illustration: an anime dusk drawn like a sketch. Every outline is ink pushed about by noise (kSketch), so no line is
+    // ruler-straight; clouds are cel-shaded (a shadow tone, then the lit tone shifted up and clipped to the cloud); the hills
+    // carry pencil hatching; a paper grain lies over the lot. One SVG, drawn once: nothing in it moves.
+    function scene() {
+      const cloud = (id, x, y, s, puffs) => {
+        const c = puffs.map(([dx, dy, r]) => `<circle cx="${x + dx * s}" cy="${y + dy * s}" r="${r * s}"/>`).join('');
+        return `<clipPath id="${id}">${c}</clipPath>
+          <g filter="url(#kSketch)"><g fill="none" stroke="${INK}" stroke-width="7">${c}</g></g>
+          <g fill="#8a6bb0">${c}</g>
+          <g clip-path="url(#${id})"><g fill="#f6c3c4" transform="translate(${-14 * s} ${-20 * s})">${c}</g>
+            <g fill="#fff1dc" opacity=".8" transform="translate(${-30 * s} ${-40 * s})">${puffs.slice(0, 3).map(([dx, dy, r]) => `<circle cx="${x + dx * s}" cy="${y + dy * s}" r="${r * s * 0.7}"/>`).join('')}</g>
+            <rect x="${x - 400 * s}" y="${y + 10 * s}" width="${800 * s}" height="${200 * s}" fill="url(#kHatch)" opacity=".5"/></g>`;
+      };
+      const PUFFS = [[-150, 40, 70], [-70, 0, 95], [30, -40, 115], [140, 10, 90], [220, 50, 60], [-40, 60, 80], [90, 70, 75], [-210, 70, 45]];
+      const stars = Array.from({ length: 34 }, () => { const x = rnd(0, 1600), y = rnd(0, 330), r = rnd(2, 5);
+        return `<path d="M${x} ${y - r}L${x + r * 0.3} ${y - r * 0.3}L${x + r} ${y}L${x + r * 0.3} ${y + r * 0.3}L${x} ${y + r}L${x - r * 0.3} ${y + r * 0.3}L${x - r} ${y}L${x - r * 0.3} ${y - r * 0.3}Z" opacity="${rnd(.4, .9).toFixed(2)}"/>`; }).join('');
+      // little houses along the hill: walls, a roof, a lit window or two
+      const town = Array.from({ length: 16 }, (_, i) => {
+        const x = 470 + i * 46 + rnd(-6, 6), base = 712 - Math.sin((i / 15) * Math.PI) * 34, w = rnd(30, 42), hgt = rnd(24, 40);
+        const lit = Math.random() < 0.7 ? `<rect x="${x + w * 0.25}" y="${base - hgt * 0.7}" width="${w * 0.22}" height="${hgt * 0.28}" fill="#ffd27a"/>` : '';
+        const lit2 = Math.random() < 0.4 ? `<rect x="${x + w * 0.6}" y="${base - hgt * 0.7}" width="${w * 0.2}" height="${hgt * 0.28}" fill="#ffc35e"/>` : '';
+        return `<path d="M${x} ${base}V${base - hgt}L${x + w / 2} ${base - hgt - 16}L${x + w} ${base - hgt}V${base}Z" fill="#2e2a5c" stroke="${INK}" stroke-width="3"/>${lit}${lit2}`;
+      }).join('');
+      // telephone poles and the wires slung between them
+      const pole = (x, top) => `<path d="M${x} 905V${top}M${x - 46} ${top + 22}H${x + 46}M${x - 34} ${top + 52}H${x + 34}" stroke="${INK}" stroke-width="11" stroke-linecap="round"/>
+        <path d="M${x - 40} ${top + 22}v-9M${x + 40} ${top + 22}v-9M${x - 28} ${top + 52}v-8M${x + 28} ${top + 52}v-8" stroke="${INK}" stroke-width="6"/>`;
+      const wire = (x1, y1, x2, y2, sag) => `<path d="M${x1} ${y1}Q${(x1 + x2) / 2} ${Math.max(y1, y2) + sag} ${x2} ${y2}" fill="none" stroke="${INK}" stroke-width="3"/>`;
+      return `<svg class="scene" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMax slice" aria-hidden="true">
+        <defs>
+          <linearGradient id="kSky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0f1438"/><stop offset=".38" stop-color="#28286a"/><stop offset=".62" stop-color="#6c4a92"/><stop offset=".8" stop-color="#d9837f"/><stop offset="1" stop-color="#f7c58f"/></linearGradient>
+          <radialGradient id="kDusk" cx="62%" cy="80%" r="45%"><stop offset="0" stop-color="#ffd9a0" stop-opacity=".75"/><stop offset="1" stop-color="#ffd9a0" stop-opacity="0"/></radialGradient>
+          <pattern id="kHatch" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(-35)"><path d="M0 0V10" stroke="${INK}" stroke-width="1.6" opacity=".55"/></pattern>
+          <pattern id="kHatch2" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(28)"><path d="M0 0V14" stroke="${INK}" stroke-width="1.4" opacity=".4"/></pattern>
+          <filter id="kSketch" x="-5%" y="-5%" width="110%" height="110%"><feTurbulence type="fractalNoise" baseFrequency=".022" numOctaves="2" seed="4"/><feDisplacementMap in="SourceGraphic" scale="7"/></filter>
+          <filter id="kPaper" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency=".85" numOctaves="3" seed="2"/><feColorMatrix values="0 0 0 0 .5  0 0 0 0 .45  0 0 0 0 .4  0 0 0 .5 -.12"/></filter>
+          <filter id="kMoonGlow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="22"/></filter>
+        </defs>
+        <rect width="1600" height="900" fill="url(#kSky)"/><rect width="1600" height="900" fill="url(#kDusk)"/>
+        <g fill="#fff4e0">${stars}</g>
+        <circle cx="1330" cy="150" r="80" fill="#ffe9c4" opacity=".35" filter="url(#kMoonGlow)"/>
+        <g filter="url(#kSketch)"><circle cx="1330" cy="150" r="56" fill="#fff1d2" stroke="${INK}" stroke-width="6"/>
+          <path d="M1306 132a10 8 0 1 0 1 0M1348 172a7 6 0 1 0 1 0" fill="none" stroke="#d8b98c" stroke-width="4"/></g>
+        <g filter="url(#kSketch)" fill="none" stroke="#f3c6d6" stroke-width="5" stroke-linecap="round" opacity=".65"><path d="M120 230h260M180 252h300M960 300h220M1010 322h260"/></g>
+        ${cloud('kC1', 330, 420, 1, PUFFS)}
+        ${cloud('kC2', 1240, 500, 0.8, PUFFS.map(([a, b, r]) => [-a, b, r]))}
+        ${cloud('kC3', 820, 250, 0.45, PUFFS)}
+        <g filter="url(#kSketch)" stroke="${INK}" stroke-width="5" stroke-linejoin="round">
+          <path d="M-20 700L120 610L230 650L380 560L520 640L640 590L760 650L900 575L1040 640L1180 560L1320 630L1460 585L1620 650V905H-20Z" fill="#574a8c"/>
+          <path d="M-20 700L120 610L230 650L380 560L520 640L640 590L760 650L900 575L1040 640L1180 560L1320 630L1460 585L1620 650V905H-20Z" fill="url(#kHatch2)" stroke="none"/>
+          <path d="M-20 760Q300 690 620 715T1200 700T1620 735V905H-20Z" fill="#3a3270"/>
+          <path d="M-20 760Q300 690 620 715T1200 700T1620 735V905H-20Z" fill="url(#kHatch)" stroke="none" opacity=".6"/>
+        </g>
+        <g filter="url(#kSketch)">${town}</g>
+        <g filter="url(#kSketch)" stroke="${INK}" stroke-width="6" stroke-linejoin="round">
+          <path d="M-20 830Q400 780 800 805T1620 800V905H-20Z" fill="#221c44"/>
+          <path d="M-20 830Q400 780 800 805T1620 800V905H-20Z" fill="url(#kHatch)" stroke="none"/>
+        </g>
+        <g filter="url(#kSketch)">
+          ${pole(170, 470)}${pole(1440, 420)}
+          ${wire(-40, 480, 124, 492, 18)}${wire(-40, 512, 136, 522, 16)}${wire(216, 492, 1394, 442, 150)}${wire(204, 522, 1406, 472, 160)}${wire(1486, 442, 1660, 430, 18)}
+          <path d="M600 360q12-12 24 0q12-12 24 0M680 330q9-9 18 0q9-9 18 0M560 400q8-8 16 0q8-8 16 0" fill="none" stroke="${INK}" stroke-width="4" stroke-linecap="round"/>
+        </g>
+        <rect width="1600" height="900" filter="url(#kPaper)" style="mix-blend-mode:multiply"/>
+      </svg>`;
+    }
+    function build() {
+      const kinds = ['paw', 'paw', 'heart', 'heart', 'star'], tints = ['var(--hi)', 'var(--accent)', '#ff8fb8', '#ffd6e8'];
+      const floats = Array.from({ length: 16 }, () => { const k = kinds[Math.floor(rnd(0, kinds.length))], s = rnd(12, 26), dur = rnd(18, 34);
+        return `<span class="floaty" style="left:${rnd(2, 96)}%;width:${s}px;height:${s}px;color:${tints[Math.floor(rnd(0, tints.length))]};--o:${rnd(.25, .6).toFixed(2)};animation-duration:${dur}s;animation-delay:${-rnd(0, dur)}s">${ICONS[k]}</span>`; }).join('');
+      box.innerHTML = scene() + floats;
+      layer.innerHTML = DEFS + CAT;
+      cat = layer.querySelector('.cat'); pupils = layer.querySelector('.pupils');
+      cat.addEventListener('click', (e) => {
+        e.stopPropagation();
+        cat.classList.remove('hop'); void cat.offsetWidth; cat.classList.add('hop');
+        const r = cat.getBoundingClientRect(), p = document.createElement('span');
+        p.className = 'pop'; p.style.cssText = `left:${r.left + r.width * rnd(.4, .6)}px;top:${r.top + r.height * .1}px;color:#ff8fb8`; p.innerHTML = ICONS.heart;
+        layer.append(p); setTimeout(() => p.remove(), 1500);
+      });
+    }
+    // the pupils look toward the mouse: at most 16 units of the drawing (the whites are 64 across, the pupils 32)
+    function look() {
+      raf = 0;
+      if (!on || !mouse || !pupils) return;
+      const r = cat.getBoundingClientRect(), ex = r.left + r.width * 0.55, ey = r.top + r.height * 0.537;
+      const dx = mouse.x - ex, dy = mouse.y - ey, d = Math.hypot(dx, dy) || 1, k = Math.min(1, d / 300) * 16 * (r.width / 1360);
+      pupils.style.transform = `translate(${(dx / d) * k}px, ${(dy / d) * k}px)`;
+    }
+    addEventListener('pointermove', (e) => { if (!on) return; mouse = { x: e.clientX, y: e.clientY }; if (!raf) raf = requestAnimationFrame(look); }, { passive: true });
+    return (want) => {
+      if (want === on) return;
+      on = want;
+      if (on) build(); else { box.innerHTML = ''; layer.innerHTML = ''; cat = pupils = null; }
+    };
+  })();
+
+  // ---------- clock ----------
+  function tick() {
+    const d = new Date(), hr = d.getHours();
+    const t = d.toLocaleTimeString([], { hour: S.clock24 ? '2-digit' : 'numeric', minute: '2-digit', second: S.seconds ? '2-digit' : undefined, hour12: !S.clock24 });
+    const m = t.match(/^(.*?)\s*([AP]\.?M\.?)$/i);
+    const c = $('#clock'); c.textContent = m ? m[1] : t; if (m) c.append(h('small', {}, m[2]));
+    const part = hr < 5 ? 'Still up' : hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : hr < 22 ? 'Good evening' : 'Winding down';
+    const hel = $('#hello');
+    if (MODE.hub) { hel.textContent = 'Welcome to '; hel.append(S.name ? h('b', {}, `${S.name}’s`) : 'the', ' hub.'); }       // (guests read it: not "Good evening, <host>")
+    else { hel.textContent = S.name ? `${part}, ` : part + '.'; if (S.name) { hel.append(h('b', {}, S.name)); hel.append('.'); } }
+    $('#date').textContent = d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+  }
+  setInterval(tick, 1000);
+
+  // ---------- search ----------
+  $('#search').addEventListener('submit', (e) => {
+    const q = $('#q').value.trim();
+    if (!q) { e.preventDefault(); return; }
+    // an address goes straight through; anything else goes to the chosen engine (drift://home/go decides what counts as an address)
+    const looksLike = /^[a-z][a-z0-9+.-]*:\/\//i.test(q) || /^[^\s/]+\.[^\s/.]{2,}(\/\S*)?$/.test(q) || /^localhost(:\d+)?/i.test(q);
+    if (!looksLike && S.engine !== 'google') { e.preventDefault(); location.href = ENGINES[S.engine][1] + encodeURIComponent(q); }
+  });
+  $('#engine').addEventListener('change', (e) => { S.engine = e.target.value; save(false); $('#q').focus(); });
+
+  // ---------- widgets ----------
+  const card = (id, title, sub) => {
+    const w = (S.widgets.find((x) => x.id === id) || {}).size || 'm';
+    return h('section', { class: 'w', 'data-id': id, 'data-size': w }, h('h3', {}, h('span', { class: 'dot' }), title, sub ? h('span', { class: 'sub' }, sub) : null));
+  };
+  const skel = (n = 3) => Array.from({ length: n }, (_, i) => h('div', { class: 'skel', style: `width:${90 - i * 14}%` }));
+  const fail = (el, msg) => { el.querySelectorAll('.skel').forEach((s) => s.remove()); el.append(h('div', { class: 'empty' }, msg)); };
+  // on the hub, only for the host: the click that got here is the last one the page had, so it says whose it was
+  const openPanel = async () => {
+    if (MODE.hub) {
+      try { MODE = await call('mode').then((r) => r.json()); } catch {}
+      if (!MODE.canEdit) { toast(`Only ${owner() === 'The host' ? 'the host' : owner()} can customize this page.`); return; }
+    }
+    document.body.classList.add('custom'); panel();
+  };
+  const setupLink = (txt) => h('div', { class: 'empty' }, txt, ' ', h('button', { onclick: openPanel }, 'Set it up'));
+
+  const RENDER = {
+    links() {
+      const c = card('links', 'Shortcuts', `${S.links.length}`);
+      if (!S.links.length) { c.append(setupLink('No shortcuts yet.')); return c; }
+      const g = h('nav', { class: 'links' });
+      for (const [name, url] of S.links) {
+        if (!url) continue;
+        const ic = h('div', { class: 'ico' }, (name || '?')[0].toUpperCase());
+        const hst = host(url);
+        if (hst) {
+          const img = h('img', { alt: '', src: `https://www.google.com/s2/favicons?domain=${encodeURIComponent(hst)}&sz=64` });
+          img.addEventListener('load', () => { if (img.naturalWidth > 16) { ic.textContent = ''; ic.append(img); } });
+        }
+        g.append(h('a', { class: 'link', href: url, title: url }, ic, h('span', {}, name)));
+      }
+      c.append(g); return c;
+    },
+    markets() {
+      const c = card('markets', 'Markets', 'Today');
+      if (!S.symbols.length) { c.append(setupLink('No symbols on your watchlist.')); return c; }
+      const list = h('div', {}, skel(4)); c.append(list);
+      api('quotes?s=' + encodeURIComponent(S.symbols.join(','))).then((qs) => {
+        list.innerHTML = '';
+        for (const q of qs) {
+          if (q.error || q.price == null) { list.append(h('div', { class: 'tick' }, h('div', {}, h('div', { class: 'sym' }, q.sym), h('div', { class: 'nm' }, 'Not found')), h('div'), h('div'))); continue; }
+          const up = q.change >= 0, cls = up ? 'up' : 'down';
+          const label = q.sym === '^GSPC' ? 'S&P 500' : q.sym === '^IXIC' ? 'Nasdaq' : q.sym === '^DJI' ? 'Dow Jones' : q.sym;
+          list.append(h('a', { class: 'tick', href: `https://finance.yahoo.com/quote/${encodeURIComponent(q.sym)}`, title: `Day range ${fmt(q.lo)} – ${fmt(q.hi)}` },
+            h('div', {}, h('div', { class: 'sym' }, label), h('div', { class: 'nm' }, q.name === label ? q.sym : q.name)),
+            spark(q.spark, up),
+            h('div', { class: 'px num' }, h('b', {}, fmt(q.price, q.price > 1000 ? 0 : 2)), h('span', { class: `pill ${cls}` }, `${up ? '+' : ''}${fmt(q.pct)}%`))));
+        }
+        c.querySelector('.sub').textContent = 'Updated ' + new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      }).catch(() => fail(list, 'Couldn’t reach the market data. Try Refresh.'));
+      return c;
+    },
+    weather() {
+      const c = card('weather', 'Weather', S.city || '');
+      if (!S.city) { c.append(setupLink('Add your city to see the forecast.')); return c; }
+      const b = h('div', {}, skel(3)); c.append(b);
+      api(`weather?q=${encodeURIComponent(S.city)}&unit=${S.unit}`).then((w) => {
+        b.innerHTML = '';
+        const [ic, label] = WX(w.now.code, w.now.day);
+        c.querySelector('.sub').textContent = w.place;
+        b.append(h('div', { class: 'wx-now' }, h('div', { class: 'icon' }, ic), h('div', { class: 'big num' }, `${Math.round(w.now.t)}°`),
+          h('div', { class: 'what' }, h('b', {}, label), h('br'), `Feels ${Math.round(w.now.feels)}° · ${w.now.hum}% humidity`, h('br'), `Wind ${Math.round(w.now.wind)} ${w.wunit}`)));
+        b.append(h('div', { class: 'wx-days' }, w.days.map((d, i) => h('div', { title: d.rain != null ? `${d.rain}% chance of rain` : '' },
+          h('span', {}, i ? new Date(d.d + 'T12:00').toLocaleDateString([], { weekday: 'short' }) : 'Today'), h('i', {}, WX(d.code)[0]),
+          h('b', { class: 'num' }, `${Math.round(d.hi)}°`), ' ', h('em', { class: 'num' }, `${Math.round(d.lo)}°`)))));
+      }).catch((e) => fail(b, e.message === 'place' ? `Couldn’t find “${S.city}”.` : 'Couldn’t reach the weather service.'));
+      return c;
+    },
+    browsing() {
+      const c = card('browsing', MODE.hub ? `${owner()}’s browsing` : 'Your browsing', 'Last 7 days');
+      const b = h('div', { style: 'display:flex;flex-direction:column;gap:14px' }, skel(3)); c.append(b);
+      stats().then(({ browsing: s }) => {
+        b.innerHTML = '';
+        if (!s) { b.append(h('div', { class: 'empty' }, 'Hidden by the host.')); return; }
+        b.append(h('div', { class: 'kpis' },
+          h('div', { class: 'kpi' }, h('b', {}, dur(s.today.secs)), h('span', {}, 'Time today')),
+          h('div', { class: 'kpi' }, h('b', {}, String(s.today.visits)), h('span', {}, 'Pages today')),
+          MODE.hub ? h('div', { class: 'kpi' }, h('b', {}, String(s.today.sites)), h('span', {}, 'Sites today'))       // (their own tabs are put away while they host)
+            : h('div', { class: 'kpi' }, h('b', {}, String(s.tabs)), h('span', {}, 'Tabs open'))));
+        const max = Math.max(60, ...s.days.map((d) => d.secs));
+        b.append(h('div', { class: 'bars' }, s.days.map((d, i) => h('div', { class: 'bar' + (i === 6 ? ' now' : ''), title: `${dur(d.secs)} · ${d.visits} pages` },
+          h('i', { style: `height:${Math.max(3, (d.secs / max) * 58)}px` }), h('span', {}, new Date(d.d + 'T12:00').toLocaleDateString([], { weekday: 'narrow' }))))));
+        if (s.top.length) {
+          // ranked by time; by visits while no time has been counted yet
+          const byTime = s.top.some((t) => t.secs >= 60), val = (t) => (byTime ? t.secs : t.visits), tmax = Math.max(1, ...s.top.map(val));
+          b.append(h('div', { class: 'tops' }, s.top.map((t) => h('a', { class: 'top', href: 'https://' + t.site, title: `${dur(t.secs)} · ${t.visits} visits` },
+            h('span', { class: 's' }, t.site), h('span', { class: 't' }, h('i', { style: `width:${Math.max(4, (val(t) / tmax) * 100)}%` })), h('span', { class: 'v num' }, byTime ? dur(t.secs) : `${t.visits}×`)))));
+        } else b.append(h('div', { class: 'empty' }, 'Your most-visited sites will show here as you browse.'));
+      }).catch(() => fail(b, 'Stats aren’t available.'));
+      return c;
+    },
+    system() {
+      const c = card('system', MODE.hub ? `${owner()}’s rig` : 'This PC', 'Live');
+      const b = h('div', { style: 'display:flex;flex-direction:column;gap:12px' }, skel(3)); c.append(b);
+      // the spec sheet is drawn once; the meters below it every few seconds
+      let sheet = null, meters = null;
+      const draw = () => stats(true).then(({ system: s }) => {
+        if (!s) { b.innerHTML = ''; b.append(h('div', { class: 'empty' }, 'Hidden by the host.')); sheet = null; return; }
+        if (!sheet) {
+          b.innerHTML = '';
+          const disp = s.displays.map((d) => `${d.w}×${d.h}${d.hz ? ` @ ${d.hz} Hz` : ''}`);
+          const rows = [['CPU', `${s.cpuName} (${s.cores} threads)`], ['Graphics', s.gpu], ['Memory', bytes(s.mem.total)], ['System', `${s.os} · ${s.arch}`],
+            [disp.length > 1 ? `${disp.length} displays` : 'Display', disp.join(', ')], ['Drift', `v${s.drift}`]].filter((r) => r[1]);
+          sheet = h('dl', { class: 'specs' }, rows.flatMap(([k, v]) => [h('dt', {}, k), h('dd', { title: v }, v)]));
+          meters = h('div', { style: 'display:flex;flex-direction:column;gap:8px' });
+          b.append(sheet, meters);
+        }
+        const used = s.mem.total - s.mem.free, mp = Math.round((used / s.mem.total) * 100), cpu = s.cpu == null ? 0 : s.cpu;
+        const lvl = (p) => p > 85 ? 'hot' : p > 65 ? 'warn' : '';
+        meters.innerHTML = '';
+        meters.append(
+          h('div', { class: 'meter' }, h('span', {}, 'CPU'), h('span', { class: 't' }, h('i', { class: lvl(cpu), style: `width:${cpu}%` })), h('span', { class: 'v num' }, s.cpu == null ? '–' : `${cpu}%`)),
+          h('div', { class: 'meter' }, h('span', {}, 'Memory'), h('span', { class: 't' }, h('i', { class: lvl(mp), style: `width:${mp}%` })), h('span', { class: 'v num' }, `${mp}%`)),
+          h('div', { class: 'sysline' }, `Up ${dur(s.uptime)} · Drift open ${dur(s.appUptime)}`));
+      }).catch(() => { if (!sheet) fail(b, 'Stats aren’t available.'); });
+      draw(); c._live = setInterval(() => { if (!document.hidden && c.isConnected) draw(); else if (!c.isConnected) clearInterval(c._live); }, 4000);
+      return c;
+    },
+    news() {
+      const c = card('news', 'Headlines', 'Hacker News');
+      const b = h('div', { class: 'news' }, skel(5)); c.append(b);
+      api('news').then((items) => {
+        b.innerHTML = '';
+        items.slice(0, 7).forEach((s, i) => b.append(h('a', { class: 'story', href: s.url },
+          h('span', { class: 'n' }, String(i + 1)), h('div', {}, h('b', {}, s.title), h('span', {}, [s.site, `${s.score} points`, `${s.n} comments`].filter(Boolean).join(' · '))))));
+      }).catch(() => fail(b, 'Couldn’t load the headlines.'));
+      return c;
+    },
+    notes() {
+      // on the hub, a note from the host to everyone (written in Customize); nobody types into it here
+      if (MODE.hub) { const c = card('notes', `From ${owner()}`); c.append(h('div', { class: 'shout' }, S.notes)); return c; }
+      const c = card('notes', 'Notes', 'Saved as you type');
+      const t = h('textarea', { class: 'notes', placeholder: 'Jot something down…', spellcheck: 'false' }); t.value = S.notes || '';
+      t.addEventListener('input', () => { S.notes = t.value.slice(0, 20000); save(false); });
+      c.append(t); return c;
+    },
+  };
+  let statsP = null, statsAt = 0;
+  function stats(fresh) { if (fresh || !statsP || Date.now() - statsAt > 3000) { statsP = api('stats'); statsAt = Date.now(); } return statsP; }
+
+  // what may be on the page: on the hub, the host's specs and browsing only if they allow it, and their note only if they wrote one
+  const shown = (id) => !MODE.hub || (id === 'system' ? MODE.specs : id === 'browsing' ? MODE.browsing : id === 'notes' ? !!(S.notes || '').trim() : true);
+  function render() {
+    const g = $('#grid');
+    g.querySelectorAll('.w').forEach((w) => w._live && clearInterval(w._live));
+    g.innerHTML = '';
+    for (const w of S.widgets) if (w.on && RENDER[w.id] && shown(w.id)) g.append(RENDER[w.id]());
+    if (!g.children.length) g.append(h('div', { class: 'w', 'data-size': 'xl' }, setupLink('Everything’s hidden.')));
+    if (document.body.classList.contains('custom')) panel();
+  }
+
+  // ---------- customize ----------
+  const seg = (opts, val, set) => h('div', { class: 'seg' }, opts.map(([v, l]) => h('button', { class: v === val ? 'on' : '', onclick: () => set(v) }, l)));
+  const row = (label, ctl) => h('div', { class: 'row' }, h('label', {}, label), ctl);
+  const toggle = (key) => { const i = h('input', { type: 'checkbox' }); i.checked = !!S[key]; i.addEventListener('change', () => { S[key] = i.checked; save(); }); return i; };
+  const text = (key, ph, then) => { const i = h('input', { class: 'field', placeholder: ph, spellcheck: 'false' }); i.value = S[key] || ''; i.addEventListener('change', () => { S[key] = i.value.trim(); then && then(); save(); }); return i; };
+
+  function panel() {
+    const p = $('#panel'), scroll = p.scrollTop; p.innerHTML = '';
+    // widgets: on/off, size, order (drag, or the arrows)
+    const wl = h('div', { class: 'wl' });
+    S.widgets.forEach((w, i) => {
+      const cb = h('input', { type: 'checkbox' }); cb.checked = w.on; cb.addEventListener('change', () => { w.on = cb.checked; save(); });
+      const move = (d) => { const j = i + d; if (j < 0 || j >= S.widgets.length) return; [S.widgets[i], S.widgets[j]] = [S.widgets[j], S.widgets[i]]; save(); };
+      const it = h('div', { class: 'item', draggable: 'true' }, h('span', { class: 'grip' }, '⠿'), h('label', {}, cb, (MODE.hub && { system: 'My specs', browsing: 'My browsing', notes: 'Note for guests' }[w.id]) || WIDGETS[w.id].name),
+        seg([['s', 'S'], ['m', 'M'], ['l', 'L'], ['xl', 'Full']], w.size, (v) => { w.size = v; save(); }),
+        h('button', { class: 'ibtn', title: 'Up', onclick: () => move(-1) }, icon(I.up)), h('button', { class: 'ibtn', title: 'Down', onclick: () => move(1) }, icon(I.down)));
+      it.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', String(i)); it.classList.add('drag'); });
+      it.addEventListener('dragend', () => it.classList.remove('drag'));
+      it.addEventListener('dragover', (e) => { e.preventDefault(); it.classList.add('over'); });
+      it.addEventListener('dragleave', () => it.classList.remove('over'));
+      it.addEventListener('drop', (e) => { e.preventDefault(); const from = +e.dataTransfer.getData('text/plain'); if (isNaN(from) || from === i) return; const [m] = S.widgets.splice(from, 1); S.widgets.splice(i, 0, m); save(); });
+      wl.append(it);
+    });
+    p.append(h('section', {}, h('h4', {}, 'Widgets'), wl, h('div', { class: 'note' }, 'Drag to reorder. S, M, L and Full set how wide each one is.')));
+
+    // look
+    p.append(h('section', {}, h('h4', {}, 'Look'),
+      row('Accent', h('div', { class: 'swatches' }, ACCENTS.map(([a, b], i) => h('button', { class: i === S.accent ? 'on' : '', style: `--c:linear-gradient(135deg,${a},${b})`, title: a, onclick: () => { S.accent = i; save(); } })))),
+      row('Background', seg([['neon', 'Neon'], ['kitty', 'Kitty'], ['aurora', 'Aurora'], ['grid', 'Grid'], ['solid', 'Plain'], ['photo', 'Photo']], S.bg, (v) => { S.bg = v; save(); })),
+      S.bg === 'photo' ? h('div', { style: 'margin:6px 0 4px' }, text('photo', 'https://… image address')) : null,
+      row('Density', seg([['cozy', 'Cozy'], ['compact', 'Compact']], S.density, (v) => { S.density = v; save(); }))));
+
+    // greeting and clock
+    p.append(h('section', {}, h('h4', {}, 'Clock & greeting'),
+      row('Show the clock', toggle('clock')), row('24-hour', toggle('clock24')), row('Seconds', toggle('seconds')), row('Greeting', toggle('greeting')),
+      h('div', { style: 'margin-top:6px' }, text('name', MODE.hub ? 'Your name (guests see “Welcome to …’s hub”)' : 'Your name (for the greeting)'))));
+    if (MODE.hub) {
+      // the host's note to everyone, and where the stats are switched on
+      const t = h('textarea', { class: 'notes', placeholder: 'Say hi, pin tonight’s plan, show off your setup…', spellcheck: 'false', style: 'width:100%;min-height:90px' }); t.value = S.notes || '';
+      t.addEventListener('change', () => { S.notes = t.value.slice(0, 2000); save(); });
+      p.append(h('section', {}, h('h4', {}, 'A note for guests'), t,
+        h('div', { class: 'note' }, 'Your specs and browsing show here when you turn them on in Drift’s Settings, under Your hub’s Surf stream.',
+          ` Now: specs ${MODE.specs ? 'shown' : 'hidden'}, browsing ${MODE.browsing ? 'shown' : 'hidden'}.`)));
+    }
+
+    // markets
+    const syms = h('input', { class: 'field', spellcheck: 'false', placeholder: 'AAPL, NVDA, ^GSPC, BTC-USD' }); syms.value = S.symbols.join(', ');
+    syms.addEventListener('change', () => { S.symbols = syms.value.split(/[\s,]+/).map((x) => x.trim().toUpperCase()).filter(Boolean).slice(0, 12); save(); });
+    p.append(h('section', {}, h('h4', {}, 'Markets'), syms, h('div', { class: 'note' }, 'Up to 12 Yahoo Finance symbols: stocks, ETFs, indexes (^GSPC, ^DJI), crypto (ETH-USD), currencies (EURUSD=X).')));
+
+    // weather
+    p.append(h('section', {}, h('h4', {}, 'Weather'), text('city', 'City, e.g. Toronto'),
+      h('div', { style: 'margin-top:6px' }, row('Units', seg([['c', '°C'], ['f', '°F']], S.unit, (v) => { S.unit = v; save(); })))));
+
+    // shortcuts
+    const lw = h('div');
+    S.links.forEach((l, i) => {
+      const n = h('input', { class: 'field', placeholder: 'Name' }); n.value = l[0];
+      const u = h('input', { class: 'field', placeholder: 'https://…', spellcheck: 'false' }); u.value = l[1];
+      const upd = () => { let url = u.value.trim(); if (url && !/^[a-z]+:\/\//i.test(url)) url = 'https://' + url; S.links[i] = [n.value.trim() || host(url) || 'Link', url]; save(); };
+      n.addEventListener('change', upd); u.addEventListener('change', upd);
+      lw.append(h('div', { class: 'linkrow' }, n, u, h('button', { class: 'ibtn', title: 'Remove', onclick: () => { S.links.splice(i, 1); save(); } }, icon(I.x))));
+    });
+    p.append(h('section', {}, h('h4', {}, 'Shortcuts'), lw, S.links.length < 24 ? h('button', { class: 'add', onclick: () => { S.links.push(['', '']); save(); const f = $('#panel .linkrow:last-of-type input'); f && f.focus(); } }, '+ Add a shortcut') : null));
+
+    p.append(h('section', { style: 'border:0' }, h('button', { class: 'add danger', onclick: () => { if (confirm('Put the start page back the way it was?')) { S = merge(null); save(); } } }, 'Reset to defaults')));
+    p.scrollTop = scroll;
+  }
+  const close = () => document.body.classList.remove('custom');
+  $('#customize').addEventListener('click', () => (document.body.classList.contains('custom') ? close() : openPanel()));
+  $('#close').addEventListener('click', close); $('#scrim').addEventListener('click', close);
+  addEventListener('keydown', (e) => { if (e.key === 'Escape' && document.body.classList.contains('custom')) { e.stopPropagation(); close(); } });
+  $('#refresh').addEventListener('click', () => { statsP = null; render(); });
+
+  // ---------- go ----------
+  applyLook(); render();
+  // the saved layout (kept by Drift, so it survives clearing the browser's data) wins over this browser's copy; on the hub, the
+  // host's changes and what they let guests see are picked up every few seconds
+  reload().then(() => { if (MODE.hub) setInterval(() => { if (!document.hidden) reload(); }, 8000); });
   // the page opens with the keys in the search box
-  addEventListener('focus', () => document.getElementById('q').focus());
+  addEventListener('focus', () => { if (!document.body.classList.contains('custom')) $('#q').focus(); });
+  // the data stays fresh in a tab left open
+  setInterval(() => { if (!document.hidden && !document.body.classList.contains('custom') && !(document.activeElement && document.activeElement.matches('textarea'))) { statsP = null; render(); } }, 5 * 60000);
+})();
 </script>
 </body>
 </html>

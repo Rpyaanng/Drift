@@ -20,7 +20,7 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-features', 'HardwareMediaKeyHandling,WebRtcHideLocalIpsWithMdns');   // media keys must reach Spotify, not Drift; a shared web page's stream is offered on this PC's real local address
 app.commandLine.appendSwitch('disable-background-timer-throttling');
-protocol.registerSchemesAsPrivileged([{ scheme: 'drift', privileges: { standard: true, secure: true } }]);       // drift://home/, the Surf tab's own start page: see web.js
+protocol.registerSchemesAsPrivileged([{ scheme: 'drift', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);       // drift://home/, the Surf tab's own start page: see web.js
 // Surf's extensions (surf-net, uBlock Origin) are Manifest V2 on purpose: they need blocking webRequest, which V3 lacks.
 // Electron warns about that every time one loads, and the warning's link gets printed (and, from some terminals, opened in
 // the PC's browser). That warning alone is dropped; any other warning loading an extension still shows.
@@ -93,7 +93,7 @@ const DEFAULTS = {
   gif: { key: '' },
   // the Surf stream of the hub this PC hosts (docs/plans/streams.md): its tabs (kept with the hub they belong to), whether every
   // download on it is refused, the local addresses it may open (surf-lan.js), and whether the host was told pages load from their connection
-  hubSurf: { hub: '', urls: [], active: 0, noDownloads: false, allowLan: [], told: false },
+  hubSurf: { hub: '', urls: [], active: 0, noDownloads: false, allowLan: [], told: false, showSpecs: false, showBrowsing: false },
   // subtitles: on = show them when a video has some; perFile remembers the track and timing chosen for each video
   subs: { on: true, lang: 'en', size: 1, color: '#ffffff', bg: 'outline', lift: 0, perFile: {} },
   prevScene: 'aurora',
@@ -197,7 +197,7 @@ const cleanMixer = (q) => ({ master: unitVol(q.master, 1), mute: !!q.mute, surf:
 // What the mixer makes of Drift's own sound (master) and of the Surf pages' (surf)
 const mixGain = () => { const x = state.mixer, m = x.mute ? 0 : x.master; return { master: m, surf: x.surfMute ? 0 : m * x.surf }; };
 const cleanHubSurf = (q) => ({ hub: /^[A-Za-z0-9_-]{20,64}$/.test(String(q.hub || '')) ? String(q.hub) : '', urls: (Array.isArray(q.urls) ? q.urls : []).map(String).filter((u) => /^(https?:\/\/|drift:\/\/home\/)/i.test(u)).slice(0, 12),
-  active: Math.max(0, q.active | 0), noDownloads: !!q.noDownloads, told: !!q.told,
+  active: Math.max(0, q.active | 0), noDownloads: !!q.noDownloads, told: !!q.told, showSpecs: !!q.showSpecs, showBrowsing: !!q.showBrowsing,
   allowLan: (Array.isArray(q.allowLan) ? q.allowLan : String(q.allowLan || '').split(/[\s,]+/)).map((x) => String(x).trim().toLowerCase()).filter((x) => /^[a-z0-9.:[\]-]{1,80}$/.test(x)).slice(0, 20) });
 const cleanBroadcast = (q) => ({ quality: ['auto', 'detail', 'motion'].includes(q.quality) ? q.quality : 'auto', pointers: q.pointers !== false, sound: !!q.sound });
 function dropVideoScene() {
@@ -753,7 +753,7 @@ function publicState() {
     p2p: { ...p2p.info(), ctrl: !remote || !!remote.ctrl, own: !!(c && c.remote && c.path), viaHost: viaHost(), quality: shareQuality(), waitingFor: heldFor || [], defaultName: shareName(true), file: remote ? remote.file || '' : '', music: remote ? remote.music : null, chatHub: sessionHub(), lan: createP2P.localAddrs().find((a) => a.includes('.')) || '' },       // music: a friend's, playing here in place of ours; chatHub: the hub this session is in; lan: this PC's address on its network (Help)
     update: updater ? updater.info() : null,
     // this PC's own browser, or a hub's Surf stream (here on the hub's host; a picture from the host's PC elsewhere)
-    web: surfView(), bcView: bcViewInfo(), hosting: !!(chat && chat.hostedHub()), hubHeld: heldView(), hubSurf: { noDownloads: state.hubSurf.noDownloads, allowLan: state.hubSurf.allowLan.join(', ') } };
+    web: surfView(), bcView: bcViewInfo(), hosting: !!(chat && chat.hostedHub()), hubHeld: heldView(), hubSurf: { noDownloads: state.hubSurf.noDownloads, allowLan: state.hubSurf.allowLan.join(', '), showSpecs: state.hubSurf.showSpecs, showBrowsing: state.hubSurf.showBrowsing } };
 }
 function broadcast(channel, payload, includeAudio = true) {
   for (const v of visWins) if (!v.win.isDestroyed()) v.win.webContents.send(channel, payload);
@@ -1039,6 +1039,9 @@ function hubBrowser() {
       held: hubHeld,
       holdDir: () => path.join(app.getPath('userData'), 'hub-downloads'),
       allowLan: () => state.hubSurf.allowLan,
+      showcase: () => ({ specs: state.hubSurf.showSpecs, browsing: state.hubSurf.showBrowsing }),       // the host's choice, in Settings
+      owner: () => web.home,
+      cursor: ssCursor,
       note: (what) => { if (what === 'password' && !hubPwTold) { hubPwTold = true; const t = 'Everyone in the hub can use what you sign in to here.'; if (surfMode() === 'hub') say(t); ssNote(t); } },
     }, { partition: `persist:hub-${id}`, headless: true });
   }
@@ -1127,6 +1130,15 @@ function ssState() {       // what the watchers' Surf bar shows
   const i = hubWeb.info();
   toSs({ t: 'send', m: { t: 'state', url: i.url, title: i.title, tabs: i.tabs, active: i.active, back: i.back, fwd: i.fwd } });
 }
+// The pointer the hub's page asks for (a hand over a link, a bar over text) belongs to whoever has its hover (web.js takeHover):
+// it goes to that watcher alone, and the one who had it before gets the plain arrow back.
+let ssCur = { who: '', c: '' };
+function ssCursor(who, c) {
+  if (who === ssCur.who && c === ssCur.c) return;
+  if (ssCur.who && ssCur.who !== who) toSs({ t: 'send', to: ssCur.who, m: { t: 'cur', c: 'default' } });
+  if (who) toSs({ t: 'send', to: who, m: { t: 'cur', c } });
+  ssCur = { who, c };
+}
 function ssNote(text) { if (text) toSs({ t: 'send', m: { t: 'note', text: String(text).slice(0, 200) } }); }
 // What a watcher sends over their data channel. The channel is end to end, so the hub can't check any of it: it's checked here.
 const SS_RATE = { in: 150, bar: 8, ptr: 30, hello: 2 };       // the most of each a second, per watcher (mouse moves come at most once a frame)
@@ -1167,7 +1179,7 @@ async function onSsEvent(hub, m) {
       else chatLog('surf stream: no relay for a watcher' + (r.error ? ': ' + r.error : ''));
       break;
     }
-    case 'ss-viewer-left': toSs({ t: 'left', id: m.id }); ptrSet(m.id, '', null); setTimeout(ssWinSync, 0); break;
+    case 'ss-viewer-left': toSs({ t: 'left', id: m.id }); ptrSet(m.id, '', null); if (ssCur.who === m.id) ssCur = { who: '', c: '' }; setTimeout(ssWinSync, 0); break;
     // (hosting, these are for the stream window; watching another hub's, for the screen window that shows it)
     case 'ss-sdp':
       if (hub !== chat.hostedHub()) { if (ssW && m.from === ssW.host) toScreen({ type: 'ss-rtc', d: { type: 'offer', sdp: m.sdp.sdp, iceServers: ssW.ice, policy: ssW.policy } }); }
@@ -1216,8 +1228,12 @@ function onSsDc(m) {       // from the host, over the data channel (the screen w
   } else if (m.t === 'ptrs') {
     const blocked = new Set(chat.info().blocked), me = chat.myId();
     ptrShow(screenFor(surfKey), ptrClean(m.list).filter((q) => q.id !== me && !blocked.has(q.id)));       // (blocking someone hides their pointer: their input still reaches the page)
+  } else if (m.t === 'cur') {       // the pointer the page asks for, while the hover is ours (web.js takeHover)
+    const c = String(m.c || '');
+    if (/^[a-z-]{1,24}$/.test(c)) { ssCurSeen.add(c); toScreen({ type: 'web-cursor', c }); }
   } else if (m.t === 'note') say(String(m.text || '').slice(0, 200));
 }
+const ssCurSeen = new Set();       // (the pointers the host has sent: tests read it)
 function surfView() {
   const m = surfMode(), h = surfHub();
   const hubBits = h ? { hub: true, hubId: h.id, hubName: h.name || 'Hub', mine: m === 'hub' } : {};
@@ -2414,7 +2430,8 @@ function patch(p) {
       if (state.broadcast.pointers !== was.pointers) { bcOvSync(); bcPush(); }
       if (state.broadcast.sound !== was.sound && bcWin) { bcSoundFail = ''; chat.bcUpdate({ audio: bcSoundWanted() }); bcSoundSync(); bcPush(); }
     }
-    else if (k === 'hubSurf') { const q = p.hubSurf || {}; state.hubSurf = cleanHubSurf({ ...state.hubSurf, ...(q.noDownloads !== undefined ? { noDownloads: q.noDownloads } : {}), ...(q.allowLan !== undefined ? { allowLan: q.allowLan } : {}) }); }       // (only these two are the panel's to set)
+    else if (k === 'hubSurf') { const q = p.hubSurf || {}; state.hubSurf = cleanHubSurf({ ...state.hubSurf, ...(q.noDownloads !== undefined ? { noDownloads: q.noDownloads } : {}), ...(q.allowLan !== undefined ? { allowLan: q.allowLan } : {}),
+      ...(q.showSpecs !== undefined ? { showSpecs: q.showSpecs } : {}), ...(q.showBrowsing !== undefined ? { showBrowsing: q.showBrowsing } : {}) }); }       // (only these four are the panel's to set)
     else if (k === 'gif') state.gif = cleanGif(p.gif);
     else if (k === 'sfx') state.sfx = cleanSfx({ ...state.sfx, ...(p.sfx && typeof p.sfx === 'object' ? p.sfx : {}) });
     else if (k === 'mixer') state.mixer = cleanMixer({ ...state.mixer, ...(p.mixer && typeof p.mixer === 'object' ? p.mixer : {}) });
@@ -3708,6 +3725,16 @@ async function runShots() {
         tl('the member clicks the link over the picture: the page goes there', await until(() => hubWeb.info().title === 'page two', 30000));
         tl('...and types into the box', await until(() => hubWeb.info().title === 'typed:hi', 30000));
         tl('...their pointer reaches me', await until(() => pointers.has(chat.info().ss.host.watchers[0]), 15000));
+        {       // one page, one mouse: the hover is one person's at a time (web.js takeHover). (Over the empty right of page two.)
+          // (the scroll is the member's own: the last to click or scroll is who a download is put down to, and theirs comes next)
+          const mv = (who, y) => hubWeb.input({ k: 'move', x: 0.9, y, bt: 0, m: [] }, false, who), g = chat.info().ss.host.watchers[0];
+          hubWeb.input({ k: 'wheel', x: 0.9, y: 0.8, dx: 0, dy: 0, m: [] }, false, g);
+          tl('a scroll takes the hover at once', hubWeb.hover() === g);
+          mv(g, 0.8); mv('testB', 0.85);
+          tl('...and someone else\'s move doesn\'t take it while theirs is moving', hubWeb.hover() === g);
+          await wait(900); mv('testB', 0.85);
+          tl('...but does once theirs has been still a moment', hubWeb.hover() === 'testB');
+        }
         await step('typed');
         tl('a flood of input from them is slowed', await until(() => ssDropped > 0, 15000));
         await step('flooded');
@@ -3768,6 +3795,8 @@ async function runShots() {
         ipcMain.emit('cmd', { sender: wc }, { type: 'web-ptr', x: 0.6, y: 0.6 });
         click(0.25, 0.25);
         tl('clicking the link: my picture follows', await until(() => surfView().title === 'page two', 30000));
+        tl('...and the pointer the page asks for (a hand, a bar over text) reaches me, on my picture', await until(async () => [...ssCurSeen].some((c) => c !== 'default') && /^[a-z-]+$/.test(await js("document.querySelector('#webStream').style.cursor")), 10000));
+        log.push('surf guest: pointers from the host ' + JSON.stringify([...ssCurSeen]));
         await wait(800);
         for (const k of ['h', 'i']) { input({ k: 'key', d: true, key: k, m: [] }); input({ k: 'key', d: false, key: k, m: [] }); }
         tl('typing: my bar shows it', await until(() => surfView().title === 'typed:hi', 30000));
