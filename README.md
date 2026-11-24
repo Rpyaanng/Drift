@@ -36,7 +36,7 @@ drift.
   your own music or Spotify.
 - **Your videos, on every screen.** Play a folder of films or clips across all your monitors, with
   subtitles that find themselves and sound that just works, even Dolby and DTS.
-- **Together.** A place for your friends to chat, with channels and history, hosted in your own Drift.
+- **Hub.** A place for your friends to chat, with channels and history, hosted in your own Drift.
   Share what you're watching there and it plays in step on their PCs too, straight from yours, encrypted.
 - **Calm by design.** A clock, a breathing guide, a sleep timer that fades everything out, and a
   panel that disappears until you need it.
@@ -152,7 +152,7 @@ key away: scenes, colour, speed, brightness, music, video and volume.
 
 ## Watch together
 
-The **Together** tab is where your friends are: a *hub* with channels to chat in and a voice room to talk in,
+The **Hub** tab is where your friends are: a *hub* with channels to chat in and a voice room to talk in,
 hosted by your Drift. Each hub has two streams everyone in it watches together: the **media stream** (a video
 or music) and the **Surf stream** (one web browser for the whole hub). While you're online in one,
 picking a video or music in **Media** streams it there, and everyone online in the
@@ -229,18 +229,21 @@ quitting (`Enter` closes, `Esc` again stays), and from there you can also close 
 
 ### Watch together in detail
 
-Open the **Together** tab and host a hub, then press **Copy an invite** and send the code to friends; they
+Open the **Hub** tab and host a hub, then press **Copy an invite** and send the code to friends; they
 paste it into the same tab and press **Join**. From then on they're in the hub. Click it to be online there,
 then play a video or music and it's on everyone's screen; open Surf and you're on the hub's Surf stream. What's playing also shows as a card
 in the chat. Up to eight friends can watch at once.
 
 - Chat: channels anyone in the hub can make, replies, editing (↑ edits your last message), deleting, and
   a little formatting (`**bold**`, `*italic*`, `` `code` ``, `||spoiler||`, `> quote`). Links open in Surf
-  after showing where they go. Messages are kept on the PC of whoever hosts the hub, and the hub only
+  after showing where they go. An emoji picker, emoji reactions on any message, and pictures and GIFs
+  (paste, drop or press +, up to 4 MB; photos are re-saved so where they were taken isn't sent). Messages are kept on the PC of whoever hosts the hub, and the hub only
   works while that Drift is open. Everyone is equal except the host, who can remove someone for good,
   delete any message and stop all invites working. **Block** hides someone's messages from you only.
 - While you watch together, messages from the hub float over the video in a corner of the screen and
-  fade after a few seconds, so nobody has to open the panel. Press **Enter** to answer from there. In
+  fade after a few seconds, so nobody has to open the panel. While you're online in a hub, **Enter** opens a
+  small box to write in from anywhere in Drift (the Hub tab's own box when that's open), to what you're
+  watching's hub or else your active one. Over Surf, Enter stays the page's: use the 💬 in the bottom-left corner. In
   *Options* you choose whose messages show: people who can't be heard (not in the call, muted, or with no
   working microphone), every message, or none. People whose PC has no microphone are marked *no mic*.
 - *Options* also sets your picture. Drift cuts it to a square and saves it again small, which drops what
@@ -252,7 +255,7 @@ in the chat. Up to eight friends can watch at once.
 
 **Voice.** Each hub has one voice room, for up to 16 people with 8 talking at once. Being online in a hub
 puts you in its room, listening: there's nothing to start or join. You're in one hub's room at a time, the
-one open in Together (or the one you **Keep voice here**). Your microphone stays closed until you press
+one open in the Hub tab (or the one you **Keep voice here**). Your microphone stays closed until you press
 **Talk**, and closes again when you press **Mute**; it starts closed every time Drift starts, unless you
 turn on *Keep my microphone on between sessions*. While you're in a room, a small bar over the scenes shows
 the hub, rings whoever is speaking, and has **Talk** / **Mute**, **Don't listen** and **Disconnect** (go
@@ -296,7 +299,7 @@ a mouse's side buttons.
 
 Reaching the sharing PC: on the same network it works as is. For friends elsewhere, Drift asks the
 router (UPnP) to open one TCP port (47800 by default) while sharing and closes it afterwards; if the
-router refuses, the Together tab says so, and forwarding that port by hand works too. In that case, and
+router refuses, the Hub tab says so, and forwarding that port by hand works too. In that case, and
 when the router doesn't report its own address, Drift looks up this PC's public address at api.ipify.org.
 Behind a provider that shares one address between homes (CGNAT), use a VPN such as Tailscale on both PCs.
 Windows asks once whether to let Drift through its firewall: allow it.
@@ -343,7 +346,7 @@ and a few places to drift to. While you're online in a hub it's that hub's Surf 
 - **Leaving Surf.** Choosing Scenes or Media on the browser's screen puts the browser away so you can
   see them. Your tabs stay open behind them, exactly as you left them, so coming back to Surf shows
   them again straight away without loading them again. A video playing in one keeps playing, as in a
-  background tab. Together and
+  background tab. Hub and
   Settings leave the browser where it is. Closing the last tab closes the browser.
 - **Next time.** If the browser is open when Drift closes, its tabs, the tab in front and its monitor come
   back when Drift starts again. Video and music in those pages stay paused until you click or press a key
@@ -499,10 +502,11 @@ Chat and calls have their own checks: `node scripts/test-chat.js` and `node scri
 Electron needed; both also run under `ELECTRON_RUN_AS_NODE=1`), and `node scripts/test-calls.js`, which
 runs three copies of Drift in a call (`DRIFT_TESTVOICE=host|guest|third`) honestly and with the hub
 misbehaving on purpose (`DRIFT_HUB_TAMPER=fingerprint|unsigned|replay|swapkey`, aimed with
-`DRIFT_HUB_TAMPER_PAIR=From>To`). `node scripts/test-broadcast-ui.js` runs two copies through the Broadcast
+`DRIFT_HUB_TAMPER_PAIR=From>To`). `node scripts/test-broadcast-ui.js` runs two copies through the Share
 tab (`DRIFT_TESTBCUI=host|guest`), pressing its real buttons, and `node scripts/test-broadcast.js [modes...]`
 runs three copies through a whole broadcast (`DRIFT_TESTBC=host|guest|third`, with `DRIFT_TESTBROADCAST`
-sending a test pattern): watching in the Broadcast view, opt-in cursor sharing, Switch source, Pause and Stop,
+sending a test pattern): the Broadcast scene's grid and its stills, watching full screen and Back, two broadcasts
+playing side by side in the grid, opt-in cursor sharing, Switch source, Pause and Stop,
 and sound (it plays a quiet 1 kHz tone for a minute or so, which the viewers must receive), honestly and with the
 hub tampering (`fingerprint`, `unsigned`).
 To try updating, run a packaged copy with `DRIFT_FAKE_VERSION=1.0.0` (it then thinks the latest release is

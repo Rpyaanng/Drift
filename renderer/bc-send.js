@@ -1,6 +1,6 @@
 /* Drift — the broadcaster's side of a broadcast (docs/plans/broadcast.md §3, §7). This hidden window exists only while
    you're live, so the capture can't outlive the broadcast. It captures exactly the source main.js hands its
-   getDisplayMedia (the monitor or window picked in the Broadcast tab, and nothing else), and sends that one capture to
+   getDisplayMedia (the monitor or window picked in the Share tab, and nothing else), and sends that one capture to
    every viewer, each over a connection of their own, relayed through the hub's TURN server unless "Connect directly" is
    on. Each connection carries a data channel for pointers (§9): a viewer who chose to share their cursor sends where it
    is over the picture, and this passes it on to main.js (for the overlay on this PC's screen) and to the other viewers.
@@ -91,7 +91,7 @@
       cap = grab().then((st) => {
         if (g !== capGen) { if (st) st.getTracks().forEach((t) => t.stop()); return null; }
         if (!st) { api.send('ended', 'capture'); return null; }
-        capNow = st; watchTrack(st); return st;
+        capNow = st; watchTrack(st); setTimeout(still, 1500); return st;
       });
     }
     return cap;
@@ -106,6 +106,7 @@
     if (old) old.getTracks().forEach((x) => x.stop());
     fresh = Date.now();
     tellAll({ t: 'state', paused, stalled: false });
+    setTimeout(still, 1500);       // (the grid shows what it is now)
   }
   // H.264 first when the graphics card encodes it efficiently (as page streaming does: renderer/app.js videoCodecs)
   function videoCodecs() {
@@ -263,6 +264,39 @@
     api.send('stats', { fps: Math.round(fps), kbps: Math.round(kbps), encoder, hardware: encoder ? !soft() : null, viewers: peers.size, stalled: st, slow, paused, size: size.width ? `${size.width}×${size.height}` : '' });
   }
   setInterval(() => { if (cfg) stats().catch(() => {}); }, 2000);
+
+  // ---- a still for everyone's Broadcast grid (§5): a small picture of what's being sent, every 10 s, whether or not anyone
+  // watches (not while paused). main.js hands it to chat.js, which signs it for the hub to pass round. Two of them, each as
+  // large and sharp as fits: one of up to 200000 characters for a hub that takes it, and one of 14000 for a hub from before
+  // (a longer line and it hangs up). ----
+  const STILLS = [
+    [200000, [[1600, [0.8, 0.7]], [1280, [0.75, 0.65]], [1024, [0.7, 0.6]], [768, [0.6]]]],
+    [14000, [[512, [0.6, 0.45]], [448, [0.45, 0.35]], [384, [0.35, 0.25]], [320, [0.25]]]],
+  ];
+  let stillBusy = false;
+  async function still() {
+    const t = capNow && capNow.getVideoTracks()[0];
+    if (stillBusy || !t || t.readyState !== 'live' || paused || typeof ImageCapture !== 'function') return;
+    stillBusy = true;
+    try {
+      const bmp = await new ImageCapture(t).grabFrame();
+      const c = document.createElement('canvas'), g = c.getContext('2d');
+      const out = STILLS.map(([most, steps]) => {
+        for (const [w0, qs] of steps) {
+          const w = Math.min(w0, bmp.width);       // (never larger than what's sent)
+          c.width = w; c.height = Math.max(1, Math.min(w, Math.round((w * bmp.height) / bmp.width)));
+          g.drawImage(bmp, 0, 0, c.width, c.height);
+          const u = qs.map((q) => c.toDataURL('image/jpeg', q)).find((x) => x.length <= most);
+          if (u) return u;
+        }
+        return '';
+      });
+      if (out[1]) api.send('thumb', { big: out[0], small: out[1] });
+      bmp.close();
+    } catch { /* no frame yet: the next time */ }
+    stillBusy = false;
+  }
+  setInterval(() => { if (cfg) still(); }, 10000);
 
   api.on((m) => {
     if (m.t === 'start') {

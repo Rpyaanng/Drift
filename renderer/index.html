@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; media-src 'self' file: http://127.0.0.1:*; img-src 'self' data:; style-src 'self' 'unsafe-inline'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; media-src 'self' file: http://127.0.0.1:*; img-src 'self' data: https://*.giphy.com; style-src 'self' 'unsafe-inline'">
 <title>Drift</title>
 <link rel="stylesheet" href="style.css">
 </head>
@@ -13,7 +13,7 @@
 <div id="clockFace"><div class="time"><span class="hm"></span><span class="ap"></span></div><div class="rule"><i></i></div><div class="date"></div></div>
 <div id="breath"><div class="ring"></div><span></span></div>
 <div id="ptrs"></div>
-<div id="bcView"><video id="bcVideo" autoplay playsinline muted tabindex="0"></video><div id="bcPtrs"></div><div id="bcNote"></div><div id="bcBar" class="glass"></div></div>
+<div id="bcView"><div id="bcGrid"></div><div id="bcEmpty"></div><div id="bcTop"></div><div id="bcPtrs"></div><div id="bcBar" class="glass"></div></div>
 <div id="webEdge"></div>
 <div id="surfEdge"></div>
 <div id="surfBar">
@@ -32,7 +32,7 @@
 <div id="ssLine"></div>
 <div id="heldCard" hidden></div>
 <div id="callBar"></div>
-<div id="chatOverlay"><div id="coVote" hidden></div><div id="coList"></div><div id="coBox"><span id="coWhere"></span><input type="search" id="coInput" maxlength="4000" spellcheck="true" autocomplete="off"></div>
+<div id="chatOverlay"><div id="coVote" hidden></div><div id="coList"></div><div id="coRow"><button id="coBtn" title="Write in your hub's chat (over Surf, Enter belongs to the page)" aria-label="Chat"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg></button><div id="coBox"><span id="coWhere"></span><input type="search" id="coInput" maxlength="4000" spellcheck="true" autocomplete="off"></div></div>
 <svg id="coCat" viewBox="150 90 1360 820" aria-hidden="true" style="display:none">
 <defs>
 <radialGradient id="catFur" cx="42%" cy="26%" r="82%"><stop offset="0" style="stop-color:var(--cat-hi)"/><stop offset=".3" style="stop-color:var(--cat-mid)"/><stop offset="1" style="stop-color:var(--cat-mid)"/></radialGradient>
@@ -208,7 +208,7 @@
       </div>
     </section>
 
-    <section data-tab="share">
+    <section data-tab="hub">
       <div id="chat">
         <aside id="chSide">
           <div id="shBox">
@@ -239,7 +239,15 @@
           <div id="chList"></div>
           <div id="chTyping"></div>
           <div id="chBar"><span id="chBarText"></span><button class="icon" id="chBarX" title="Cancel (Esc)">✕</button></div>
-          <textarea id="chInput" rows="1" maxlength="4000" spellcheck="true"></textarea>
+          <div id="chAttach"><span id="chAttachPic"></span><span id="chAttachText"></span><button class="icon" id="chAttachX" title="Don't send it (Esc)">✕</button></div>
+          <div id="chCompose">
+            <button class="chTool" id="chFileBtn" title="Send a picture or GIF from this PC (or paste or drop one)" aria-label="Send a picture"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+            <input type="file" id="chFile" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" hidden>
+            <textarea id="chInput" rows="1" maxlength="4000" spellcheck="true"></textarea>
+            <button class="chTool chGifBtn" id="chGifBtn" title="Search for a GIF" aria-label="GIF" hidden>GIF</button><!-- (GIF search: off for now, so nobody needs a GIPHY key) -->
+            <button class="chTool" id="chEmojiBtn" title="Emoji" aria-label="Emoji"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8.5 14a4 4 0 0 0 7 0M9 9.5h.01M15 9.5h.01"/></svg></button>
+          </div>
+          <div id="chPick" hidden></div>
         </div>
         <div id="shOpts">
           <div class="optHead"><h2>Options</h2><button class="btn ghost" id="shOptsDone">← Back to the chat</button></div>
@@ -261,7 +269,7 @@
           <div class="optCard">
             <h3>Chat over the video</h3>
             <div class="optRow">
-              <div class="optText"><b>Show while watching</b><em>Over a video together, the hub's Surf stream, a broadcast, and what you broadcast (games too). Press Enter while you watch to write without opening this tab. Someone you hear in the call, with a working mic, counts as heard.</em></div>
+              <div class="optText"><b>Show while watching</b><em>Over a video together, the hub's Surf stream, a broadcast, and what you broadcast (games too). Press Enter anywhere in Drift to write without opening this tab (over Surf, use the chat button in the bottom-left corner). Someone you hear in the call, with a working mic, counts as heard.</em></div>
               <select id="shOverlay" aria-label="Chat over the video">
                 <option value="all">Every message</option>
                 <option value="unheard">From people you can't hear</option>
@@ -272,8 +280,15 @@
           <div class="optCard">
             <h3>Sounds</h3>
             <label class="chk optRow"><span class="optText"><b>Play sounds</b><em>When you go online, join or leave voice, mute, or go live, when friends come and go, and for messages you aren't looking at. Only you hear them.</em></span><input type="checkbox" id="sfxOn"><i></i></label>
-            <div class="optRow slideRow"><div class="optText"><b>Volume<output id="o-sfxVol"></output></b></div><input type="range" id="sfxVol" min="0" max="1" step="0.01" aria-label="Volume of Together's sounds"></div>
+            <div class="optRow slideRow"><div class="optText"><b>Volume<output id="o-sfxVol"></output></b></div><input type="range" id="sfxVol" min="0" max="1" step="0.01" aria-label="Volume of the hub's sounds"></div>
             <div class="sfxTry" id="sfxTry"></div>
+          </div>
+          <div class="optCard" hidden>
+            <h3>GIF search</h3>
+            <div class="optRow">
+              <div class="optText"><b>GIPHY API key</b><em>The GIF button searches GIPHY with your own free key (developers.giphy.com → Create an API key). Only your PC talks to GIPHY: the GIF you pick is sent through the hub like any picture, so friends' PCs never reach it.</em></div>
+              <input type="password" id="gifKey" placeholder="Paste a key" spellcheck="false" autocomplete="off" aria-label="GIPHY API key">
+            </div>
           </div>
           <div class="optCard">
             <h3>Voice</h3>
@@ -349,44 +364,55 @@
     </section>
 
     <section data-tab="broadcast">
-      <p class="note bcOff" id="bcOff">Connect to a hub in Together to broadcast.</p>
+      <p class="note bcOff" id="bcOff">Connect to a hub in the Hub tab to share your screen.</p>
       <div id="bcOn">
-        <div class="optCard">
-          <h3>Live now<span class="bcHub" id="bcHub"></span></h3>
-          <div id="bcLive"></div>
-        </div>
-        <div class="optCard" id="bcMine">
-          <h3><span class="spdot"></span><span id="bcMineHead">You're live</span></h3>
-          <div class="bcNow">
-            <img id="bcMineThumb" alt="">
-            <div>
-              <b id="bcMineTitle"></b>
-              <span id="bcMineStats"></span>
-              <p class="note warn" id="bcMineWarn"></p>
-              <div class="row"><button class="btn" id="bcSwitch" title="Show something else, without anyone watching dropping">Switch source</button><button class="btn" id="bcPause">Pause</button><button class="btn danger" id="bcStop">Stop broadcasting</button></div>
+        <div class="optCard bcPage" id="bcMine">
+          <div class="bcMain">
+            <h3><span class="spdot"></span><span id="bcMineHead">You're live</span></h3>
+            <div class="bcNow">
+              <img id="bcMineThumb" alt="">
+              <div>
+                <b id="bcMineTitle"></b>
+                <span id="bcMineStats"></span>
+              </div>
             </div>
+            <p class="note warn" id="bcMineWarn"></p>
+            <div class="bcCtl"><button class="btn" id="bcSwitch" title="Show something else, without anyone watching dropping">Switch source</button><button class="btn" id="bcPause">Pause</button><button class="btn danger" id="bcStop">Stop sharing</button></div>
           </div>
-          <h3 class="sub">Watching</h3>
-          <div id="bcMineWho"></div>
-          <div class="optRow"><div class="optText"><b>Sound</b><em id="bcSoundLiveNote"></em></div>
-            <div class="seg" id="bcSoundLive"><button data-v="off">Off</button><button data-v="on">On</button></div></div>
-          <div class="optRow"><div class="optText"><b>Viewers' pointers</b><em>Viewers who choose to share their cursor point at things on your screen. It's only a picture: they can't click or type anything. To see them over a game, set it to borderless or windowed.</em></div>
-            <div class="seg" id="bcPtrsLive"><button data-v="show">Show on my screen</button><button data-v="hide">Don't show</button></div></div>
+          <aside class="bcSide">
+            <h3>Watching<span class="bcCount" id="bcMineCount"></span></h3>
+            <div id="bcMineWho"></div>
+            <div class="bcOpt"><b>Sound</b>
+              <div class="seg" id="bcSoundLive"><button data-v="off">Off</button><button data-v="on">On</button></div><em id="bcSoundLiveNote"></em></div>
+            <div class="bcOpt"><b>Viewers' pointers</b>
+              <div class="seg" id="bcPtrsLive"><button data-v="show">Show on my screen</button><button data-v="hide">Don't show</button></div>
+              <em>Viewers who share their cursor can point at things on your screen. It's only a picture: they can't click or type. Over a game, set it to borderless or windowed to see them.</em></div>
+          </aside>
         </div>
-        <div class="optCard" id="bcGo">
-          <h3 id="bcGoHead">Go live</h3>
-          <h3 class="sub">Screens</h3>
-          <p class="note">Everything on that monitor is shown, notifications and other windows too. To show just one program, pick it under Applications.</p>
-          <div class="bcGrid" id="bcScreens"></div>
-          <h3 class="sub">Applications</h3>
-          <div class="bcGrid" id="bcApps"></div>
-          <div class="optRow"><div class="optText"><b>Quality</b><em id="bcQNote"></em></div>
-            <div class="seg" id="bcQuality"><button data-v="auto">Auto</button><button data-v="detail">Text and detail</button><button data-v="motion">Smooth</button></div></div>
-          <div class="optRow"><div class="optText"><b>Sound</b><em id="bcSoundNote"></em></div>
-            <div class="seg" id="bcSound"><button data-v="off">Off</button><button data-v="on">On</button></div></div>
-          <div class="optRow"><div class="optText"><b>Viewers' pointers</b><em>Friends watching can choose to share their cursor and point at things on your screen. It's only a picture: they can't click or type anything.</em></div>
-            <div class="seg" id="bcPtrsGo"><button data-v="show">Show on my screen</button><button data-v="hide">Don't show</button></div></div>
-          <div class="row bcGoRow"><button class="btn primary" id="bcStart" disabled>Go live</button><button class="btn ghost" id="bcSwitchCancel">Cancel</button><span class="note" id="bcPicked">Pick a screen or an application.</span></div>
+        <div class="optCard bcPage" id="bcGo">
+          <div class="bcMain">
+            <h3 id="bcGoHead">Pick what to show</h3>
+            <h3 class="sub">Screens</h3>
+            <p class="note">Everything on that monitor is shown, notifications and other windows too.</p>
+            <div class="bcGrid" id="bcScreens"></div>
+            <h3 class="sub">Applications</h3>
+            <p class="note">Just that one program, wherever it is.</p>
+            <div class="bcGrid" id="bcApps"></div>
+          </div>
+          <aside class="bcSide">
+            <div class="bcSel" id="bcSel"><img id="bcSelThumb" alt=""></div>
+            <b class="bcSelName" id="bcPicked">Pick a screen or an application.</b>
+            <div class="bcActs"><button class="btn primary" id="bcStart" disabled>Go live</button><button class="btn ghost" id="bcSwitchCancel">Cancel</button></div>
+            <div class="bcOpts">
+              <div class="bcOpt"><b>Quality</b>
+                <div class="seg" id="bcQuality"><button data-v="auto">Auto</button><button data-v="detail">Text and detail</button><button data-v="motion">Smooth</button></div><em id="bcQNote"></em></div>
+              <div class="bcOpt"><b>Sound</b>
+                <div class="seg" id="bcSound"><button data-v="off">Off</button><button data-v="on">On</button></div><em id="bcSoundNote"></em></div>
+              <div class="bcOpt"><b>Viewers' pointers</b>
+                <div class="seg" id="bcPtrsGo"><button data-v="show">Show on my screen</button><button data-v="hide">Don't show</button></div>
+                <em>Friends watching can share their cursor to point at things. It's only a picture: they can't click or type.</em></div>
+            </div>
+          </aside>
         </div>
       </div>
     </section>
@@ -476,10 +502,10 @@
         <button data-tab="scenes">Scenes</button>
         <button data-tab="media" title="Your videos and music">Media</button>
         <button data-tab="surf" title="Browse the web on this screen, in tabs">Surf</button>
-        <button data-tab="broadcast" title="Show a screen or an application to friends in your hub" hidden>Broadcast</button>
+        <button data-tab="broadcast" title="Share a screen or an application with friends in your hub" hidden>Share</button>
         <i class="tabInk" aria-hidden="true"></i>
       </span>
-      <button data-tab="share" title="Chat with friends, and watch a video with them in step">Together</button>
+      <button data-tab="hub" title="Your hub: chat with friends, and watch a video with them in step">Hub</button>
       <button data-tab="settings">Settings<svg class="updIcon" id="updTabIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5"/><path d="M5 20h14"/></svg></button>
     </div>
     <div class="quick">
@@ -509,6 +535,7 @@
 <script src="surf-keys.js"></script>
 <script src="cats.js"></script>
 <script src="app.js"></script>
+<script src="emoji.js"></script>
 <script src="chat.js"></script>
 <script src="broadcast.js"></script>
 </body>

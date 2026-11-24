@@ -410,11 +410,19 @@ async function broadcasts() {
   forged(jo, offerD(joKey, { nonce: n }));
   ok(!lu.chat.bcCert(B, jo.id(), 'sha-256', hex()).ok && lu.chat.info().bc.watching[0].verdict === 'mismatch', 'a certificate that isn\'t the signed one is caught');
 
-  // ---- limits: two broadcasts per hub, one each, seven viewers ----
+  // ---- limits: four broadcasts per hub, one each, seven viewers ----
   const s2 = await kit.chat.bcStart(H, { title: 'Notepad', kind: 'window' });
   ok(!!s2.id, 'Kit goes live too: two in the hub');
-  const s3 = await lu.chat.bcStart(H, { title: 'Screen 1' });
-  ok(s3.full && /already broadcasting in this hub/.test(s3.error || ''), `a third is told to wait ("${s3.error}")`);
+  const s3 = await lu.chat.bcStart(H, { title: 'Screen 1' }), s4 = await ivy.chat.bcStart(H, { title: 'Screen 1' });
+  ok(!!s3.id && !!s4.id, 'Lu and Ivy go live as well: four in the hub');
+  const nia = person('Nia'); await nia.chat.start(); nia.chat.join(code);
+  await until(() => nia.hub(H) && nia.hub(H).status === 'connected', 'Nia joins');
+  enter(nia, H); await until(() => nia.hub(H).room.in, 'and is in the room');
+  const s5 = await nia.chat.bcStart(H, { title: 'Screen 1' });
+  ok(s5.full && /4 people are already broadcasting in this hub/.test(s5.error || ''), `a fifth is told to wait ("${s5.error}")`);
+  out(nia); await nia.chat.stop();
+  lu.chat.bcStop(); ivy.chat.bcStop();
+  await until(() => !bcOf(jo, H, s3.id) && !bcOf(jo, H, s4.id), 'Lu and Ivy stop');
   kit.chat.bcStop();
   await until(() => !bcOf(ivy, H, s2.id), 'Kit stops: his broadcast is gone for everyone');
   ok(!!myOff(kit, s2.id), '...and his Drift closes it');

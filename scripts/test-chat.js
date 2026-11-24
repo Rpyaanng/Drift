@@ -91,7 +91,30 @@ async function until(pred, what, ms = 8000) {
   ben.chat.setMic(false); cat.chat.setMic(true);
   await until(() => { const ms = ana.hub(H).members; return (ms.find((m) => m.id === ben.chat.myId()) || {}).mic === false && (ms.find((m) => m.id === cat.chat.myId()) || {}).mic === true; }, 'everyone sees who has no microphone');
 
-  // ---- sharing (Together): the hub passes on who is sharing, so everyone gets a Join button ----
+  // ---- pictures and GIFs in messages, and reactions ----
+  const crypto = require('crypto');
+  const gif = Buffer.concat([Buffer.from('GIF89a'), crypto.randomBytes(600 * 1024)]);       // (only its first bytes are looked at: big enough to go in parts)
+  const withPic = await cat.chat.sendFile(H, general, gif, 320, 200, 'look', undefined);
+  ok(withPic.msg && withPic.msg.file && withPic.msg.file.mime === 'image/gif' && withPic.msg.file.size === gif.length && withPic.msg.text === 'look', 'Cat sends a GIF with a message, in parts');
+  await until(() => ben.seen((e) => e.t === 'msg' && e.msg.id === (withPic.msg || {}).id && e.msg.file), 'others get the message with the GIF');
+  const got = withPic.msg ? await ben.chat.file(H, withPic.msg.file.id) : {};
+  ok(got.data && got.data.equals(gif) && got.mime === 'image/gif', 'Ben fetches the GIF, byte for byte');
+  ok((await cat.chat.sendFile(H, general, Buffer.from('<svg onload=alert(1)></svg>'.padEnd(64)), 10, 10, '')).error, 'an SVG (or anything not a picture) is refused');
+  ok((await cat.chat.sendFile(H, general, Buffer.concat([Buffer.from('GIF89a'), Buffer.alloc(4 * 1024 * 1024)]), 10, 10, '')).error, 'a picture over 4 MB is refused');
+  ok((await ana.chat.send(H, general, 'x', undefined)).msg, 'plain messages still go');
+  if (withPic.msg) {
+    const id = withPic.msg.id;
+    ok(!(await ben.chat.react(H, id, '👍', true)).error && !(await ana.chat.react(H, id, '👍', true)).error && !(await ana.chat.react(H, id, '❤️', true)).error, 'Ben and Ana react');
+    await until(() => cat.seen((e) => e.t === 'react' && e.id === id && e.reacts.length === 2 && e.reacts[0].e === '👍' && e.reacts[0].who.length === 2), 'everyone sees 👍 2 and ❤️ 1');
+    ok(!(await ana.chat.react(H, id, '❤️', false)).error, 'Ana takes her ❤️ back');
+    await until(() => cat.seen((e) => e.t === 'react' && e.id === id && e.reacts.length === 1), 'and it goes');
+    ok((await ben.chat.react(H, id, 'lol', true)).error && (await ben.chat.react(H, id, '👍👍', true)).error && (await ben.chat.react(H, id, '<b>', true)).error, 'a reaction is one emoji, nothing else');
+    const h1 = (await cat.chat.history(H, general)).msgs.find((m) => m.id === id);
+    ok(h1 && h1.file && h1.reacts && h1.reacts[0].e === '👍', 'history carries the picture and the reactions');
+    ok(!(await cat.chat.remove(H, id)).error && (await cat.chat.file(H, withPic.msg.file.id)).error, 'deleting the message deletes its picture');
+  }
+
+  // ---- sharing (the Hub tab): the hub passes on who is sharing, so everyone gets a Join button ----
   ben.chat.announce(H, { code: 'drift:AAAA-bbbb_1', title: 'Dune.mkv', watching: [] });
   await until(() => (cat.hub(H).lives || []).some((l) => l.from === ben.chat.myId() && l.title === 'Dune.mkv' && l.code === 'drift:AAAA-bbbb_1'), 'everyone hears Ben is sharing');
   ben.chat.announce(H, { code: 'drift:AAAA-bbbb_1', title: 'Dune.mkv', watching: ['Cat'] });

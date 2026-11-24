@@ -91,6 +91,12 @@ function verifyBc(raw, f, sig) {
     return !!t && !!raw && raw.length === 32 && memberId(raw) === f.from && typeof sig === 'string' && crypto.verify(null, t, keyFromRaw(raw), Buffer.from(sig, 'base64url'));
   } catch { return false; }
 }
+// A broadcast's still for the Broadcast grid (§5) is signed by the broadcaster under a line of its own, so a hub can't put a
+// picture of its own on someone's tile. The broadcast id is fresh for each broadcast, so a still can't be moved onto another.
+function stillText({ pin, bc, from, img }) {
+  if (![pin, bc, from].every((v) => TOKEN.test(String(v))) || typeof img !== 'string' || !img) return null;
+  return Buffer.from(['drift-broadcast-still-v1', pin, bc, from, crypto.createHash('sha256').update(img).digest('base64url')].join('\n'));
+}
 // The Surf stream (docs/plans/streams.md §2) is signed the same way again, under its own first line: the host's browser,
 // streamed to each member watching. Its room id is the stream's own (new each time it starts, and when someone is removed).
 // A member asks with a signed `want`, the host's offer carries that nonce, and the member's answer the same one again.
@@ -274,6 +280,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
   function onMessage(c, m) {
     c.seen = Date.now();
     if (m.t === 'hello') {
+      c.stillMax = Math.min(LIMITS.bcThumb, +m.still > 0 ? +m.still : 14000);       // a longer line than a hub takes and it hangs up on us
       const auth = { t: 'auth', re: 'auth', key: pub.toString('base64url'), sig: sign(loginText(Buffer.from(c.h.id, 'base64url'), String(m.nonce))), name: me.name || 'Friend' };
       if (!c.h.joined && c.h.token) auth.invite = c.h.token;
       c.wire.send(auth);
@@ -309,13 +316,15 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
       case 'bc': c.bcs = cleanBcs(m.list); onBcRoster(c); changed(); return;
       case 'bc-ended': if (myBc && myBc.hub === c.h.id && myBc.id === m.id) endMyBc(String(m.why || '').slice(0, 200)); return;
       case 'bc-signal': onBcSignal(c, m); return;
+      case 'bc-thumb': onBcThumb(c, m); return;
       case 'surf': c.surf = cleanSurf(m.s); onSsRoster(c); changed(); return;
       case 'surf-signal': onSsMember(c, m); return;
       case 'channels': c.channels = Array.isArray(m.list) ? m.list : []; changed(); break;
       case 'lives': c.lives = Array.isArray(m.list) ? m.list : []; changed(); break;
       case 'media-vote': if (!m.vote || typeof m.vote !== 'object') return; c.mediaVote = m.vote.result ? null : { ...m.vote, at: Date.now() }; changed(); break;       // a vote to change what's on (the hub counts it)
       case 'live-no': break;       // the hub didn't list our share: someone else's is on
-      case 'msg': if (m.msg && blocked.has(m.msg.from)) return; break;
+      case 'msg': if (m.msg && blocked.has(m.msg.from)) return; if (m.msg) m.msg = unblocked(m.msg); break;
+      case 'react': if (Array.isArray(m.reacts)) m.reacts = unblocked({ reacts: m.reacts }).reacts || []; break;
       case 'typing': if (blocked.has(m.from)) return; break;
       case 'removed': c.h.gone = 'The host removed you from this hub.'; save(); c.closed = true; c.status = 'gone'; c.note = c.h.gone; changed(); break;
       case 'bye': break;
@@ -346,7 +355,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
     ssGone(id, '');
   }
 
-  // ---- sharing (Together): which hub hears about it ----
+  // ---- sharing (the Hub tab): which hub hears about it ----
   // live: { code, title, watching } while this PC shares into hub `id`; null when it stops.
   let myLive = null;
   const sendLive = (c, live) => { if (c && c.wire && c.status === 'connected') c.wire.send(live ? { t: 'live', on: true, ...live } : { t: 'live', on: false }); };
@@ -555,7 +564,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
   const bcFields = (c, bc, type, from, to, n, sdp) => ({ pin: c.h.id, room: c.roomId, bc, type, from, to, nonce: n, sdp });
   async function bcStart(hubId, { title = '', kind = 'screen', audio = false } = {}) {
     const c = conns.get(hubId);
-    if (!c || !c.inRoom) return { error: 'Connect to a hub in Together to broadcast.' };
+    if (!c || !c.inRoom) return { error: 'Connect to a hub in the Hub tab to share your screen.' };
     if (myBc && myBc.hub !== hubId) return { error: 'You\'re already broadcasting in another hub.' };
     if (myBc) return bcUpdate({ title, audio });
     const id = crypto.randomBytes(18).toString('base64url');
@@ -596,7 +605,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
   // Watch a broadcast, or ask again (a fresh request, so the broadcaster makes a new offer) when already watching it.
   async function bcWatch(hubId, id) {
     const c = conns.get(hubId);
-    if (!c || !c.inRoom) return { error: 'Connect to a hub in Together to watch.' };
+    if (!c || !c.inRoom) return { error: 'Connect to a hub in the Hub tab to watch.' };
     const b = c.bcs.find((x) => x.id === id);
     if (!b) return { error: 'That broadcast has ended.' };
     if (b.from === myId) return { error: 'That\'s your own broadcast.' };
@@ -740,6 +749,25 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
     return { ok };
   }
   const peerInfo = (p) => ({ verdict: p.verdict, refused: p.refused, told: p.told });
+  // Stills (§5): ours every few seconds from the broadcast window, signed here for the hub to hand round; everyone else's
+  // checked against the key of the member the hub says is broadcasting it, and dropped if it doesn't match.
+  const STILL = /^data:image\/jpeg;base64,[A-Za-z0-9+/]+=*$/;
+  function bcThumb(big, small) {       // the sharp one, if the hub takes one that large, else the small one (14000 characters, which every hub takes)
+    const c = myBc && conns.get(myBc.hub), most = c && c.stillMax || 14000;
+    const img = [big, small].find((x) => typeof x === 'string' && x.length <= most && STILL.test(x));
+    if (!c || !c.wire || !img) return;
+    const t = stillText({ pin: c.h.id, bc: myBc.id, from: myId, img });
+    if (t) c.wire.send({ t: 'bc-thumb', id: myBc.id, img, sig: crypto.sign(null, t, key).toString('base64url') });
+  }
+  function onBcThumb(c, m) {
+    const bc = String(m.id || ''), from = String(m.from || ''), img = String(m.img || ''), raw = c.keys.get(from);
+    const b = c.bcs.find((x) => x.id === bc);
+    if (!b || b.from !== from || from === myId || blocked.has(from) || !raw || img.length > LIMITS.bcThumb || !STILL.test(img)) return;
+    let ok = false;
+    try { const t = stillText({ pin: c.h.id, bc, from, img }); ok = !!t && raw.length === 32 && memberId(raw) === from && crypto.verify(null, t, keyFromRaw(raw), Buffer.from(String(m.sig || ''), 'base64url')); } catch { ok = false; }
+    if (!ok) { log(`chat: a broadcast still that ${nameIn(c, from)} didn't sign came from the hub, so it isn't shown`); return; }
+    emit(c.h.id, { t: 'bc-thumb', bc, img });
+  }
 
   // ---- the Surf stream (docs/plans/streams.md §2, §7) ----
   // Hosting: this PC's hub has one browser for everyone (web.js, headless), streamed by main.js's stream window to each member
@@ -1014,7 +1042,50 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
     return {};
   }
   const cid = () => crypto.randomBytes(9).toString('base64url');
-  const filterMsgs = (r) => (r && Array.isArray(r.msgs) ? { ...r, msgs: r.msgs.filter((x) => !blocked.has(x.from)) } : r);
+  // Reactions from people you blocked are left out too
+  const unblocked = (x) => (Array.isArray(x.reacts) ? { ...x, reacts: x.reacts.map((r) => ({ ...r, who: (r.who || []).filter((w) => !blocked.has(w)) })).filter((r) => r.who.length) } : x);
+  const filterMsgs = (r) => (r && Array.isArray(r.msgs) ? { ...r, msgs: r.msgs.filter((x) => !blocked.has(x.from)).map(unblocked) } : r);
+  // A picture or GIF in a message: sent to the hub in parts (file-start, file-part), then the message that carries it.
+  async function sendFile(id, ch, buf, w, h, text, reply) {
+    if (!createHub.sniffImage(buf)) return { error: 'Only pictures and GIFs (PNG, JPEG, WebP, GIF) can be sent.' };
+    if (buf.length > LIMITS.file) return { error: `Pictures and GIFs can be up to ${LIMITS.file / 1024 / 1024} MB.` };
+    const st = await ask(id, { t: 'file-start', size: buf.length, w, h });
+    if (st.error) return st;
+    const chunk = Math.min(LIMITS.fileChunk, +st.chunk || LIMITS.fileChunk);
+    for (let at = 0; at < buf.length; at += chunk) {
+      const r = await ask(id, { t: 'file-part', up: st.up, data: buf.subarray(at, at + chunk).toString('base64') }, 30000);
+      if (r.error) return r;
+    }
+    return ask(id, { t: 'send', ch, text, reply, up: st.up, cid: cid() });
+  }
+  // A picture, fetched from the hub in parts and kept here (by its id, which never changes what it names) for a while.
+  const pics = new Map(), picWait = new Map();
+  let picBytes = 0;
+  function getFile(id, fid) {
+    fid = String(fid || '');
+    if (pics.has(fid)) { const v = pics.get(fid); pics.delete(fid); pics.set(fid, v); return Promise.resolve(v); }
+    if (picWait.has(fid)) return picWait.get(fid);
+    const p = (async () => {
+      const parts = [];
+      let got = 0, size = 1;
+      while (got < size) {
+        const r = await ask(id, { t: 'file-get', id: fid, at: got, len: LIMITS.fileChunk }, 30000);
+        if (r.error) return { error: r.error };
+        const b = Buffer.from(String(r.data || ''), 'base64');
+        size = Math.min(LIMITS.file, +r.size || 0);
+        if (!b.length) break;
+        parts.push(b); got += b.length;
+      }
+      const buf = Buffer.concat(parts), kind = createHub.sniffImage(buf);
+      if (!kind || buf.length !== size) return { error: 'That picture couldn\'t be fetched.' };
+      const v = { mime: kind, data: buf };
+      pics.set(fid, v); picBytes += buf.length;
+      while (picBytes > 150 * 1024 * 1024 && pics.size > 1) { const [k, o] = pics.entries().next().value; pics.delete(k); picBytes -= o.data.length; }
+      return v;
+    })().finally(() => picWait.delete(fid));
+    picWait.set(fid, p);
+    return p;
+  }
   function setName(name) {
     me.name = String(name || '').replace(/[\x00-\x1f<>]/g, '').trim().slice(0, LIMITS.name);
     writeJson('identity.json', me);
@@ -1102,13 +1173,15 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
   return {
     start, stop, info, join, leave, host, unhost, setName, block, announce, setAvatar, avatar, setMic,
     setVoice, voiceSignal, voiceCert, safety, setVerified, inRoom: () => (call ? call.hub : ''), disconnect, reconnect,
-    bcStart, bcUpdate, bcStop, bcHostStop, bcWatch, bcUnwatch, bcSignal, bcCert,
+    bcStart, bcUpdate, bcStop, bcHostStop, bcWatch, bcUnwatch, bcSignal, bcCert, bcThumb,
     ssSet, ssRelay, ssWatch, ssUnwatch, ssSignal, ssCert, hostedHub: hostedId,
     hostVoicePort: () => (hub ? hub.voicePort() : 0), relayStats: () => (hub ? hub.relayStats() : null),
     history: (id, ch, o = {}) => ask(id, { t: 'history', ch, before: o.before, after: o.after, limit: o.limit }).then(filterMsgs),
     send: (id, ch, text, reply) => ask(id, { t: 'send', ch, text, reply, cid: cid() }),
     edit: (id, msg, text) => ask(id, { t: 'edit', id: msg, text }),
     remove: (id, msg) => ask(id, { t: 'delete', id: msg }),
+    react: (id, msg, e, on) => ask(id, { t: 'react', id: msg, e, on: !!on }),
+    sendFile, file: getFile,
     typing: (id, ch) => { const c = conns.get(id); if (c && c.wire && c.status === 'connected') c.wire.send({ t: 'typing', ch }); },
     channel: (id, name) => ask(id, { t: 'channel', name }),
     dropChannel: (id, ch) => ask(id, { t: 'channel-delete', ch }),
@@ -1124,4 +1197,4 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
     _ssWant: () => (ssWatchOf || {}).want || '',       // (tests only: likewise for the Surf stream)       // (tests only: the nonce our request to watch carries, for forging what a hub might send)
   };
 };
-Object.assign(module.exports, { decodeInvite, checkMembers, safetyNumber, fingerprints, voiceText, signSdp, verifySdp, bcText, signBc, verifyBc, ssText, signSs, verifySs });
+Object.assign(module.exports, { decodeInvite, checkMembers, safetyNumber, fingerprints, voiceText, signSdp, verifySdp, bcText, signBc, verifyBc, stillText, ssText, signSs, verifySs });

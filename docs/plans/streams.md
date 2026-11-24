@@ -194,7 +194,7 @@ profile only; the host's own Surf is unchanged.
   the faces of whoever is watching. Disconnected, it's your own browser, as now.
 - **Hub bar** (`#callBar`): gains the Surf stream's front tab title next to what's on the media stream.
 - **Download card** on the host's screens (§6): the same one-row style as the vote card.
-- **Together**: nothing new. The "Share what I'm watching" button is already gone.
+- **Hub**: nothing new. The "Share what I'm watching" button is already gone.
 
 ## 10. Phases
 

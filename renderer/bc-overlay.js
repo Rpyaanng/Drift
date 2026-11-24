@@ -45,6 +45,23 @@
   // picks which and drops each after a while; everything is set as text.
   const box = document.createElement('div'); box.id = 'msgs'; document.body.append(box);
   const rows = new Map();       // message id -> row
+  // A message's picture or GIF: a box the size it will be (at most 240 × 160) straight away, filled once main.js has sent
+  // the picture (a data: URL of a GIF, PNG, JPEG or WebP, checked again here).
+  const pics = new Map(), PIC_OK = /^data:image\/(gif|png|jpeg|webp);base64,/;
+  function picBox(p) {
+    const s = Math.min(1, 240 / p.w, 160 / p.h), el = document.createElement('div');
+    el.className = 'pic' + (p.gif ? ' gif' : ''); el.dataset.f = p.id;
+    el.style.width = Math.max(40, Math.round(p.w * s)) + 'px'; el.style.height = Math.max(40, Math.round(p.h * s)) + 'px';
+    return el;
+  }
+  function fillPics() {
+    for (const el of document.querySelectorAll('.pic:not(.got)')) {
+      const d = pics.get(el.dataset.f);
+      if (!d) continue;
+      const img = document.createElement('img'); img.src = d; img.alt = '';
+      el.append(img); el.classList.add('got');
+    }
+  }
   function drawMsgs(msgs) {
     for (const [id, r] of rows) if (!msgs.some((x) => x.id === id)) { r.remove(); rows.delete(id); }
     for (const x of msgs) {
@@ -58,12 +75,19 @@
         const b = document.createElement('b'); b.textContent = x.name;
         body.append(b);
         if (x.ch) { const em = document.createElement('em'); em.textContent = '#' + x.ch; body.append(em); }
-        body.append(document.createTextNode(x.text));
+        if (x.text) body.append(document.createTextNode(x.text));
+        if (x.pic && typeof x.pic.id === 'string') body.append(picBox({ id: x.pic.id, w: +x.pic.w || 1, h: +x.pic.h || 1, gif: !!x.pic.gif }));
         r.append(face, body); box.append(r); rows.set(x.id, r);
       }
       r.classList.toggle('old', !!x.old);
     }
+    for (const id of [...pics.keys()]) if (!msgs.some((x) => x.pic && x.pic.id === id)) pics.delete(id);
   }
-  window.bcOverlay.on((m) => drawMsgs(Array.isArray(m.msgs) ? m.msgs : []));
+  window.bcOverlay.on((m) => {
+    for (const [id, d] of Object.entries(m.pics && typeof m.pics === 'object' ? m.pics : {})) if (typeof d === 'string' && PIC_OK.test(d)) pics.set(id, d);
+    drawMsgs(Array.isArray(m.msgs) ? m.msgs : []);
+    fillPics();
+  });
+  window.bcOverlayTest = () => [...document.querySelectorAll('#msgs .msg')].map((r) => ({ text: r.querySelector('.body').innerText, pic: (() => { const p = r.querySelector('.pic'); return p && { w: p.style.width, h: p.style.height, img: !!p.querySelector('img'), gif: p.classList.contains('gif') }; })() }));       // (tests)
   setInterval(() => { for (const q of els.values()) q.el.classList.toggle('idle', Date.now() - q.at > 6000); }, 1000);
 })();

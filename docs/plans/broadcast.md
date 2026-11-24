@@ -11,7 +11,7 @@ Three parts, built in this order, each on top of the one before:
    something you opt into: your microphone stays closed until you turn it on. There's no separate "call" to start,
    join or leave.
 2. **Broadcast** (§2–§8). Anyone in the hub can pick **one of their monitors or one application window** and stream
-   it, picture and (optionally) sound, to the others. It gets a new panel tab, **Broadcast**. Viewers watch on
+   it, picture and (optionally) sound, to the others. It gets a new panel tab, **Share** (first called Broadcast). Viewers watch on
    whichever of their monitors they choose.
 3. **Shared pointers** (§9). While you watch someone's broadcast, your mouse pointer shows **on their real screen**,
    drawn over their game or program by a transparent overlay, and on every other viewer's copy of the stream. It's
@@ -57,7 +57,7 @@ become one.
 - **Listening can be turned off** (today's Deafen, renamed **Don't listen**). You stay in the hub's chat but hear
   nothing and aren't connected to anyone's voice.
 - **Several hubs**: you're in the voice room of **one hub at a time**, your *active* hub. That's the one open in
-  Together, or one you pin. Your other hubs are text only until you switch. Hearing two rooms at once would be chaos,
+  the Hub tab, or one you pin. Your other hubs are text only until you switch. Hearing two rooms at once would be chaos,
   and two meshes cost twice as much.
 - **Disconnect** (new): go offline from a hub without leaving it, to stop hearing it and stop being shown online. It
   reconnects when you click the hub again, or on the next start if "Connect on start" is on (today's behaviour). It's
@@ -85,7 +85,7 @@ become one.
 
 ### 1.3 In the UI
 
-- **Together**: the Voice section and its Start/Join/Leave buttons go. The People list shows who's talking (speaking
+- **Hub**: the Voice section and its Start/Join/Leave buttons go. The People list shows who's talking (speaking
   ring, mic icon) and who isn't listening. Volume sliders stay, on each person.
 - **The call bar becomes the hub bar.** On every screen while you're online in a hub: the hub's name, the faces of
   whoever is talking, **Talk** / **Mute**, **Listen** / **Don't listen**, and **Disconnect**. It fades when idle, as now.
@@ -105,7 +105,7 @@ become one.
 ```
 Broadcaster                         Hub (hostile)                     Viewer
 -----------                         -------------                     ------
-Broadcast tab → pick source
+Share tab → pick source
 broadcast window captures it
 chat.js: bc-start {id,title,kind} ─▶ checks: online, ≤ limits
                                      roster `bc` to the hub ─────────▶ card: "Sam is broadcasting Screen 2"
@@ -152,6 +152,7 @@ chat.js verifies, signs offer ─────▶ passes on unchanged ───�
 | `bc {list}` | hub → everyone in the hub | Who is broadcasting what, and who is watching. |
 | `bc-signal {to, d}` | either → hub → other | Passed on unchanged, counted against the existing 200 per 10 s `signals` limit. |
 | `bc-watch {id, on}` | viewer → hub | So the roster can show viewers, and so the relay lets in a viewer who has turned listening off. |
+| `bc-thumb {id, img, sig}` | broadcaster → hub → everyone | A still for the Broadcast grid (added 2026-11-23): a JPEG of at most 200000 characters (up to 1600 px wide), every 10 s; a hub's `hello` says how large it takes (`still`), and for a hub that doesn't say (an older one, whose 16 KB line limit would hang up on more) a 14000-character one goes instead, signed by the broadcaster (`drift-broadcast-still-v1`, hub pin, broadcast id, sender, SHA-256 of the image). The hub passes it on at most every 4 s, keeps the latest for people who come online, and drops it with the broadcast. Viewers drop any still that isn't signed by the member the roster names. |
 
 - **Relay access**: `allowed(member)` becomes "online and listening, **or** watching a live broadcast". Allocation
   limits: one viewer is about 2 allocations, and 2 broadcasts with 7 viewers each add about 28 on top of voice.
@@ -161,11 +162,30 @@ chat.js verifies, signs offer ─────▶ passes on unchanged ───�
   asked for. The title on the card comes from the hub, so say it's "what they called it", not proof. Pointers travel
   in the end-to-end data channel, so the hub never sees them.
 
-## 5. The Broadcast tab
+## 5. The Share tab
 
-A sixth tab between Together and Settings: `Broadcast`, with a red dot on the tab button while you're live.
+**Changed 2026-11-23**: Broadcast is a scene, like Scenes, Media and Surf. Picking its tab turns that screen into the
+**Broadcast grid**: a black screen with a tile for each broadcast in the hub (yours too), showing a still of it (`bc-thumb`,
+§4) until it's watched. Picking Scenes, Media or Surf on that screen puts the grid away and stops whatever was playing in
+it; Hub and Settings leave it be. The tiles are all 16:9 and as large as fit (every split into rows and columns is
+tried, and the largest wins), with the name and buttons over each tile so no room goes on labels (as glass pills along its top: along the bottom,
+Drift's bar came up over them; on a tile that's playing they fade with the hub bar when the mouse rests). The page
+described below (Go live, and while live, how it's going) opens over the grid from its **Go live** button, a tile's
+**Manage**, or by picking the tab again. **Live now** and the monitor picker are gone: you watch on the screen you picked
+the tab on (picking it on another monitor moves the grid there, streams and all). Your own tile has **Preview**: what
+you're sending, live and silent, in the tile. The screen window captures the same source a second time (main.js lets that
+window have exactly that source, picture only, once); nothing goes through the hub, and a Switch source starts it again on
+the new one.
 
-**Not online in a hub**: one line, "Connect to a hub in Together to broadcast".
+A sixth tab between Hub and Settings: `Share`, with a red dot on the tab button while you're live.
+
+**Layout (2026-11-23)**: the page is two columns. Going live: the screens and applications on the left, and on the right a
+column that stays in view as the left one scrolls, with a large picture of what's picked, **Go live**, then Quality, Sound
+and Viewers' pointers. So Go live is always on screen, however many windows are open (it used to sit under every tile and
+setting). While live: the picture, the stats and Switch source / Pause / Stop on the left; Watching (with a count), Sound and
+pointers on the right. **Switch source** puts the picker in place of the live page until Switch or Cancel.
+
+**Not online in a hub**: one line, "Connect to a hub in the Hub tab to share your screen".
 
 **Live now** (top): a card for each broadcast in your active hub. It shows the face, "Sam · Screen 2" or "Sam ·
 Elden Ring", sound on/off, viewers, the padlock, and **Watch** (with a monitor picker: "This screen", or Monitor
@@ -184,12 +204,20 @@ Elden Ring", sound on/off, viewers, the padlock, and **Watch** (with a monitor p
 
 **While live**: what you're sending (preview), who's watching (each with a "hide their pointer" toggle), **Switch
 source** (re-open the picker, then `replaceTrack`, with no renegotiation so viewers don't drop), **Pause** (track
-disabled; viewers see "Paused"), and **Stop broadcasting**.
+disabled; viewers see "Paused"), and **Stop sharing**.
 
 ## 6. Watching
 
+**Changed 2026-11-23**: from the grid (§5). **Watch** on a tile fills the screen with that broadcast, with the slim bar
+along the top: **← Back**, who and what, the padlock, the volume, **Share my cursor**, and **Stop watching** (the "Also
+live" switches are gone: Back is how you get to the others). **Back** (or Esc) returns to the grid, where it goes on
+playing in its tile on the same connection. With more than one broadcast up, each tile also has **Preview** (an eye; then
+**Stop preview**, a crossed-out eye: named "Play in grid" and "Stop" until 2026-11-23), so several can play side by side. Each one watched is its own connection in the screen's window. While one fills
+the screen the others stay connected but hidden and quiet; in the grid, everything playing is heard. Pointers and cursor
+sharing are for the full-screen view only.
+
 **Changed 2026-11-22**: watching is its own full-screen **Broadcast view**, and sharing your cursor is **opt-in for each
-broadcast** (it was on by default, §11.7). The Broadcast tab is where you choose whose broadcast to watch, on which
+broadcast** (it was on by default, §11.7). The Share tab is where you choose whose broadcast to watch, on which
 monitor, and whether they see your cursor. The view has a slim bar along the top (it shows when the mouse moves):
 who and what, the padlock, **Share my cursor**, the other live broadcasts to switch to, and **Stop watching**.
 
@@ -201,7 +229,7 @@ who and what, the padlock, **Share my cursor**, the other live broadcasts to swi
 - There's a volume for the broadcast's sound, separate from the person's voice volume (`voice.volumes` gets a
   `bc:<member>` key).
 - **Your pointer is shared while you watch** (§9), with "Share my pointer" in the hub bar to turn it off.
-- It never starts by itself. A new broadcast shows as a toast ("Sam started broadcasting · open Broadcast to watch")
+- It never starts by itself. A new broadcast shows as a toast ("Sam started broadcasting · open Share to watch")
   and a card. Nothing opens on anyone's screen unasked.
 
 ## 7. Quality and bandwidth: the real constraint
@@ -221,7 +249,7 @@ So:
   1 Mb/s per viewer, the resolution steps down (`scaleResolutionDownBy`) rather than turning to mush.
 - **Hardware encoders**: `videoCodecs()` puts H.264 first. Each viewer is a separate encode, so NVENC/QuickSync/AMF
   session limits matter (older consumer NVIDIA drivers allowed 3–5 at once). When an encode fails, that viewer falls
-  back to VP8 on the processor, and the Broadcast tab says so if the processor is struggling (frame rate dropping).
+  back to VP8 on the processor, and the Share tab says so if the processor is struggling (frame rate dropping).
 - **Viewers per broadcast: up to 7** at first, even if the room (§1) is bigger. A bigger room makes this limit easier
   to hit, so the card says "Full (7 watching)".
 - **The hub owner is shown** what voice and broadcasts cost them ("Voice and broadcasts are using 26 Mb/s through
@@ -285,7 +313,7 @@ on their copy too. It works like the pointers in a shared Surf page, except the 
     it (`IsWindowVisible`, plus a check of which window is at that point), pointers hide rather than float over the
     wrong program.
 - **Exclusive fullscreen games**: nothing can draw over them without hooking into the game (as Discord's and Steam's
-  overlays do), which Drift won't do: it's fragile and anti-cheat software flags it. The Broadcast tab says "To see
+  overlays do), which Drift won't do: it's fragile and anti-cheat software flags it. The Share tab says "To see
   pointers over a game, set it to borderless or windowed". Borderless is what most games default to now. Drift's
   overlay is an ordinary window and never touches the game's process.
 
@@ -353,7 +381,7 @@ on their copy too. It works like the pointers in a shared Surf page, except the 
        viewers, rather than only telling the broadcaster. Chromium didn't use the card's AV1 encoder.
      - Not done: integrated graphics (this PC has none enabled).
      - `encoderImplementation` is only reported for a real capture (`getDisplayMedia`), not a canvas, so the
-       Broadcast tab can show "hardware" / "processor" while live.
+       Share tab can show "hardware" / "processor" while live.
    - **C. Relay throughput** (`spikes/broadcast/turn-video.js`; the real `turn.js`, fake members in another process,
      1,200-byte packets in bursts at 30 fps):
      - The relay's own processor use is small: **7–11% of one core** for one broadcast to 7 viewers at 3.5–6 Mb/s, and
@@ -374,7 +402,7 @@ on their copy too. It works like the pointers in a shared Surf page, except the 
        different constraints or turning off Chromium's `AllowWgc*ZeroHz` / `WebRtcAllowWgcWindowCapturer` features.
        (It also explains two runs in spike B that came out at 1 fps: Windows had shrunk the test window to fit right
        after it opened.) **This is an open problem for Phase 3.** Ideas to try: a fresh `desktopCapturer` source id,
-       capturing the monitor and cropping to the window, a newer Electron. Until then the Broadcast tab should notice
+       capturing the monitor and cropping to the window, a newer Electron. Until then the Share tab should notice
        the frame rate collapse after a size change and say "Resizing the window stopped the picture: pick it again".
      - Not tested here (needs a person and a game): exclusive fullscreen, the yellow border on Windows 10 (Windows 11
        showed none), DRM video.
@@ -417,7 +445,7 @@ on their copy too. It works like the pointers in a shared Surf page, except the 
      `addTransceiver`).
    - `main.js`: `state.voice` is now `talk` (closed at every start unless `keepMic`), `deaf` ("Don't listen"), `pin`
      (keep voice in one hub), `keepMic`, plus `direct`, `ptt`, `pttKey` and `volumes` as before; `muted` is gone. The
-     active hub is the pinned one, or the one open in Together (`voiceHub` from the panel). The tray light shows while
+     active hub is the pinned one, or the one open in the Hub tab (`voiceHub` from the panel). The tray light shows while
      you're in a room, grey or red, and clicking it toggles Talk. Its menu has Talk/Mute, Don't listen and Disconnect.
      Hold-to-talk only watches the key while Talk is on.
    - Panel: the Voice section of an open hub shows how many are listening and talking, with Talk / Don't listen /
@@ -477,7 +505,7 @@ on their copy too. It works like the pointers in a shared Surf page, except the 
      - `bc-watch {id, on}`, and the `bc` roster (also in the sign-in reply as `bcs`).
      - `bc-signal {bc, to, d}`: only passed between a broadcaster and someone watching that broadcast, counted against
        `signals`.
-     - Limits (`LIMITS.broadcasts` 2, `viewers` 7, `bcTitle` 80). The broadcaster makes the id (16–64 base64url
+     - Limits (`LIMITS.broadcasts` 2, raised to 4 on 2026-11-23, `viewers` 7, `bcTitle` 80). The broadcaster makes the id (16–64 base64url
        characters, fresh each time).
      - Broadcast actions have their own rate-limit bucket (`bc`), so flipping Watch on and off can't use up the one that
        voice-state and invites share. The tests ran into exactly that.
@@ -512,18 +540,18 @@ on their copy too. It works like the pointers in a shared Surf page, except the 
    the per-viewer bitrate.
 
    **The tab, built ahead of the rest (2026-11-22):**
-   - The **Broadcast** tab sits between Together and Settings. Its button only shows while you're in your active hub's
-     voice room. If you're on it when that ends (Disconnect, say), the panel goes back to Together, and a closed panel
+   - The **Share** tab sits between Hub and Settings. Its button only shows while you're in your active hub's
+     voice room. If you're on it when that ends (Disconnect, say), the panel goes back to the Hub tab, and a closed panel
      stays closed.
    - **Live now** has a card for each broadcast: the face, "Name · title" (the title's tooltip says it's what they called
      it), screen or application, sound, how many are watching ("Full" at 7), and Watch / Stop watching. Your own card
-     has Stop broadcasting. The host gets "Stop it" on everyone else's.
+     has Stop sharing. The host gets "Stop it" on everyone else's.
    - **Go live** lists Screens and Applications with thumbnails from `desktopCapturer`. It's only fetched while the tab
      is open, every 4 s, and nothing is captured. Monitors Drift is showing on are marked "Drift is here". This copy of
      Drift's own windows are left out. Quality (Auto / Text and detail / Smooth) and Viewers' pointers are saved as
      `state.broadcast`. Sound shows Off, with On greyed out.
    - **Go live** passes one of the listed ids back: `main.js` keeps the list and the one picked (`bcSource`), and asks
-     `chat.js` to start. **You're live** shows the thumbnail, who's watching, and Stop broadcasting. The tab gets a red dot.
+     `chat.js` to start. **You're live** shows the thumbnail, who's watching, and Stop sharing. The tab gets a red dot.
    - A toast says when someone in your active hub starts broadcasting. One that ends with a reason (the host stopped it)
      says that too.
    - **Not yet**:
@@ -550,7 +578,7 @@ on their copy too. It works like the pointers in a shared Surf page, except the 
    - **Live controls** in the tab: what's being sent (thumbnail), frames a second, bitrate, size and graphics card /
      processor encoding, who's watching (each with their state, "pointing", and Hide pointer), **Switch source** (the
      picker again, then `replaceTrack` on every connection: nobody drops, tested), **Pause** / Resume (track disabled;
-     viewers see "Sam paused the broadcast") and **Stop broadcasting**. Switch source may change a screen to a window:
+     viewers see "Sam paused the broadcast") and **Stop sharing**. Switch source may change a screen to a window:
      `bc-start` with the same id now takes a new `kind` too.
    - **Stalls** (spike D): no frames for 1.5 s while live → viewers see "Sam's picture stopped (the window may be
      minimised)", and the tab says so. A window's frame rate collapsing under 3 fps (the resize problem) → a toast and
@@ -577,7 +605,7 @@ on their copy too. It works like the pointers in a shared Surf page, except the 
      pointers: Don't show" hides it; viewers still see each other's.
    - **Indicators**: the hub bar shows "● Live · Screen 2 · Stop" (and "(paused)"), "Watching Sam · Stop watching", or
      "Sam is live · Watch" (on this screen), and stays bright while you're live. The tray light is red while live, its
-     menu has Stop broadcasting, and it exists while live even out of voice. The tab has its red dot.
+     menu has Stop sharing, and it exists while live even out of voice. The tab has its red dot.
    - **Not done yet**: hiding pointers when another window covers a followed window (only minimised is handled); one
      overlay per monitor for a window spanning monitors with different scaling (it's one window over the whole rect);
      remembering the upload budget between broadcasts; the hardware session limit fallback beyond what Chromium does by
@@ -642,12 +670,14 @@ on their copy too. It works like the pointers in a shared Surf page, except the 
 1. **Pre-connect or connect on Talk?** Connecting only when someone talks scales to bigger rooms but may clip the first
    word. Recommend **pre-connecting everyone while 8 or fewer are online**, as today's calls do, and connecting on
    Talk above that. Also: how big may a room be? Recommend 16 online in voice and 8 talking at once to start.
-2. **The active hub**: follow whichever hub is open in Together, or only change when you pick "Make this my voice
-   hub"? Recommend following Together, with a pin to keep one.
+2. **The active hub**: follow whichever hub is open in the Hub tab, or only change when you pick "Make this my voice
+   hub"? Recommend following the Hub tab, with a pin to keep one.
 3. **How many broadcasts at once?** Recommend **one per person, two per hub at a time**. Each viewer watching both
-   doubles everyone's bandwidth.
-4. **Tab or section?** A **Broadcast tab** as asked, or a section inside Together. Recommend the tab (the picker needs
-   the room), with Together linking to it.
+   doubles everyone's bandwidth. *Raised to four (2026-11-23), with the Broadcast grid: a broadcast nobody watches
+   costs only its still, so the real cost is per stream watched, already capped at 7 viewers each. The hub host's
+   connection, with relay on, is the ceiling when many watch many.*
+4. **Tab or section?** A **Share tab** as asked, or a section inside the Hub tab. Recommend the tab (the picker needs
+   the room), with the Hub tab linking to it.
 5. **Sound on day one?** Recommend shipping picture only if spike A needs a native helper, rather than blocking on it.
 6. **Should the host be able to stop someone's broadcast?** It fits §11.6 of the voice plan (the host can remove
    people and delete messages). Recommend yes: a "Stop this broadcast" on the card, host only.

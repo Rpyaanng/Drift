@@ -77,6 +77,16 @@ No accounts and no passwords.
 - **Links**: they open in Surf, or in the system browser after a "this goes to example.com" confirmation, showing the
   real host (punycode shown) so look-alike domains stand out. **No automatic link previews** fetched by the client,
   because each preview would tell that site your IP address. If wanted later, the hub can fetch previews with a size cap and a timeout.
+- **Pictures and GIFs**: a message can carry one picture (`file-start`, then `file-part`s of up to 160 KB, then `send`
+  with the upload's token), up to 4 MB, kept in the hub's `files` table with the message and wiped with it; past 300 MB
+  in all the oldest pictures go. The hub decides what a file is from its first bytes (GIF, PNG, JPEG, WebP only, never
+  SVG) and members fetch it in parts (`file-get`), check the bytes again and show it as a `data:` URL. The sender's
+  Drift re-saves photos as WebP (dropping EXIF and location); GIFs and animated WebPs go as they are. GIF search (built, but hidden for now so nobody has to get an API key: the
+  `hidden` on `#chGifBtn` and the Options card in index.html) asks
+  GIPHY from the searcher's PC only (their own API key, `img-src https://*.giphy.com` for the previews); the GIF they
+  pick is downloaded by main.js and sent like any picture, so nobody else's PC reaches GIPHY.
+- **Reactions**: `react` adds or takes back one emoji (one grapheme, checked by the hub) per member per message, up
+  to 20 kinds a message; the hub sends `{ t: 'react', ch, id, reacts }` with the message's whole list.
 - **Rate limits** on the hub for each member (messages, edits and reactions per 10 s), plus an optional slow mode per channel.
 - **Deleting really deletes**: the row, its edits and its attachments, on the hub and in every connected client's cache.
   Each channel has a retention setting (keep forever, or 30/90/365 days).
@@ -265,12 +275,12 @@ option C isn't recommended. Drift's licence text should also say the software is
      certificate (alert 40), though Node's OpenSSL accepts one. Node can't make certificates, so `hub.js` writes the
      X.509 by hand (about 15 lines of DER). Members' identity keys are still Ed25519. The login is a challenge signed with
      that key and bound to the hub's certificate pin.
-   - Invites are `drift:` codes with version byte 2 (Together's are 1): port, the certificate's SHA-256 pin, a 16-byte
+   - Invites are `drift:` codes with version byte 2 (the old watch-together codes are 1): port, the certificate's SHA-256 pin, a 16-byte
      token and the addresses. They expire after 7 days or 25 uses. The hub keeps its port (47900 first) across
      restarts so codes keep working, and it sends members its current addresses each time they log in.
    - `chat.js` is this PC's side: the identity key (sealed with `safeStorage`), the saved hubs, reconnecting with
      backoff, hosting (with UPnP when "Let friends join from outside my home network" is on), and blocking, which is
-     local only. The chat name is the Together tab's name.
+     local only. The chat name is the Hub tab's name.
    - **No local message cache yet.** Each window asks the hub for the latest 50 messages when it opens a channel and
      after every reconnect, then pages back with "Show older messages". That also makes deletion simple.
    - `renderer/chat.js` is the Chat tab: hubs, channels, people (block, and remove for the host), invite, leave or
@@ -281,7 +291,7 @@ option C isn't recommended. Drift's licence text should also say the software is
      scripts/test-chat.js`), 34 checks in all. Also two copies of Drift pressing the real buttons:
      `DRIFT_TESTCHAT=host|guest` with `DRIFT_USERDATA`, `DRIFT_SHOTS`, `DRIFT_ONLY=aurora` and `DRIFT_TESTCODE` as
      for `DRIFT_TESTSHARE`.
-   - **Together and Chat are one tab** (decided 2026-11-21): the Together tab is built around hubs. Sharing starts in
+   - **Together and Chat are one tab** (decided 2026-11-21; called the Hub tab since 2026-11-23): it's built around hubs. Sharing starts in
      the hub open in the tab (or the first connected one, or a new one hosted on the spot). The sharer's Drift tells
      the hub its watch-together code, the title and who is watching (`live` frames, kept in memory only and dropped
      when the sharer disconnects). Everyone else gets a card with **Join**. Watch together itself (`p2p.js`) is
@@ -351,7 +361,7 @@ option C isn't recommended. Drift's licence text should also say the software is
      the hub's own addresses (nearest first) when that was loopback or IPv6. Calls use `iceTransportPolicy: 'relay'`
      unless "Connect directly in calls (lower delay; others in the call can see your IP address)" is on; then the
      relay stays as a fallback and also answers STUN.
-   - **Calls in the UI**: the Together tab shows each hub's call (who, muted/deafened/no mic, a volume slider each,
+   - **Calls in the UI**: the Hub tab shows each hub's call (who, muted/deafened/no mic, a volume slider each,
      speaking rings) with "Start a call" / "Join the call" / "Leave the call". A lock on each person: 🔒 only when
      their signature checked out *and* the certificate matches, otherwise a warning that says what failed. "🔒
      End-to-end encrypted in calls of up to 8" only appears when every connection in your call is verified;

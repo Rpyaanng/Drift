@@ -1,8 +1,8 @@
-/* Drift — Together's sounds: joining and leaving a hub and its voice room, muting, going live, friends coming and going,
+/* Drift — Hub sounds: joining and leaving a hub and its voice room, muting, going live, friends coming and going,
    and new messages. They're made here with Web Audio, nothing is a recording, and they play in the hidden audio window
    (renderer/audio.html), so a sound never doubles across monitors. They have their own AudioContext: they stay out of the
    visuals' analyser and out of the music sent to friends, and a broadcast never carries them (bc-sound.js leaves out
-   Drift's own process). main.js decides when, from what changed in Together (sfxTick), and sends the names here.
+   Drift's own process). main.js decides when, from what changed in the Hub tab (sfxTick), and sends the names here.
 
    How they're made, so new ones fit in:
    - Every sound is built on C and G. Those are the only two notes that all four Ambient presets share (pads, space, bells,

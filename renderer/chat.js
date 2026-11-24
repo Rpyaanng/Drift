@@ -1,4 +1,4 @@
-/* Drift — the panel's Together tab: hubs, their channels and messages, and who in them is sharing something to watch
+/* Drift — the panel's Hub tab: hubs, their channels and messages, and who in them is sharing something to watch
    (watch together itself is app.js's #sh… controls; this draws the Join cards). Everything a person typed is put on the page as text
    (textContent), never as HTML: a small set of Markdown (bold, italic, code, spoilers, quotes, links) is turned into
    elements here, one by one. chat.js in the main process does the talking; this only asks it, through window.drift.chat. */
@@ -24,7 +24,11 @@
     play: '<path d="M7 5l12 7-12 7z" fill="currentColor"/>',
     stop: '<rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/>',
     plug: '<path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4"/>',
-    door: '<path d="M14 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4M10 16l-4-4 4-4M6 12h10"/>',  };
+    door: '<path d="M14 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4M10 16l-4-4 4-4M6 12h10"/>',
+    chat: '<path d="M4 5h16v11H9l-5 4z"/>',
+    film: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9l5 3-5 3z"/>',
+    globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
+    lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',  };
   function icon(name) {
     const el = h('span.ico');
     el.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
@@ -48,7 +52,7 @@
     const s = x && (x.suspect || []).find((y) => y.id === id);       // someone the hub sent a bad key for: still named, so the warning makes sense
     return s ? s.name : id === info.me.id ? (info.me.name || 'You') : 'Someone who left';
   };
-  const looking = () => $('#panel').classList.contains('open') && $('section[data-tab="share"]').classList.contains('active') && !$('#chat').classList.contains('opts') && !$('#chat').classList.contains('help');
+  const looking = () => $('#panel').classList.contains('open') && $('section[data-tab="hub"]').classList.contains('active') && !$('#chat').classList.contains('opts') && !$('#chat').classList.contains('help');
   let p2p = { role: 'off' }, joined = '';       // watch together as main.js reports it; joined: the code of the share we joined from a card
 
   // ---- faces: a member's picture, or their initial on a colour of their own until it arrives ----
@@ -166,7 +170,7 @@
     }
     drawHostBtn();
     if (typing) { newChan.input.focus(); newChan.input.setSelectionRange(at, at); }       // drawn again while typing: carry on where you were
-    const tabBtn = document.querySelector('.tabs button[data-tab="share"]'), any = [...unread.values()].some((n) => n);
+    const tabBtn = document.querySelector('.tabs button[data-tab="hub"]'), any = [...unread.values()].some((n) => n);
     if (tabBtn) tabBtn.classList.toggle('unread', any);
   }
 
@@ -196,11 +200,14 @@
     const input = $('#chInput');
     input.disabled = !c || !x || x.status !== 'connected';
     input.placeholder = c ? `Message #${c.name}` : '';
+    for (const b of ['#chFileBtn', '#chGifBtn', '#chEmojiBtn']) $(b).disabled = input.disabled;
+    if (input.disabled && pickOpen) closePick();
   }
   function drawList(stick) {
     const list = $('#chList'), x = hubNow(), c = chanNow(), k = c && keyOf(x.id, c.id), got = k && cache.get(k);
     const atEnd = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
     list.replaceChildren();
+    if (!x || x.status !== 'connected') { list.append(drawIntro(x)); return; }       // not online in a hub: say what one is
     if (!got) return;
     if (got.more && got.msgs.length) list.append(h('button.btn.ghost.chMore', { onclick: () => older(x.id, c.id) }, got.loading ? 'Loading…' : 'Show older messages'));
     if (!got.msgs.length && !got.loading) list.append(h('p.note', {}, `This is the start of #${c.name}.`));
@@ -210,11 +217,16 @@
       const row = h('div.chMsg' + (head ? '.head' : '') + (mine ? '.mine' : ''), { 'data-id': m.id });
       if (m.reply) {
         const to = got.msgs.find((y) => y.id === m.reply);
-        row.append(h('div.chRe', {}, '↪ ', to ? h('b', {}, nameOf(x, to.from)) : 'a deleted message', to ? ' ' + to.text.slice(0, 80) : ''));
+        row.append(h('div.chRe', {}, '↪ ', to ? h('b', {}, nameOf(x, to.from)) : 'a deleted message', to ? ' ' + (to.text || picWord(to)).slice(0, 80) : ''));
       }
       if (head) row.append(face(x, m.from, '.msgFace'), h('div.chBy', {}, h('b', {}, nameOf(x, m.from)), h('time', { title: new Date(m.at).toLocaleString() }, when(m.at))));
-      row.append(h('div.chText', {}, render(m.text), m.edited ? h('span.chEd', { title: 'Edited ' + new Date(m.edited).toLocaleString() }, ' (edited)') : null));
+      if (m.text || m.edited) row.append(h('div.chText', {}, render(m.text), m.edited ? h('span.chEd', { title: 'Edited ' + new Date(m.edited).toLocaleString() }, ' (edited)') : null));
+      if (m.file) row.append(pic(x, m.file));
+      else if (!m.text) row.append(h('div.chText.chGone', {}, 'This picture isn\'t kept on the hub any more.'));
+      if (m.reacts && m.reacts.length) row.append(reactRow(x, m));
       const tools = h('div.chTools');
+      for (const e of ['👍', '❤️', '😂']) tools.append(h('button.mini.emoMini', { title: `React with ${e}`, onclick: () => toggleReact(x, m, e) }, e));
+      tools.append(h('button.mini', { title: 'React with any emoji', onclick: (ev) => openPick('emoji', m, ev.currentTarget) }, 'React'));
       tools.append(h('button.mini', { onclick: () => setMode('reply', m) }, 'Reply'));
       if (mine) tools.append(h('button.mini', { onclick: () => setMode('edit', m) }, 'Edit'));
       if (mine || x.host) tools.append(h('button.mini.danger', { onclick: () => { if (confirm('Delete this message for everyone?')) call('delete', x.id, m.id).then((r) => r.error && toast(r.error)); } }, 'Delete'));
@@ -223,6 +235,224 @@
       prev = m;
     }
     if (stick || atEnd) list.scrollTop = list.scrollHeight;
+  }
+  const picWord = (m) => (m.file ? (m.file.mime === 'image/gif' ? '(a GIF)' : '(a picture)') : '');
+
+  // ---- pictures and GIFs in messages: fetched from the hub through chat.js once, kept here as data: URLs ----
+  // The box is sized from what the sender said the picture measures, so the list doesn't jump when it arrives.
+  const picData = new Map(), picWant = new Set();       // file id -> data: URL ('' when it couldn't be had)
+  const PIC_OK = /^data:image\/(gif|png|jpeg|webp);base64,/;
+  // (maxW × maxH: in the channel 360 × 260; over the video, smaller)
+  function pic(x, f, maxW = 360, maxH = 260) {
+    const s = Math.min(1, maxW / f.w, maxH / f.h), box = h('div.chPic' + (f.mime === 'image/gif' ? '.gif' : ''), { 'data-f': f.id });
+    box.style.width = Math.max(40, Math.round(f.w * s)) + 'px'; box.style.height = Math.max(40, Math.round(f.h * s)) + 'px';
+    fillPic(box);
+    if (!picData.has(f.id) && !picWant.has(f.id)) {
+      picWant.add(f.id);
+      call('file', x.id, f.id).then((r) => {
+        picWant.delete(f.id);
+        picData.set(f.id, r.data && PIC_OK.test(r.data) ? r.data : '');
+        while (picData.size > 80) picData.delete(picData.keys().next().value);
+        for (const el of document.querySelectorAll(`.chPic[data-f="${CSS.escape(f.id)}"]`)) fillPic(el);       // in the channel and over the video alike
+      });
+    }
+    return box;
+  }
+  function fillPic(box) {
+    const d = picData.get(box.dataset.f);
+    box.classList.toggle('loading', d === undefined);
+    if (d === undefined || box.classList.contains('got') || box.classList.contains('bad')) return;
+    if (!d) { box.classList.add('bad'); box.textContent = 'Couldn\'t load it'; return; }
+    box.classList.add('got'); box.title = 'Click to see it bigger';
+    box.replaceChildren(h('img', { src: d, alt: '' }));
+    box.addEventListener('click', () => bigPic(d));
+  }
+  function bigPic(d) {
+    const el = h('div.chLight', { title: 'Click or press Esc to close' }, h('img', { src: d, alt: '' }));
+    const close = () => { el.remove(); removeEventListener('keydown', esc, true); };
+    const esc = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
+    el.addEventListener('click', close); addEventListener('keydown', esc, true);
+    document.body.append(el);
+  }
+
+  // ---- reactions: one chip per emoji under a message; yours are lit, and clicking one adds or takes back yours ----
+  function reactRow(x, m) {
+    return h('div.chReacts', {}, m.reacts.map((r) => {
+      const mine = r.who.includes(info.me.id);
+      return h('button.chReact' + (mine ? '.on' : ''), { title: `${r.who.map((id) => (id === info.me.id ? 'You' : nameOf(x, id))).join(', ')} reacted with ${r.e}`, onclick: () => toggleReact(x, m, r.e) }, h('span.e', {}, r.e), h('span.n', {}, r.who.length));
+    }), h('button.chReact.add', { title: 'Add a reaction', onclick: (ev) => openPick('emoji', m, ev.currentTarget) }, '+'));
+  }
+  function toggleReact(x, m, e) {
+    const on = !(m.reacts || []).some((r) => r.e === e && r.who.includes(info.me.id));
+    if (on) useEmoji(e);
+    call('react', x.id, m.id, e, on).then((r) => r.error && toast(r.error));
+  }
+
+  // ---- the picker over the message box: emoji (into what you're writing, or as a reaction) or a GIF search ----
+  const EMO = (window.DRIFT_EMOJI || []).map(([name, tab, list]) => ({ name, tab, items: list.split(';').map((s) => { const i = s.indexOf(' '); return { e: s.slice(0, i), words: s.slice(i + 1) }; }) }));
+  let recent = [];
+  try { recent = JSON.parse(localStorage.getItem('emojiRecent') || '[]').filter((e) => typeof e === 'string').slice(0, 24); } catch { /* none yet */ }
+  function useEmoji(e) { recent = [e, ...recent.filter((y) => y !== e)].slice(0, 24); try { localStorage.setItem('emojiRecent', JSON.stringify(recent)); } catch { /* fine */ } }
+  let pickOpen = null, gifKey = '', gifSeq = 0, gifTimer = 0;       // pickOpen: { kind: 'emoji' | 'gif', react: the message reacted to, or null }
+  const pickBox = $('#chPick');
+  function openPick(kind, react, from) {
+    if (pickOpen && pickOpen.kind === kind && pickOpen.react === react) { closePick(); return; }
+    pickOpen = { kind, react: react || null };
+    pickBox.hidden = false; pickBox.className = kind;
+    // a reaction's picker sits by the message; the others over the message box
+    const main = $('#chMain').getBoundingClientRect(), at = from && react ? from.getBoundingClientRect() : null;
+    pickBox.style.bottom = at ? Math.max(8, Math.min(main.bottom - at.top + 6, main.height - 380)) + 'px' : '';
+    const q = kind === 'emoji' ? drawEmoji() : drawGif();
+    if (q) q.focus();
+  }
+  function closePick() { pickOpen = null; pickBox.hidden = true; pickBox.replaceChildren(); clearTimeout(gifTimer); gifSeq++; }
+  document.addEventListener('mousedown', (e) => { if (pickOpen && !e.target.closest('#chPick, #chEmojiBtn, #chGifBtn, .chTools, .chReact.add')) closePick(); });
+  $('#chEmojiBtn').addEventListener('click', () => openPick('emoji'));
+  $('#chGifBtn').addEventListener('click', () => openPick('gif'));
+  const pickKeys = (q, first) => q.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); closePick(); input.focus(); }
+    else if (e.key === 'Enter') { const b = first(); if (b) { e.preventDefault(); b.click(); } }
+  });
+  function drawEmoji() {
+    const q = h('input.pickQ', { type: 'search', placeholder: pickOpen.react ? 'React with…' : 'Find an emoji', spellcheck: 'false', autocomplete: 'off' });
+    const grid = h('div.emoGrid'), cell = (it) => h('button.emo', { title: it.words, onclick: () => pickEmoji(it.e) }, it.e);
+    const fill = () => {
+      const t = q.value.trim().toLowerCase();
+      grid.replaceChildren(); grid.scrollTop = 0;
+      if (t) {
+        const hits = EMO.flatMap((g) => g.items).filter((it) => it.words.split(' ').some((w) => w.startsWith(t)) || (t.length > 2 && it.words.includes(t)));
+        grid.append(hits.length ? h('div.emoRow', {}, hits.slice(0, 200).map(cell)) : h('p.note', {}, 'No emoji found.'));
+        return;
+      }
+      if (recent.length) grid.append(h('h4', {}, 'Recently used'), h('div.emoRow', {}, recent.map((e) => cell({ e, words: e }))));
+      for (const g of EMO) grid.append(h('h4', { 'data-g': g.name }, g.name), h('div.emoRow', {}, g.items.map(cell)));
+    };
+    const tabs = h('div.emoTabs', {}, EMO.map((g) => h('button', { title: g.name, onclick: () => { if (q.value) { q.value = ''; fill(); } const hd = grid.querySelector(`h4[data-g="${g.name}"]`); if (hd) grid.scrollTop = hd.offsetTop; } }, g.tab)));
+    q.addEventListener('input', fill);
+    pickKeys(q, () => grid.querySelector('.emo'));
+    fill();
+    pickBox.replaceChildren(q, tabs, grid);
+    return q;
+  }
+  function pickEmoji(e) {
+    const m = pickOpen && pickOpen.react;
+    closePick();
+    if (m) { const x = hubNow(); if (x && !(m.reacts || []).some((r) => r.e === e && r.who.includes(info.me.id))) toggleReact(x, m, e); return; }
+    useEmoji(e);
+    if (input.disabled) return;
+    const a = input.selectionStart ?? input.value.length, b = input.selectionEnd ?? a;
+    input.setRangeText(e, a, b, 'end'); fit(); input.focus();
+  }
+  const GIF_OK = /^https:\/\/[a-z0-9]+\.giphy\.com\//;
+  function drawGif() {
+    if (!gifKey) {
+      const k = h('input.pickQ', { type: 'password', placeholder: 'Paste a GIPHY API key', spellcheck: 'false', autocomplete: 'off' });
+      k.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closePick(); input.focus(); } else if (e.key === 'Enter' && k.value.trim()) { e.preventDefault(); api.patch({ gif: { key: k.value.trim() } }); } });
+      pickBox.replaceChildren(h('div.gifNone', {}, h('b', {}, 'GIF search uses GIPHY, with a key of your own'),
+        h('p', {}, 'It\'s free: sign in at developers.giphy.com, press Create an API key, choose API, and paste the key here (or in Options).'),
+        h('p', {}, 'Only your PC talks to GIPHY. The GIF you pick is sent through the hub like a picture, so friends\' PCs never reach GIPHY.'), k,
+        h('p.note', {}, 'You can always send your own: paste or drop a GIF or picture here, or press +.')));
+      return k;
+    }
+    const q = h('input.pickQ', { type: 'search', placeholder: 'Search GIPHY', spellcheck: 'false', autocomplete: 'off' });
+    const grid = h('div.gifGrid');
+    const run = async () => {
+      const my = ++gifSeq;
+      if (!grid.children.length) grid.append(h('p.note', {}, 'Looking…'));
+      const r = await call('gifSearch', q.value.trim());
+      if (my !== gifSeq) return;
+      if (r.error) { grid.replaceChildren(h('p.note', {}, r.error === 'nokey' ? 'Add a GIPHY key in Options.' : r.error)); return; }
+      const gifs = (r.gifs || []).filter((g) => GIF_OK.test(g.preview) && GIF_OK.test(g.url));
+      grid.replaceChildren(...(gifs.length ? gifs.map((g) => h('button.gif', { title: g.title || 'GIF', onclick: () => sendGif(g) }, h('img', { src: g.preview, alt: g.title || 'GIF', loading: 'lazy' })))
+        : [h('p.note', {}, 'No GIFs found.')]));
+      grid.scrollTop = 0;
+    };
+    q.addEventListener('input', () => { clearTimeout(gifTimer); gifTimer = setTimeout(run, 350); });
+    pickKeys(q, () => grid.querySelector('.gif'));
+    pickBox.replaceChildren(q, grid, h('div.gifFoot', {}, q.value ? '' : 'Trending · ', 'Powered by GIPHY'));
+    run();
+    return q;
+  }
+  async function sendGif(g) {
+    const m = mode && mode.kind === 'reply' ? mode.msg : null, hub = sel.hub, ch = sel.ch;
+    closePick();
+    toast('Sending the GIF…');
+    const r = await call('gifSend', hub, ch, g.url, g.w, g.h, m ? m.id : undefined);
+    if (r.error) toast(r.error); else { $('#toast').classList.remove('on'); if (m && mode && mode.msg === m) setMode(null); }
+  }
+  $('#gifKey').addEventListener('change', (e) => api.patch({ gif: { key: e.target.value.trim() } }));
+
+  // ---- sending a picture or GIF of your own: + , paste, or drop it on the chat. It waits over the box until Enter ----
+  // Photos are drawn again as WebP (at most 2560 px on a side): that drops where they were taken and the rest of what the
+  // file carried, and keeps them small. GIFs and animated WebPs are sent as they are, so they still move.
+  let attach = null;       // { bytes: Uint8Array, w, h, gif }
+  async function prepPicture(f) {
+    const x = hubNow();
+    if (!f || !x || x.status !== 'connected' || !chanNow()) return;
+    if (!/^image\/(png|jpeg|webp|gif|bmp)$/.test(f.type)) { toast('Only pictures and GIFs (PNG, JPEG, WebP, GIF) can be sent.'); return; }
+    let bmp = null;
+    try { bmp = await createImageBitmap(f); } catch { toast('That picture couldn\'t be opened.'); return; }
+    let bytes = new Uint8Array(await f.arrayBuffer()), w = bmp.width, hh = bmp.height;
+    const moving = f.type === 'image/gif' || (f.type === 'image/webp' && bytes.length > 21 && String.fromCharCode(...bytes.subarray(12, 16)) === 'VP8X' && (bytes[20] & 2));
+    if (!moving) {
+      for (const [side, q] of [[2560, 0.9], [1920, 0.8], [1280, 0.75]]) {
+        const s = Math.min(1, side / Math.max(bmp.width, bmp.height)), cv = document.createElement('canvas');
+        cv.width = w = Math.max(1, Math.round(bmp.width * s)); cv.height = hh = Math.max(1, Math.round(bmp.height * s));
+        const g = cv.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(bmp, 0, 0, w, hh);
+        const blob = await new Promise((r) => cv.toBlob(r, 'image/webp', q));
+        if (!blob) break;
+        bytes = new Uint8Array(await blob.arrayBuffer());
+        if (bytes.length <= 4 * 1024 * 1024) break;
+      }
+    }
+    bmp.close();
+    if (bytes.length > 4 * 1024 * 1024) { toast('That\'s too big: pictures and GIFs can be up to 4 MB.'); return; }
+    let b64 = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) b64 += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    const kind = moving ? f.type : 'image/webp';
+    attach = { bytes, w, h: hh, gif: f.type === 'image/gif' };
+    $('#chAttachPic').replaceChildren(h('img', { src: `data:${kind};base64,${btoa(b64)}`, alt: '' }));
+    $('#chAttachText').textContent = `${attach.gif ? 'GIF' : 'Picture'} · ${bytes.length < 1024 * 1024 ? Math.max(1, Math.round(bytes.length / 1024)) + ' KB' : (bytes.length / 1024 / 1024).toFixed(1) + ' MB'} · Enter sends it, with anything you write`;
+    $('#chAttach').classList.add('on');
+    input.focus();
+  }
+  function dropAttach() { attach = null; $('#chAttach').classList.remove('on'); $('#chAttachPic').replaceChildren(); }
+  $('#chAttachX').addEventListener('click', () => { dropAttach(); input.focus(); });
+  $('#chFileBtn').addEventListener('click', () => $('#chFile').click());
+  $('#chFile').addEventListener('change', (e) => { const f = e.target.files && e.target.files[0]; e.target.value = ''; prepPicture(f); });
+  $('#chInput').addEventListener('paste', (e) => {
+    const f = [...(e.clipboardData ? e.clipboardData.files : [])].find((y) => y.type.startsWith('image/'));
+    if (f) { e.preventDefault(); prepPicture(f); }
+  });
+  // (anywhere in the window: a file dropped on it would otherwise open in its place)
+  addEventListener('dragover', (e) => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { e.preventDefault(); $('#chMain').classList.toggle('dropping', !!e.target.closest && !!e.target.closest('#chMain')); } });
+  addEventListener('dragleave', (e) => { if (!e.relatedTarget) $('#chMain').classList.remove('dropping'); });
+  addEventListener('drop', (e) => {
+    if (!e.dataTransfer || ![...e.dataTransfer.types].includes('Files')) return;
+    e.preventDefault(); $('#chMain').classList.remove('dropping');
+    if (!e.target.closest || !e.target.closest('#chMain')) return;
+    const f = [...e.dataTransfer.files].find((y) => y.type.startsWith('image/'));
+    if (f) prepPicture(f); else toast('Only pictures and GIFs can be sent.');
+  });
+  // What fills the middle while you aren't online in a hub: what a hub is, and the next step to get into one.
+  function drawIntro(x) {
+    const item = (ico, title, text) => h('div.chIntroItem', {}, icon(ico), h('div', {}, h('b', {}, title), h('span', {}, text)));
+    const next = !x ? 'Paste a friend\'s invite code on the left and press Join, or host a hub of your own.'
+      : x.mine && info.canHost ? 'Press Host to open your hub, then Copy an invite and send the code to your friends. It works for 7 days.'
+      : x.status === 'away' ? `Press Connect to go online in ${x.name || 'this hub'}.`
+      : x.status === 'gone' ? (x.note || 'This hub is gone. Ask a friend for a new invite.')
+      : x.status === 'offline' ? (x.note || `Can't reach ${x.name || 'the hub'} right now. The host may be offline.`)
+      : `Drift is reaching ${x.name || 'the hub'}. If it takes a while, the host may be offline.`;
+    return h('div.chIntro', {},
+      h('h2', {}, 'A hub is a place for your friends'),
+      h('p.lead', {}, 'It runs in the host\'s Drift, with no server or accounts. Once you\'re online in one:'),
+      h('div.chIntroGrid', {},
+        item('chat', 'Chat', 'Channels anyone can make, with replies, edits and history kept on the host\'s PC.'),
+        item('mic', 'Voice room', 'You\'re in it as soon as you\'re online, listening. Press Talk to be heard.'),
+        item('film', 'Watch together', 'Play a video or music in Media and everyone online sees it in step.'),
+        item('globe', 'Surf together', 'The Surf tab becomes one browser the whole hub shares and can click in.')),
+      h('p.chIntroSafe', {}, icon('lock'), 'Voice is end-to-end encrypted, and streams go straight from PC to PC.'),
+      h('p.chIntroNext', {}, next));
   }
   function drawTyping() {
     const k = keyOf(sel.hub, sel.ch), t = typing.get(k), x = hubNow(), now = Date.now();
@@ -369,13 +599,13 @@
       if (mine) {
         const n = ((x.bcs || []).find((b) => b.id === mine.id) || { viewers: [] }).viewers.length;
         parts.push(h('span.cbSep'), h('span.cbWhere.cbLive', { title: n ? `${n} watching` : 'Nobody watching yet' }, h('span.spdot'), `Live · ${mine.title}${bcLiveS && bcLiveS.paused ? ' (paused)' : ''}`),
-          h('button.cbBtn.leave', { title: 'Stop broadcasting', onclick: () => call('bcStop') }, 'Stop'));
+          h('button.cbBtn.leave', { title: 'Stop sharing', onclick: () => call('bcStop') }, 'Stop'));
       }
-      if (bcViewS) parts.push(h('span.cbSep'), h('span.cbWhere', {}, `Watching ${bcViewS.who}`), h('button.cbBtn', { onclick: () => call('bcUnwatch', bcViewS.bc) }, 'Stop watching'));
+      if (bcViewS) parts.push(h('span.cbSep'), h('span.cbWhere', {}, `Watching ${bcViewS.who.join(' and ')}`), h('button.cbBtn', { onclick: () => bcViewS.ids.forEach((id) => call('bcUnwatch', id)) }, 'Stop watching'));
       else if (others.length) {
         const b = others[0];
         parts.push(h('span.cbSep'), h('span.cbWhere', { title: others.map((o) => `${nameOf(x, o.from)} · ${o.title}`).join('\n') }, `${nameOf(x, b.from)} is live${others.length > 1 ? ` (+${others.length - 1})` : ''}`),
-          h('button.cbBtn', { title: 'Watch it on this screen (pick another monitor in the Broadcast tab)', onclick: () => call('bcWatch', x.id, b.id, window.appUI && window.appUI.key).then((r) => { if (r && r.error) toast(r.error); }) }, 'Watch'));
+          h('button.cbBtn', { title: 'Watch it on this screen (the Share tab shows everyone who\'s live)', onclick: () => call('bcWatch', x.id, b.id, window.appUI && window.appUI.key, true).then((r) => { if (r && r.error) toast(r.error); }) }, 'Watch'));
       }
     }
     if (watching) {
@@ -414,7 +644,7 @@
   $('#vcKey').addEventListener('change', (e) => api.patch({ voice: { pttKey: e.target.value } }));
   $('#vcKeep').addEventListener('change', (e) => api.patch({ voice: { keepMic: e.target.checked } }));
 
-  // ---- Together's sounds (renderer/sfx.js plays them; main.js decides when) ----
+  // ---- Hub sounds (renderer/sfx.js plays them; main.js decides when) ----
   let sfxSet = { on: true, volume: 0.7 };
   const SFX_TRY = [['connect', 'Online'], ['disconnect', 'Offline'], ['lost', 'Dropped'], ['join', 'Join voice'], ['leave', 'Leave voice'],
     ['peerJoin', 'Friend joins'], ['peerLeave', 'Friend leaves'], ['mute', 'Mute'], ['unmute', 'Unmute'], ['liveOn', 'Go live'], ['liveOff', 'Stop live'],
@@ -456,7 +686,9 @@
   let toldHub = null;
   const tellHub = () => { if (sel.hub !== toldHub) { toldHub = sel.hub; call('voiceHub', sel.hub); } };       // the hub open here is your active hub (unless one is kept)
   function pick(hub, ch) {
-    sel = { hub, ch }; keep(); mode = null; tellHub();
+    sel = { hub, ch }; keep(); mode = null; tellHub(); noteCh(hub, ch);
+    if (attach) dropAttach();
+    if (pickOpen) closePick();
     unread.delete(keyOf(hub, ch));
     drawAll(true);
     if (ch && !cache.has(keyOf(hub, ch))) load(hub, ch);
@@ -468,6 +700,7 @@
   }
   function onInfo(next) {
     info = next;
+    document.body.classList.toggle('inHub', info.hubs.some((y) => y.status === 'connected'));       // (Surf's bar shows its chat button)
     drawHelp();
     if (!hubNow() && info.hubs.length) sel = { hub: info.hubs[0].id, ch: 0 };
     const x = hubNow();
@@ -489,11 +722,17 @@
         const i = got.msgs.findIndex((y) => y.id === m.msg.id);
         if (i >= 0) got.msgs[i] = m.msg; else if (!got.msgs.length || m.msg.id > got.msgs[got.msgs.length - 1].id) got.msgs.push(m.msg);
       }
-      const t = typing.get(k); if (t) t.delete(m.msg.from);
+      const t = typing.get(k); if (t && !m.again) t.delete(m.msg.from);
       const here = hub === sel.hub && m.msg.ch === sel.ch && looking();
-      if (!here && m.msg.from !== info.me.id && !m.msg.edited) unread.set(k, (unread.get(k) || 0) + 1);
+      if (!here && m.msg.from !== info.me.id && !m.msg.edited && !m.again) unread.set(k, (unread.get(k) || 0) + 1);
       if (hub === sel.hub && m.msg.ch === sel.ch) { drawList(m.msg.from === info.me.id); drawTyping(); }
       drawSide();
+      return;
+    }
+    if (m.t === 'react') {
+      const got = cache.get(keyOf(hub, m.ch)), msg = got && got.msgs.find((y) => y.id === m.id);
+      if (msg) msg.reacts = Array.isArray(m.reacts) ? m.reacts : [];
+      if (msg && hub === sel.hub && m.ch === sel.ch) drawList();
       return;
     }
     if (m.t === 'gone') {
@@ -521,7 +760,7 @@
     }
     if (msg.from === info.me.id || (hub === sel.hub && msg.ch === sel.ch && looking())) return;
     const x = info.hubs.find((y) => y.id === hub), c = x && x.channels.find((y) => y.id === msg.ch);
-    toast(`${nameOf(x, msg.from)} in #${c ? c.name : '?'}: ${msg.text.replace(/\s+/g, ' ').slice(0, 90)}`);
+    toast(`${nameOf(x, msg.from)} in #${c ? c.name : '?'}: ${(msg.text || picWord(msg)).replace(/\s+/g, ' ').slice(0, 90)}`);
     api.cmd({ type: 'sfx', name: 'message' });       // (main.js sends a new message to one screen only, so it's heard once)
   }
 
@@ -546,6 +785,7 @@
     if (Date.now() - lastTyped > 2500 && input.value.trim() && !mode?.kind?.startsWith('edit')) { lastTyped = Date.now(); call('typing', sel.hub, sel.ch); }
   });
   input.addEventListener('keydown', async (e) => {
+    if (e.key === 'Escape' && attach) { e.preventDefault(); dropAttach(); return; }
     if (e.key === 'Escape' && mode) { e.preventDefault(); setMode(null); return; }
     if (e.key === 'ArrowUp' && !input.value) {       // the last thing you said, to fix
       const got = cache.get(keyOf(sel.hub, sel.ch)), mine = got && [...got.msgs].reverse().find((m) => m.from === info.me.id);
@@ -554,12 +794,16 @@
     }
     if (e.key !== 'Enter' || e.shiftKey) return;
     e.preventDefault();
-    const text = input.value.trim(), m = mode;
-    if (!text) { if (m && m.kind === 'edit') setMode(null); return; }
+    const text = input.value.trim(), m = mode, a = m && m.kind === 'edit' ? null : attach;
+    if (!text && !a) { if (m && m.kind === 'edit') setMode(null); return; }
     input.disabled = true;
-    const r = m && m.kind === 'edit' ? await call('edit', sel.hub, m.msg.id, text) : await call('send', sel.hub, sel.ch, text, m && m.kind === 'reply' ? m.msg.id : undefined);
+    if (a) $('#chAttachText').textContent = 'Sending…';
+    const r = m && m.kind === 'edit' ? await call('edit', sel.hub, m.msg.id, text)
+      : a ? await call('sendFile', sel.hub, sel.ch, a.bytes, a.w, a.h, text, m && m.kind === 'reply' ? m.msg.id : undefined)
+      : await call('send', sel.hub, sel.ch, text, m && m.kind === 'reply' ? m.msg.id : undefined);
     input.disabled = false; input.focus();
-    if (r.error) { toast(r.error); return; }
+    if (r.error) { toast(r.error); if (a && attach === a) $('#chAttachText').textContent = 'Not sent · Enter tries again, Esc drops it'; return; }
+    if (a && attach === a) dropAttach();
     input.value = ''; mode = null; input.dataset.editing = ''; fit(); drawMode();
   });
   $('#chBarX').addEventListener('click', () => setMode(null));
@@ -630,7 +874,7 @@
 
   // ---- seeing the tab: what's showing counts as read ----
   const markRead = () => { if (looking() && sel.ch && unread.delete(keyOf(sel.hub, sel.ch))) drawSide(); };
-  new MutationObserver(markRead).observe($('section[data-tab="share"]'), { attributes: true, attributeFilter: ['class'] });
+  new MutationObserver(markRead).observe($('section[data-tab="hub"]'), { attributes: true, attributeFilter: ['class'] });
   new MutationObserver(markRead).observe($('#panel'), { attributes: true, attributeFilter: ['class'] });
 
   // ---- options (name, control, quality...) take the chat's place while open ----
@@ -665,13 +909,16 @@
     const vs = JSON.stringify(s.voice || {});
     if (vs !== JSON.stringify(voiceSet)) { voiceSet = s.voice || {}; drawVoiceOpts(); drawSide(); drawCall(); }
     if (s.sfx && JSON.stringify(s.sfx) !== JSON.stringify(sfxSet)) { sfxSet = s.sfx; drawSfxOpts(); }
+    const gk = (s.gif && s.gif.key) || '';
+    if (gk !== gifKey) { gifKey = gk; if (document.activeElement !== $('#gifKey')) $('#gifKey').value = gk; if (pickOpen && pickOpen.kind === 'gif') drawGif().focus(); }
     if (p2p.role !== 'guest') joined = '';
     if (p2p.role === 'off' && was !== 'off') { coList.replaceChildren(); closeCompose(); }       // the session is over: so is its chat over the video
     if (was !== p2p.role) drawLives();
     const pk = JSON.stringify([p2p.role, p2p.host, (p2p.peers || []).length]);
     if (pk !== p2pKey) { p2pKey = pk; drawCall(); }
     bcViewHub = s.bcView ? s.bcView.hub : '';
-    const bv = s.bcView ? { bc: s.bcView.bc, who: s.bcView.who } : null;
+    const on = s.bcView ? s.bcView.tiles.filter((t) => t.live) : [];       // the broadcasts playing in the Broadcast scene
+    const bv = on.length ? { ids: on.map((t) => t.bc), who: on.map((t) => t.who) } : null;
     if (JSON.stringify(bv) !== JSON.stringify(bcViewS)) { bcViewS = bv; drawCall(); }
   });
   let p2pKey = '', bcViewHub = '';
@@ -721,28 +968,53 @@
   function overlayShow(x, msg) {
     const c = x && x.channels.find((y) => y.id === msg.ch);
     const row = h('div.coMsg', {}, face(x, msg.from, '.co'),
-      h('div.coBody', {}, h('b.coName', {}, nameOf(x, msg.from)), x && x.channels.length > 1 && c ? h('em', {}, '#' + c.name) : null, h('span.coText', {}, render(msg.text))));
+      h('div.coBody', {}, h('b.coName', {}, nameOf(x, msg.from)), x && x.channels.length > 1 && c ? h('em', {}, '#' + c.name) : null, msg.text ? h('span.coText', {}, render(msg.text)) : null, msg.file && x ? pic(x, msg.file, 240, 160) : null));
     coList.append(row);
     while (coList.children.length > 8) coList.firstChild.remove();
     setTimeout(() => row.classList.add('old'), 12000);
   }
   // The hub to answer in: the watch-together session's, else that of the broadcast this screen shows. (Over the Surf stream,
   // Enter belongs to the page.)
-  const composeHub = () => p2p.chatHub || (document.body.classList.contains('bc') && bcViewHub) || '';
+  // The hub the quick box writes to: that of what you're watching (a video together, a broadcast), else your active hub (the
+  // one whose voice room you're in, or that's open in the Hub tab), else any hub you're online in. '' when you're in none.
+  const upHub = (id) => !!id && info.hubs.some((y) => y.id === id && y.status === 'connected' && y.channels.length);
+  const watchHub = () => [p2p.chatHub, document.body.classList.contains('bc') && bcViewHub].find(upHub) || '';
+  const composeHub = () => watchHub() || [activeHubId(), sel.hub].find(upHub) || (info.hubs.find((y) => upHub(y.id)) || {}).id || '';
+  // the channel last open in each hub, so the box writes where you were (the hub open in the tab: its open channel)
+  let lastCh = {};
+  try { lastCh = JSON.parse(localStorage.getItem('chatLastCh') || '{}') || {}; } catch { /* first time */ }
+  const noteCh = (hub, ch) => { if (!hub || !ch || lastCh[hub] === ch) return; lastCh[hub] = ch; try { localStorage.setItem('chatLastCh', JSON.stringify(lastCh)); } catch { /* fine */ } };
   function openCompose() {
     const x = info.hubs.find((y) => y.id === composeHub());
     if (!x || x.status !== 'connected' || !x.channels.length) return false;
-    const ch = sel.hub === x.id && x.channels.some((c) => c.id === sel.ch) ? sel.ch : x.channels[0].id;
-    coTarget = { hub: x.id, ch };
-    $('#coWhere').textContent = '#' + x.channels.find((c) => c.id === ch).name;
+    const has = (id) => x.channels.some((c) => c.id === id);
+    const ch = sel.hub === x.id && has(sel.ch) ? sel.ch : has(lastCh[x.id]) ? lastCh[x.id] : x.channels[0].id;
+    coTarget = { hub: x.id, ch, over: !!watchHub() };
+    const several = info.hubs.filter((y) => upHub(y.id)).length > 1;
+    $('#coWhere').textContent = (several ? (x.name || 'Hub') + ' · ' : '') + '#' + x.channels.find((c) => c.id === ch).name;
     coInput.placeholder = 'Say something · Enter sends, Esc closes';
     co.classList.add('typing'); coInput.focus();
     return true;
   }
   function closeCompose() { co.classList.remove('typing'); coTarget = null; if (document.activeElement === coInput) coInput.blur(); }
-  addEventListener('keydown', (e) => {       // Enter while watching (and not typing anywhere else): answer over the video
-    if (e.key !== 'Enter' || e.defaultPrevented || (document.activeElement && document.activeElement !== document.body && document.activeElement.id !== 'bcVideo') || $('#confirm').classList.contains('on')) return;
-    if (!composeHub()) return;
+  // Enter, while online in a hub and nothing else is using the key: Drift's window has the keyboard, and it's not in a text box,
+  // a list or a web page (a button only counts while it's been reached with the keyboard: one just clicked doesn't). With the
+  // Hub tab open that's its own message box; anywhere else, the quick box over the screen. Never over Surf: Enter is the page's.
+  // The chat button over Surf shows while the mouse moves and for 2.5 s after. Over a web page this window doesn't see the mouse,
+  // so main.js says when it moves (pointer-moved).
+  let coWakeT = 0;
+  const coWake = () => { document.body.classList.add('coAwake'); clearTimeout(coWakeT); coWakeT = setTimeout(() => document.body.classList.remove('coAwake'), 2500); };
+  addEventListener('mousemove', coWake);
+  api.on('cmd', (c) => { if (c && c.type === 'pointer-moved') coWake(); });
+  const enterFree = () => {
+    const a = document.activeElement;
+    if (!a || a === document.body || a.classList.contains('bcVid')) return true;
+    return (a.tagName === 'BUTTON' || a.tagName === 'A') && !a.closest('#chPick') && !a.matches(':focus-visible');
+  };
+  addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.defaultPrevented || e.repeat || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
+    if (!enterFree() || $('#confirm').classList.contains('on') || document.querySelector('.chLight') || document.body.classList.contains('surfing')) return;
+    if (looking() && !input.disabled) { e.preventDefault(); input.focus(); return; }
     if (openCompose()) e.preventDefault();
   });
   coInput.addEventListener('keydown', async (e) => {
@@ -751,9 +1023,13 @@
     e.preventDefault();
     const text = coInput.value.trim();
     if (!text || !coTarget) { closeCompose(); return; }
-    const r = await call('send', coTarget.hub, coTarget.ch, text);
+    const t = coTarget, r = await call('send', t.hub, t.ch, text);
     if (r.error) { toast(r.error); return; }
     coInput.value = ''; closeCompose();
+    if (!t.over) {       // not over anything of that hub's, so it doesn't show here: say where it went
+      const x = info.hubs.find((y) => y.id === t.hub), c = x && x.channels.find((y) => y.id === t.ch);
+      toast(`Sent in ${info.hubs.filter((y) => upHub(y.id)).length > 1 && x ? (x.name || 'Hub') + ' · ' : ''}#${c ? c.name : '?'}`);
+    }
   });
   // A vote to change what's on (main.js "media stream"; the hub counts it): a card over the video on every screen, for
   // everyone online in the hub, until they vote or it's decided. The asker sees how it's going and can call it off.
@@ -813,6 +1089,7 @@
   });
   refresh();
   window.chatUI = { hub: () => sel.hub,       // app.js shares into this hub
+    quick: () => openCompose(), closeQuick: () => closeCompose(),       // the chat button over Surf (app.js): the quick box, as Enter opens it elsewhere
     overlay: () => [...coList.children].map((r) => r.innerText.replace(/\n+/g, ' ')), compose: (t) => { if (!openCompose()) return false; coInput.value = t; coInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); return true; },
     info: () => info, sel: () => sel, pick, vote: () => (voteBox.hidden ? null : { text: voteBox.innerText.replace(/\n+/g, ' | '), btns: [...voteBox.querySelectorAll('button')].map((b) => b.textContent) }), voteClick: (label) => { const b = [...voteBox.querySelectorAll('button')].find((x) => x.textContent === label); if (b) b.click(); return !!b; }, activeHub: () => activeHubId(), face: (hub, id, cls) => face(info.hubs.find((y) => y.id === hub), id, cls), nameOf: (hub, id) => nameOf(info.hubs.find((y) => y.id === hub), id), toast: (t) => toast(t), canBeHeard: (hub, id) => canBeHeard(info.hubs.find((y) => y.id === hub), id), send: (t) => { input.value = t; input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); } };       // (and main.js's checks)
 })();

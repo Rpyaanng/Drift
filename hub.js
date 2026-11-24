@@ -1,7 +1,7 @@
 // Drift — the hub: one small server for a group of friends' chat (docs/plans/voice-and-chat.md). It runs inside the
 // host's Drift (or on its own later) and keeps the channels and their history in SQLite. Members are Ed25519 public
 // keys; there are no accounts or passwords. Everyone is equal except the host, who can remove someone (a ban by key),
-// delete any message and withdraw every invite. It also passes on who is sharing a video or page right now (Together):
+// delete any message and withdraw every invite. It also passes on who is sharing a video or page right now (the Hub tab):
 // a member's Drift announces its watch-together code here, and everyone else gets a Join button in the chat.
 //
 // Voice: one voice room per hub (docs/plans/broadcast.md §1). Being online in a hub, with it as your active hub, puts
@@ -12,7 +12,7 @@
 // Member lists carry each member's public key for that check; chat.js makes sure each key hashes to its member id.
 //
 // Broadcast (docs/plans/broadcast.md §2–§4): anyone in the voice room can stream a monitor or a window to the others,
-// one each and two per hub at a time, to up to 7 viewers each. The hub keeps who is broadcasting what and who watches
+// one each and four per hub at a time, to up to 7 viewers each. The hub keeps who is broadcasting what and who watches
 // (bc), passes their signed setup messages along (bc-signal) and relays the picture, the same way as voice.
 //
 // The Surf stream (docs/plans/streams.md §7): one web browser for the whole hub, running on the host's PC. The host's Drift
@@ -35,7 +35,8 @@ const { wire, ipBytes, ipText, localAddrs } = require('./p2p');
 const createTurn = require('./turn');
 
 const VERSION = 1;
-const LIMITS = { line: 16 * 1024, text: 4000, name: 24, channel: 32, channels: 50, page: 100, actions: 10, perSecs: 10, connections: 64, avatar: 14000, voice: 16, talkers: 8, signals: 200, broadcasts: 2, viewers: 7, bcTitle: 80, surfWatchers: 7 };
+const LIMITS = { line: 256 * 1024, text: 4000, name: 24, channel: 32, channels: 50, page: 100, actions: 10, perSecs: 10, connections: 64, avatar: 14000, voice: 16, talkers: 8, signals: 200, broadcasts: 4, viewers: 7, bcTitle: 80, bcThumb: 200000, surfWatchers: 7,
+  file: 4 * 1024 * 1024, fileChunk: 160 * 1024, files: 300 * 1024 * 1024, reactions: 20 };       // file: the biggest picture or GIF (bytes), sent fileChunk at a time; files: all of a hub's together
 const TURN_SECS = 24 * 3600;       // how long relay credentials last (the relay also stops as soon as someone leaves the room or stops listening)
 const INVITE_DAYS = 7;
 
@@ -67,7 +68,7 @@ const keyFromRaw = (raw) => crypto.createPublicKey({ key: Buffer.concat([Buffer.
 const memberId = (raw) => crypto.createHash('sha256').update(raw).digest().subarray(0, 9).toString('base64url');
 const loginText = (pin, nonce) => Buffer.from(`drift-hub-login-v${VERSION}\n${Buffer.from(pin).toString('base64url')}\n${nonce}`);
 
-// ---- invite codes: "drift:" + base64url of [2, port, pin, token, addresses..., check] (Together's codes start with 1) ----
+// ---- invite codes: "drift:" + base64url of [2, port, pin, token, addresses..., check] (the old watch-together codes start with 1) ----
 const check = (b) => crypto.createHash('sha256').update(b).digest().subarray(0, 2);
 function encodeInvite({ port, pin, token, addrs }) {
   const parts = [Buffer.from([2, port >> 8, port & 255]), pin, token];
@@ -106,6 +107,24 @@ function cleanAvatar(d) {
     : b.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'WEBP';
   return ok ? d : null;
 }
+// A picture or GIF sent in a channel: what it is, from its first bytes (never from what the sender says), so only these four
+// ever get to a page. null for anything else.
+function sniffImage(b) {
+  if (!b || b.length < 12) return null;
+  const head = b.subarray(0, 6).toString('latin1');
+  if (head === 'GIF87a' || head === 'GIF89a') return 'image/gif';
+  if (b.subarray(0, 8).equals(PNG)) return 'image/png';
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
+  if (b.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'WEBP') return 'image/webp';
+  return null;
+}
+// A reaction: one emoji (a single grapheme that is a pictograph, a flag or a keycap), nothing else.
+const EMOJI_OK = /^(?:\p{Extended_Pictographic}|\p{Emoji_Component}|\p{Emoji_Presentation}|‍|️|⃣)+$/u;
+function cleanEmoji(e) {
+  e = String(e || '').normalize('NFC').trim();
+  if (!e || e.length > 32 || !EMOJI_OK.test(e) || !/\p{Extended_Pictographic}|\p{Regional_Indicator}|⃣/u.test(e)) return '';
+  return [...new Intl.Segmenter().segment(e)].length === 1 ? e : '';
+}
 const avatarId = (d) => (d ? crypto.createHash('sha256').update(d).digest().subarray(0, 9).toString('base64url') : '');
 const cleanChannel = (n) => String(n || '').toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9_-]/g, '').replace(/-{2,}/g, '-').replace(/^-|-$/g, '').slice(0, LIMITS.channel);
 
@@ -124,6 +143,11 @@ module.exports = function createHub(opts) {
       author TEXT NOT NULL, cid TEXT NOT NULL, v INTEGER NOT NULL DEFAULT 1, body TEXT NOT NULL, reply INTEGER, at INTEGER NOT NULL, edited INTEGER, UNIQUE (author, cid));
     CREATE INDEX IF NOT EXISTS messages_by_channel ON messages (ch, id);
     CREATE TABLE IF NOT EXISTS invites (token BLOB PRIMARY KEY, made_by TEXT NOT NULL, at INTEGER NOT NULL, expires INTEGER NOT NULL, uses INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS files (id TEXT PRIMARY KEY, msg INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE, mime TEXT NOT NULL,
+      w INTEGER NOT NULL, h INTEGER NOT NULL, size INTEGER NOT NULL, data BLOB NOT NULL, at INTEGER NOT NULL);
+    CREATE INDEX IF NOT EXISTS files_by_msg ON files (msg);
+    CREATE TABLE IF NOT EXISTS reactions (msg INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE, who TEXT NOT NULL, emoji TEXT NOT NULL,
+      at INTEGER NOT NULL, PRIMARY KEY (msg, who, emoji));
   `);
   for (const col of ['avatar TEXT', 'av TEXT']) { try { db.exec(`ALTER TABLE members ADD COLUMN ${col}`); } catch { /* there already */ } }       // added after the first hubs were made
   const q = (sql) => db.prepare(sql);
@@ -148,7 +172,7 @@ module.exports = function createHub(opts) {
   // Messages last one session of the host's Drift: wiped when it closes (clearMessages) and, in case it didn't close
   // cleanly, when it first hosts again (opts.fresh). Channels, members and invites stay.
   function clearMessages() {
-    db.exec('DELETE FROM messages');
+    db.exec('DELETE FROM files; DELETE FROM reactions; DELETE FROM messages');
     try { db.exec('PRAGMA wal_checkpoint(TRUNCATE); VACUUM'); } catch { /* still wiped; the file shrinks next time */ }
   }
   if (opts.fresh) clearMessages();
@@ -170,7 +194,40 @@ module.exports = function createHub(opts) {
     invite: q('SELECT * FROM invites WHERE token = ?'), addInvite: q('INSERT INTO invites (token, made_by, at, expires, uses) VALUES (?, ?, ?, ?, ?)'),
     useInvite: q('UPDATE invites SET uses = uses - 1 WHERE token = ?'), dropInvites: q('DELETE FROM invites'), oldInvites: q('DELETE FROM invites WHERE expires < ? OR uses <= 0'),
   };
-  const row = (m) => m && { id: m.id, ch: m.ch, from: m.author, text: m.body, reply: m.reply || null, at: m.at, edited: m.edited || null };
+  Object.assign(S, {
+    addFile: q('INSERT INTO files (id, msg, mime, w, h, size, data, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'), fileOf: q('SELECT id, mime, w, h, size FROM files WHERE msg = ?'),
+    filePart: q('SELECT mime, size, substr(data, ?, ?) part FROM files WHERE id = ?'), fileBytes: q('SELECT COALESCE(SUM(size), 0) n FROM files'),
+    oldestFile: q('SELECT id, msg FROM files ORDER BY at LIMIT 1'), dropFile: q('DELETE FROM files WHERE id = ?'),
+    reactsOf: q('SELECT emoji, who FROM reactions WHERE msg = ? ORDER BY at, rowid'), addReact: q('INSERT OR IGNORE INTO reactions (msg, who, emoji, at) VALUES (?, ?, ?, ?)'),
+    dropReact: q('DELETE FROM reactions WHERE msg = ? AND who = ? AND emoji = ?'), reactKinds: q('SELECT COUNT(DISTINCT emoji) n FROM reactions WHERE msg = ?'),
+    reactKind: q('SELECT 1 FROM reactions WHERE msg = ? AND emoji = ? LIMIT 1'),
+  });
+  // Reactions on a message, in the order they were first given: [{ e, who: [member ids] }]
+  function reactsOf(id) {
+    const by = new Map();
+    for (const r of S.reactsOf.all(id)) { if (!by.has(r.emoji)) by.set(r.emoji, []); by.get(r.emoji).push(r.who); }
+    return [...by].map(([e, who]) => ({ e, who }));
+  }
+  // A message as members get it. file: the picture or GIF it carries (fetched apart, with file-get); a message whose file was
+  // let go to make room has neither text nor file.
+  const row = (m) => {
+    if (!m) return m;
+    const out = { id: m.id, ch: m.ch, from: m.author, text: m.body, reply: m.reply || null, at: m.at, edited: m.edited || null };
+    const f = S.fileOf.get(m.id), reacts = reactsOf(m.id);
+    if (f) out.file = { id: f.id, mime: f.mime, w: f.w, h: f.h, size: f.size };
+    if (reacts.length) out.reacts = reacts;
+    return out;
+  };
+  // Pictures past LIMITS.files altogether: the oldest go (their messages stay, with whatever was written with them).
+  function makeRoom() {
+    for (let i = 0; i < 1000 && S.fileBytes.get().n > LIMITS.files; i++) {
+      const f = S.oldestFile.get();
+      if (!f) break;
+      S.dropFile.run(f.id);
+      const msg = row(S.msg.get(f.msg));
+      if (msg) everyone({ t: 'msg', msg, again: true });       // (again: a change to an old message, not news)
+    }
+  }
 
   // ---- connections ----
   const online = new Map();       // member id -> Set of sessions (a member may be on two PCs)
@@ -218,11 +275,11 @@ module.exports = function createHub(opts) {
 
   function onConnection(sock) {
     if (sessions.size >= LIMITS.connections) { sock.destroy(); return; }
-    const s = { id: null, nonce: crypto.randomBytes(24).toString('base64url'), wire: null, acts: { msg: [], other: [], live: [], sig: [], bc: [] }, typed: 0 };
+    const s = { id: null, nonce: crypto.randomBytes(24).toString('base64url'), wire: null, acts: { msg: [], other: [], live: [], sig: [], bc: [], react: [], part: [] }, typed: 0, upload: null };
     sessions.add(s);
     const login = setTimeout(() => { if (!s.id) s.wire.close(); }, 15000);
     s.wire = wire(sock, null, (m) => { try { onMessage(s, m); } catch (e) { reply(s, m, { error: 'Something went wrong on the hub.' }); if (opts.log) opts.log('hub: ' + (e && e.stack || e)); } }, () => {
-      clearTimeout(login); sessions.delete(s);
+      clearTimeout(login); sessions.delete(s); s.upload = null;
       if (opts.log) opts.log(`hub: ${s.id || 'someone not signed in'} disconnected`);
       if (s.id && online.has(s.id)) {
         const set = online.get(s.id); set.delete(s);
@@ -231,7 +288,7 @@ module.exports = function createHub(opts) {
       if (s.id && surfWatch.get(s.id) === s) { surfWatch.delete(s.id); relayCheck(s.id); relayCheck(ownerId); surfNews(); }
       if (s.id && voice.get(s.id) && voice.get(s.id).s === s) leaveRoom(s.id);
     }, LIMITS.line);
-    s.wire.send({ t: 'hello', v: VERSION, nonce: s.nonce, name: hubName });
+    s.wire.send({ t: 'hello', v: VERSION, nonce: s.nonce, name: hubName, still: LIMITS.bcThumb });       // (still: the largest broadcast still it takes; a hub from before says nothing, and takes 14000 characters)
   }
   const reply = (s, m, out) => s.wire.send({ t: out.error ? 'err' : 'ok', re: m && m.re, ...out });
   // Ten of each kind of action every ten seconds for each member (messages and edits; everything else), so one person
@@ -264,6 +321,7 @@ module.exports = function createHub(opts) {
       online.get(id).add(s);
       reply(s, m, { me: id, host: id === ownerId, hub: hubName, addrs: opts.addrs ? opts.addrs() : [], members: bent.list(s, memberList()), channels: channelList(), lives: liveList(), voice: voiceList(), room: roomId, bcs: bcList(), surf: surfOut() });       // addrs: so members can still find the hub when its addresses change
       membersNews(s);
+      for (const b of bcs.values()) if (b.thumb) s.wire.send({ t: 'bc-thumb', id: b.id, from: b.from, ...b.thumb });       // each broadcast's latest still, for their grid
       return;
     }
     const isHost = s.id === ownerId;
@@ -274,25 +332,72 @@ module.exports = function createHub(opts) {
         const list = m.after ? S.after.all(ch, +m.after, n) : S.before.all(ch, m.before ? +m.before : Number.MAX_SAFE_INTEGER, n).reverse();
         return reply(s, m, { ch, msgs: list.map(row) });
       }
-      case 'send': {
+      case 'send': {       // up: the token of a finished upload (file-start, file-part), for a message carrying a picture or GIF
         const ch = +m.ch, text = cleanText(m.text), cid = String(m.cid || '').slice(0, 40);
         if (!S.channel.get(ch)) return reply(s, m, { error: 'No such channel.' });
-        if (!text) return reply(s, m, { error: 'Nothing to send.' });
+        const again = cid && S.byCid.get(s.id, cid);       // the same message sent twice (a retry after a dropped connection)
+        if (again) return reply(s, m, { msg: row(again) });
+        const up = m.up ? s.upload : null;
+        if (m.up && (!up || up.token !== m.up || up.got !== up.size)) return reply(s, m, { error: 'That picture didn\'t finish uploading. Try again.' });
+        if (!text && !up) return reply(s, m, { error: 'Nothing to send.' });
         if (text.length > LIMITS.text) return reply(s, m, { error: `Messages can be up to ${LIMITS.text} characters.` });
         if (!cid) return reply(s, m, { error: 'Missing message id.' });
-        const again = S.byCid.get(s.id, cid);       // the same message sent twice (a retry after a dropped connection)
-        if (again) return reply(s, m, { msg: row(again) });
         if (slow(s)) return reply(s, m, { error: 'Slow down a little.' });
+        let data = null, mime = null;
+        if (up) {
+          data = Buffer.concat(up.parts); mime = sniffImage(data); s.upload = null;
+          if (!mime) return reply(s, m, { error: 'Only pictures and GIFs (PNG, JPEG, WebP, GIF) can be sent.' });
+        }
         const to = m.reply ? S.msg.get(+m.reply) : null;
         const r = S.addMsg.run(ch, s.id, cid, text, to && to.ch === ch ? to.id : null, Date.now());
+        if (data) {
+          S.addFile.run(crypto.randomBytes(12).toString('base64url'), r.lastInsertRowid, mime, up.w, up.h, data.length, data, Date.now());
+          makeRoom();
+        }
         const msg = row(S.msg.get(r.lastInsertRowid));
         everyone({ t: 'msg', msg });
         return reply(s, m, { msg });
       }
+      case 'file-start': {       // about to send a picture or GIF of `size` bytes, w × h, in parts of up to fileChunk
+        const size = Math.floor(+m.size), w = Math.floor(+m.w), hgt = Math.floor(+m.h);
+        if (!(size > 0 && size <= LIMITS.file)) return reply(s, m, { error: `Pictures and GIFs can be up to ${LIMITS.file / 1024 / 1024} MB.` });
+        if (!(w > 0 && w <= 16384 && hgt > 0 && hgt <= 16384)) return reply(s, m, { error: 'That picture\'s size doesn\'t look right.' });
+        if (slow(s, 'other')) return reply(s, m, { error: 'Slow down a little.' });
+        s.upload = { token: crypto.randomBytes(9).toString('base64url'), size, w, h: hgt, parts: [], got: 0 };       // (one at a time: a new one drops the last)
+        return reply(s, m, { up: s.upload.token, chunk: LIMITS.fileChunk });
+      }
+      case 'file-part': {
+        const up = s.upload;
+        if (!up || m.up !== up.token || typeof m.data !== 'string') return reply(s, m, { error: 'That upload is over.' });
+        if (slow(s, 'part', 60)) return reply(s, m, { error: 'Slow down a little.' });
+        const b = Buffer.from(m.data, 'base64');
+        if (!b.length || b.length > LIMITS.fileChunk || up.got + b.length > up.size) { s.upload = null; return reply(s, m, { error: 'That upload went wrong.' }); }
+        if (!up.got && !sniffImage(b)) { s.upload = null; return reply(s, m, { error: 'Only pictures and GIFs (PNG, JPEG, WebP, GIF) can be sent.' }); }
+        up.parts.push(b); up.got += b.length;
+        return reply(s, m, { got: up.got });
+      }
+      case 'file-get': {       // part of a picture: `len` bytes from `at`
+        const at = Math.max(0, Math.floor(+m.at) || 0), len = Math.max(1, Math.min(LIMITS.fileChunk, Math.floor(+m.len) || LIMITS.fileChunk));
+        const f = S.filePart.get(at + 1, len, String(m.id || ''));
+        if (!f) return reply(s, m, { error: 'That picture isn\'t kept any more.' });
+        return reply(s, m, { mime: f.mime, size: f.size, data: Buffer.from(f.part || []).toString('base64') });
+      }
+      case 'react': {       // add (on) or take back an emoji reaction on a message
+        const old = S.msg.get(+m.id), e = cleanEmoji(m.e);
+        if (!old) return reply(s, m, { error: 'That message is gone.' });
+        if (!e) return reply(s, m, { error: 'Reactions are a single emoji.' });
+        if (slow(s, 'react', 20)) return reply(s, m, { error: 'Slow down a little.' });
+        if (m.on) {
+          if (!S.reactKind.get(old.id, e) && S.reactKinds.get(old.id).n >= LIMITS.reactions) return reply(s, m, { error: 'That message has as many kinds of reaction as it can hold.' });
+          S.addReact.run(old.id, s.id, e, Date.now());
+        } else S.dropReact.run(old.id, s.id, e);
+        everyone({ t: 'react', ch: old.ch, id: old.id, reacts: reactsOf(old.id) });
+        return reply(s, m, {});
+      }
       case 'edit': {
         const old = S.msg.get(+m.id), text = cleanText(m.text);
         if (!old || old.author !== s.id) return reply(s, m, { error: 'You can only edit your own messages.' });
-        if (!text || text.length > LIMITS.text) return reply(s, m, { error: `Messages can be up to ${LIMITS.text} characters.` });
+        if ((!text && !S.fileOf.get(old.id)) || text.length > LIMITS.text) return reply(s, m, { error: `Messages can be up to ${LIMITS.text} characters.` });
         if (slow(s)) return reply(s, m, { error: 'Slow down a little.' });
         S.editMsg.run(text, Date.now(), old.id);
         const msg = row(S.msg.get(old.id));
@@ -343,7 +448,7 @@ module.exports = function createHub(opts) {
         if (slow(s, 'other')) return reply(s, m, { error: 'Slow down a little.' });
         return reply(s, m, { code: invite({ by: s.id, days: m.days, uses: m.uses }) });
       }
-      case 'live': {       // this member started, changed or stopped sharing (Together). The code is their PC's watch-together invite.
+      case 'live': {       // this member started, changed or stopped sharing (the Hub tab). The code is their PC's watch-together invite.
         if (!m.on) { if (lives.delete(s.id)) everyone({ t: 'lives', list: liveList() }); recount(); return; }
         if (slow(s, 'live')) return;
         const code = String(m.code || '').replace(/[^A-Za-z0-9_:-]/g, '').slice(0, 400);
@@ -440,6 +545,7 @@ module.exports = function createHub(opts) {
         return reply(s, m, {});
       }
       case 'bc-watch': return bcWatch(s, m);
+      case 'bc-thumb': return bcThumb(s, m);
       case 'surf-watch': return surfWatchMsg(s, m);
       case 'surf-signal': {       // a watcher's setup message for the host, passed on as it is (signed by them)
         const d = m.d;
@@ -504,7 +610,7 @@ module.exports = function createHub(opts) {
     return { relay: turn && relayed(id) ? { port: turn.port(), ...turn.credentials(id, TURN_SECS) } : null, hosts };
   }
 
-  // ---- broadcasts: one per person, two per hub, up to 7 viewers each (§4, §11.3) ----
+  // ---- broadcasts: one per person, four per hub, up to 7 viewers each (§4, §11.3) ----
   // The broadcaster's Drift makes the id (fresh for every broadcast, and signed into every setup message for it). The
   // title is only what the broadcaster called it; the hub can't vouch for it and chat.js says so.
   const bcs = new Map();       // broadcast id -> { id, from, title, kind ('screen' | 'window'), audio, since, viewers: Set of member ids }. Memory only.
@@ -523,9 +629,20 @@ module.exports = function createHub(opts) {
       if (bcs.size >= LIMITS.broadcasts) return reply(s, m, { error: `${LIMITS.broadcasts} people are already broadcasting in this hub. Wait for one of them to stop.`, full: true });
     }
     bcs.set(id, { id, from: s.id, title, kind,       // (Switch source may go from a screen to a window)
-      audio: !!m.audio, since: was ? was.since : Date.now(), viewers: was ? was.viewers : new Set() });
+      audio: !!m.audio, since: was ? was.since : Date.now(), viewers: was ? was.viewers : new Set(), thumb: was ? was.thumb : null, thumbAt: was ? was.thumbAt : 0 });
     bcNews();
     return reply(s, m, { id, ...relayFor(s.id) });
+  }
+  // A still of a broadcast, for everyone's Broadcast grid (§5). The broadcaster signs it, so the hub can pass it on but can't
+  // put a picture of its own on anyone's tile. One every few seconds at most; the latest is kept for whoever comes online,
+  // and goes when the broadcast ends.
+  const STILL = /^data:image\/jpeg;base64,[A-Za-z0-9+/]+=*$/;
+  function bcThumb(s, m) {
+    const b = bcs.get(String(m.id || '')), img = String(m.img || ''), sig = String(m.sig || '');
+    if (!b || b.from !== s.id || !inRoom(s) || img.length > LIMITS.bcThumb || !STILL.test(img) || !/^[A-Za-z0-9_-]{40,200}$/.test(sig)) return;
+    if (Date.now() - b.thumbAt < 4000) return;
+    b.thumbAt = Date.now(); b.thumb = { img, sig };
+    everyone({ t: 'bc-thumb', id: b.id, from: b.from, img, sig });
   }
   function bcWatch(s, m) {
     const b = bcs.get(String(m.id || ''));
@@ -618,7 +735,7 @@ module.exports = function createHub(opts) {
   async function startRelay() {
     relayHost = localAddrs().find((a) => /^\d+\.\d+\.\d+\.\d+$/.test(a)) || '127.0.0.1';
     for (const p of [port, 0]) {
-      // Allocations are only bookkeeping (no socket each). A full room of 16 with 8 talking, plus two broadcasts to 7
+      // Allocations are only bookkeeping (no socket each). A full room of 16 with 8 talking, plus four broadcasts to 7
       // viewers each, is a few hundred; one member broadcasting to 7 while talking to 7 others is about 28.
       const t = createTurn({ secret: crypto.randomBytes(32), relayHost, allowed: relayed, maxAllocations: 512, perMember: 48, log: (x) => opts.log && opts.log('hub relay: ' + x) });
       try { await t.listen(p, opts.relayBind || '0.0.0.0'); turn = t; return; } catch { try { t.close(); } catch { /* never opened */ } }
@@ -697,4 +814,4 @@ module.exports = function createHub(opts) {
     }),
   };
 };
-Object.assign(module.exports, { encodeInvite, decodeInvite, pinOfPeer, memberId, rawKey, loginText, cleanText, cleanAvatar, avatarId, VERSION, LIMITS });
+Object.assign(module.exports, { encodeInvite, decodeInvite, pinOfPeer, memberId, rawKey, loginText, cleanText, cleanAvatar, avatarId, sniffImage, cleanEmoji, VERSION, LIMITS });

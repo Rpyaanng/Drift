@@ -167,8 +167,8 @@ module.exports = function createP2P(hooks) {
   const cleanName = (n) => String(n || '').replace(/[\x00-\x1f<>]/g, '').trim().slice(0, 24);
   const who = () => [...peers.values()].map((p) => ({ name: p.name, ready: p.ready }));
   // How many people (this PC included) are looking at each of Drift's panel tabs. The sharing PC counts and tells everyone.
-  const TABS = ['scenes', 'media', 'surf', 'share', 'settings'];
-  const cleanTab = (t) => (TABS.includes(t) ? t : '');
+  const TABS = ['scenes', 'media', 'surf', 'hub', 'settings'];
+  const cleanTab = (t) => (t === 'share' ? 'hub' : TABS.includes(t) ? t : '');       // ('share': the Hub tab, from a Drift before 1.8.3)
   function tabCounts() {
     const out = {};
     for (const t of [myTab, ...[...peers.values()].map((p) => p.tab)]) if (t) out[t] = (out[t] || 0) + 1;

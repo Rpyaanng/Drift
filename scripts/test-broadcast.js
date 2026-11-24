@@ -1,9 +1,11 @@
 // A broadcast with three real copies of Drift on this PC (each with its own DRIFT_USERDATA), pressing the real buttons
-// (docs/plans/broadcast.md §10, Phase 8). Hosty hosts a hub and goes live from the Broadcast tab (DRIFT_TESTBROADCAST:
-// a moving test pattern stands in for the screen picked); Guesty and Third press Watch, and each gets the full-screen
-// Broadcast view. Guesty's cursor goes nowhere until Guesty turns "Share my cursor" on for that broadcast; then it reaches
-// Hosty's pointer overlay and Third's view. Hosty switches source (nobody drops), pauses and resumes; Third presses Stop
-// watching in the view's bar; Hosty stops, and Guesty's view goes. Sound (§8): Hosty goes live with Sound on while a
+// (docs/plans/broadcast.md §10, Phase 8). Hosty hosts a hub and goes live from the Share tab (DRIFT_TESTBROADCAST:
+// a moving test pattern stands in for the screen picked); Guesty and Third pick the Share tab, their screen turns into the
+// grid with Hosty's still on a tile, and Watch fills the screen with it. Guesty presses Back (the grid again, still playing
+// on the same connection) and Watch again. Guesty's cursor goes nowhere until Guesty turns "Share my cursor" on for that
+// broadcast; then it reaches Hosty's pointer overlay and Third's view. Hosty switches source (nobody drops), pauses and
+// resumes; Third presses Stop watching in the view's bar (back to the grid). Guesty goes live too, and Third plays both in
+// the grid side by side, fills the screen with one and goes Back. Hosty stops, and Guesty's tile goes. Sound (§8): Hosty goes live with Sound on while a
 // quiet 1 kHz tone plays from another program (about -50 dBFS, so barely audible), and the viewers get that tone, in
 // stereo, with its own volume; Hosty turns Sound off while live and nobody reconnects. Run once honestly, then for ways a hostile hub can
 // interfere (DRIFT_HUB_TAMPER on what Hosty sends Third): Third refuses the broadcast and says so, Guesty still watches.
@@ -45,14 +47,19 @@ function tone(dir) {
 
 function check(mode, R) {
   const H = R.host.steps, G = R.guest.steps, T = R.third.steps, tampered = mode !== 'honest';
-  ok(H.live && H.trayLive, `${mode}: Hosty goes live from the Broadcast tab, and the tray light shows`);
+  ok(H.live && H.trayLive, `${mode}: Hosty goes live from the Share tab, and the tray light shows`);
   ok(/Live · Screen \d/.test(H.barLive || '') && /Stop/.test(H.barLive || ''), `${mode}: Hosty's hub bar says "Live · Screen" with Stop ("${H.barLive}")`);
   ok(/everything your PC plays, except Drift/.test(H.soundNote || ''), `${mode}: with a screen picked, Sound on says what friends hear ("${H.soundNote}")`);
   ok(H.soundLive && H.soundLive.live === 'on' && H.soundLive.hub, `${mode}: Hosty goes live with sound: the helper captures, and the hub lists it with sound (${JSON.stringify(H.soundLive)})`);
   const viewers = tampered ? [['Guesty', G]] : [['Guesty', G], ['Third', T]];
+  for (const [who, s] of [['Guesty', G], ['Third', T]]) {
+    ok(s.scene, `${mode}: ${who} picks the Share tab: their screen shows the grid, with a tile for Hosty`);
+    const st = Array.isArray(s.still) ? s.still[0] || {} : {};
+    ok(st.stillW >= 1024 && (st.btns || []).includes('Watch') && !(st.btns || []).includes('Preview'), `${mode}: ${who}'s tile shows Hosty's still (${st.stillW} px wide), with Watch and no "Preview" while only one is up (${JSON.stringify(st.btns)})`);
+  }
   for (const [who, s] of viewers) {
     const f = s.frames || {};
-    ok(s.viewOn, `${mode}: ${who} presses Watch: the Broadcast view opens and frames arrive`);
+    ok(s.viewOn, `${mode}: ${who} presses Watch: the broadcast fills the screen and frames arrive`);
     ok(f.later > f.first && f.first > 0, `${mode}: ${who}'s picture keeps changing (${f.first} → ${f.later} frames)`);
     ok(/^1280x720$/.test(f.video || ''), `${mode}: ${who} gets the whole picture (${f.video})`);
     ok(f.path === 'relay -> relay', `${mode}: ${who}'s broadcast goes through the hub's relay (${f.path})`);
@@ -70,6 +77,26 @@ function check(mode, R) {
     ok(snd.avDelay === 100 && s.soundOffView && s.soundOffView.avDelay === null, `${mode}: ${who} holds the picture back 100 ms to match the sound, and not once it has none (${snd.avDelay}, then ${s.soundOffView && s.soundOffView.avDelay})`);
     ok(snd.slider && s.soundVol && Math.abs(s.soundVol.volume - 0.2) < 0.01 && Math.abs(s.soundVol.saved - 0.2) < 0.01, `${mode}: ${who}'s broadcast volume slider works and is kept apart from voice (${JSON.stringify(s.soundVol)})`);
     ok(s.soundOffView && /no sound/.test(s.soundOffView.card || ''), `${mode}: ${who}: when Hosty turns Sound off, the view goes quiet and the card says "no sound"`);
+  }
+  const bk = G.back || {}, scr = bk.screen || [0, 0], r = bk.rect || [0, 0, 0, 0];
+  ok(bk.full === '' && bk.live && bk.shown && !bk.barOut, `${mode}: Guesty presses Back: the grid again, Hosty still playing in the tile (${JSON.stringify({ full: bk.full, live: bk.live, shown: bk.shown })})`);
+  ok((r[2] >= (scr[0] - 32) * 0.95 || r[3] >= (scr[1] - 76) * 0.95) && r[2] < scr[0] && r[1] >= 50, `${mode}: ...one tile as big as fits below the hub bar (${JSON.stringify(r)} on ${scr.join('x')})`);
+  ok(bk.later > bk.first && bk.same, `${mode}: ...on the same connection, the picture still moving (${bk.first} → ${bk.later})`);
+  ok((bk.btns || []).includes('Watch'), `${mode}: ...and its tile has Watch (${JSON.stringify(bk.btns)})`);
+  ok(G.watchAgain && G.watchAgain.full && G.watchAgain.same, `${mode}: Watch fills the screen again, without reconnecting (${JSON.stringify(G.watchAgain)})`);
+  ok(G.guestLive && G.guestStopped, `${mode}: Guesty goes live as well, while watching Hosty's, and stops`);
+  if (!tampered) {
+    const two = T.twoTiles || [], tg = T.twoInGrid || {};
+    ok(two.length === 2 && two.every((t) => t.btns.includes('Watch') && t.btns.includes('Preview')), `${mode}: with two up, Third's tiles each have Watch and "Preview" (${JSON.stringify(two.map((t) => t.btns))})`);
+    ok(T.twoPlaying, `${mode}: Third plays both in the grid: both connect and frames arrive`);
+    ok(tg.full === '' && tg.apart && (tg.shown || []).every(Boolean) && tg.hosty[1] > tg.hosty[0] && tg.guesty[1] > tg.guesty[0], `${mode}: ...side by side, both pictures moving (${JSON.stringify(tg)})`);
+    ok((tg.btns || []).every((b) => b.includes('Watch') && b.includes('Stop preview')), `${mode}: ...each with Watch and Stop preview (${JSON.stringify(tg.btns)})`);
+    const w = (tg.rects || [])[0] || [0, 0, 0, 0], [sw, sh] = tg.screen || [0, 0];
+    ok(w[2] * 2 + 10 >= (sw - 32) * 0.95 || w[3] * 2 + 10 >= (sh - 76) * 0.95, `${mode}: ...the two tiles as big as fit (${w[2]}x${w[3]} each on ${sw}x${sh})`);
+    const of = T.oneFull || {};
+    ok(of.full && of.hostyLive && of.hostyMuted && (of.shown || []).every(([who, sh]) => (who === 'Guesty') === sh), `${mode}: Watch on Guesty's fills the screen; Hosty's stays connected, hidden and quiet (${JSON.stringify(of)})`);
+    ok(T.backToTwo, `${mode}: Back: both playing in the grid again`);
+    ok(T.guestTileGone, `${mode}: Guesty stops, and their tile goes from Third's grid`);
   }
   const so = H.soundOff || {};
   ok(so.helper === false && so.hub === false && so.live === 'off' && so.sending === false, `${mode}: Hosty turns Sound off while live: the helper stops, and the hub hears of it (${JSON.stringify(so)})`);
@@ -93,12 +120,12 @@ function check(mode, R) {
   ok(H.afterSwitch && H.afterSwitch.track !== H.trackBefore && Object.values(H.afterSwitch.peers).some((p) => p.state === 'connected'), `${mode}: Switch source swaps the capture without dropping anyone`);
   ok(/paused/.test(H.barPaused || ''), `${mode}: Hosty's hub bar says paused ("${H.barPaused}")`);
   if (!tampered) {
-    ok(T.thirdStopped, `${mode}: Third presses Stop watching in the view's bar: the view goes`);
+    ok(T.thirdStopped && T.thirdStopped.full === '', `${mode}: Third presses Stop watching in the view's bar: back to the grid, Hosty's tile a still (${JSON.stringify(T.thirdStopped)})`);
     ok(G.guestStillWatching, `${mode}: ...and Guesty keeps watching`);
     ok(JSON.stringify(H.hubViewersAfterThird) === JSON.stringify(['Guesty']), `${mode}: the hub lists only Guesty watching (${JSON.stringify(H.hubViewersAfterThird)})`);
   }
-  ok(H.stopped && H.overlayGone, `${mode}: Hosty presses Stop broadcasting: the broadcast window and the overlay go`);
-  ok(G.guestViewGone, `${mode}: ...and Guesty's Broadcast view goes`);
+  ok(H.stopped && H.overlayGone, `${mode}: Hosty presses Stop sharing: the broadcast window and the overlay go`);
+  ok(G.guestViewGone, `${mode}: ...and Guesty's tile goes, leaving the empty grid`);
   if (tampered) {
     ok(!T.viewOn || !(T.frames && T.frames.later > 0), `${mode}: Third never shows the tampered broadcast`);
     ok(T.verdict !== 'verified', `${mode}: Third never shows it as verified`);
