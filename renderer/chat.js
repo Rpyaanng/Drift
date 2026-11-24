@@ -93,13 +93,15 @@
     if (at < text.length) out.push(text.slice(at));
     return out;
   }
+  // "Are you sure?" in Drift's own box (ask() in renderer/app.js), not the system's
+  const ask = (o) => (window.driftAsk ? window.driftAsk(o) : Promise.resolve(false));
   // A link says where it really goes before it opens (the host as the browser sees it, so look-alike letters show up).
   function link(url) {
     let u = null;
     try { u = new URL(url); } catch { return url; }
-    return h('a', { href: '#', title: u.hostname, onclick: (e) => {
+    return h('a', { href: '#', title: u.hostname, onclick: async (e) => {
       e.preventDefault();
-      if (!confirm(`Open this link in Surf?\n\nIt goes to:  ${u.hostname}\n\n${u.href}`)) return;
+      if (!(await ask({ title: 'Open this link in Surf?', note: `It goes to ${u.hostname}`, detail: u.href, yes: 'Open it', danger: false }))) return;
       api.cmd({ type: 'surf', do: 'new' }); api.cmd({ type: 'surf', do: 'go', text: u.href });
     } }, url);
   }
@@ -184,7 +186,7 @@
       on && activeHubId() === x.id ? item(pinnedHere ? 'Let voice follow the open hub' : 'Keep voice in this hub', pinnedHere ? 'Voice follows whichever hub is open here again' : 'Stay in this hub\'s voice room when you open another hub', () => api.patch({ voice: { pin: pinnedHere ? '' : x.id } })) : null,
       on ? item('Disconnect', 'Go offline from this hub without leaving it. Press Connect to come back.', () => call('disconnect', x.id)) : null,
       x.mine ? null       // (Host / Stop hosting is the button at the bottom)
-        : item('Leave hub', 'You\'ll need a new invite to come back.', () => { if (confirm(`Leave ${x.name}? You'll need a new invite to come back.`)) call('leave', x.id).then(() => { sel = { hub: '', ch: 0 }; keep(); }); }, true));
+        : item('Leave hub', 'You\'ll need a new invite to come back.', async () => { if (await ask({ title: `Leave ${x.name}?`, note: 'You\'ll need a new invite to come back.', yes: 'Leave hub' })) call('leave', x.id).then(() => { sel = { hub: '', ch: 0 }; keep(); }); }, true));
   }
   document.addEventListener('click', (e) => { if (menuHub && !e.target.closest('.chMenu, .chMenuBtn')) { menuHub = ''; drawSide(); } });
   document.addEventListener('keydown', (e) => { if (menuHub && e.key === 'Escape') { menuHub = ''; drawSide(); } });
@@ -229,7 +231,7 @@
       tools.append(h('button.mini', { title: 'React with any emoji', onclick: (ev) => openPick('emoji', m, ev.currentTarget) }, 'React'));
       tools.append(h('button.mini', { onclick: () => setMode('reply', m) }, 'Reply'));
       if (mine) tools.append(h('button.mini', { onclick: () => setMode('edit', m) }, 'Edit'));
-      if (mine || x.host) tools.append(h('button.mini.danger', { onclick: () => { if (confirm('Delete this message for everyone?')) call('delete', x.id, m.id).then((r) => r.error && toast(r.error)); } }, 'Delete'));
+      if (mine || x.host) tools.append(h('button.mini.danger', { onclick: async () => { if (await ask({ title: 'Delete this message?', note: 'It\'s deleted for everyone in the hub.', yes: 'Delete' })) call('delete', x.id, m.id).then((r) => r.error && toast(r.error)); } }, 'Delete'));
       row.append(tools);
       list.append(row);
       prev = m;
@@ -476,8 +478,8 @@
           : h('button.btn', { onclick: () => joinLive(x, l) }, 'Join')));
     }
   }
-  function joinLive(x, l) {
-    if (p2p.role === 'host' && !confirm(`Stop sharing and join ${nameOf(x, l.from)}?`)) return;
+  async function joinLive(x, l) {
+    if (p2p.role === 'host' && !(await ask({ title: `Join ${nameOf(x, l.from)}?`, note: 'What you\'re sharing stops first.', yes: 'Stop sharing and join', danger: false }))) return;
     joined = l.code;
     api.cmd({ type: 'share-join', code: l.code });
   }
@@ -831,7 +833,7 @@
   $('#chHost').addEventListener('click', async () => {
     if (!info.canHost) {
       const mine = info.hubs.find((y) => y.mine), others = mine ? mine.members.filter((p) => p.online && p.id !== info.me.id).length : 0;
-      if (others && !confirm(`Stop hosting? ${others === 1 ? 'The 1 person' : `The ${others} people`} here will be disconnected.`)) return;
+      if (others && !(await ask({ title: 'Stop hosting?', note: `${others === 1 ? 'The 1 person' : `The ${others} people`} here will be disconnected.`, yes: 'Stop hosting' }))) return;
       const r = await call('unhost'); if (r.error) toast(r.error);
       refresh(); return;
     }
@@ -845,12 +847,12 @@
     toast(r.error || 'Invite copied. Friends paste it into Drift\'s Chat tab. It works for 7 days.');
   }
   async function withdraw(x) {
-    if (!confirm('Stop every invite code made so far from working? People already in the hub stay.')) return;
+    if (!(await ask({ title: 'Withdraw every invite?', note: 'Every invite code made so far stops working. People already in the hub stay.', yes: 'Withdraw invites' }))) return;
     const r = await call('withdrawInvites', x.id);
     toast(r.error || 'Every invite so far has stopped working.');
   }
   async function removePerson(x, p) {
-    if (!confirm(`Remove ${p.name} from ${x.name}? They're disconnected now and can't come back, even with a new invite.`)) return;
+    if (!(await ask({ title: `Remove ${p.name} from ${x.name}?`, note: 'They\'re disconnected now and can\'t come back, even with a new invite.', yes: 'Remove' }))) return;
     const r = await call('removeMember', x.id, p.id);
     if (r.error) toast(r.error);
   }

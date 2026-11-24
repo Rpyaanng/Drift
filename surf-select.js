@@ -15,15 +15,25 @@
     const root = host.attachShadow({ mode: 'closed' });
     const below = innerHeight - r.bottom, up = below < 160 && r.top > below;
     const room = Math.max(80, (up ? r.top : below) - 8);
+    // In the box's own colours, as a native list takes them: those its options are given (a dark page styles them dark, Drift's start
+    // page among them), else dark when the box asks for a dark colour scheme, else the light list Chromium draws.
+    const opt = sel.querySelector('option'), oc = opt ? getComputedStyle(opt) : null, see = (c) => !!c && !/^(transparent|rgba\(\d+, \d+, \d+, 0\))$/.test(c);
+    const lum = (c) => { const m = /(\d+), (\d+), (\d+)/.exec(c || ''); return m ? (0.2126 * m[1] + 0.7152 * m[2] + 0.0722 * m[3]) / 255 : 1; };
+    const dark = oc && see(oc.backgroundColor) ? lum(oc.backgroundColor) < 0.5 : /dark/.test(getComputedStyle(sel).colorScheme || '');
+    const bg = oc && see(oc.backgroundColor) ? oc.backgroundColor : dark ? '#1b1e27' : '#fff', fg = oc && see(oc.backgroundColor) ? oc.color : dark ? '#f2f3f5' : '#111';
+    const look = dark
+      ? `background: ${bg}; color: ${fg}; border: 1px solid rgba(255,255,255,.12); border-radius: 10px; padding: 4px; box-shadow: 0 12px 32px rgba(0,0,0,.5); color-scheme: dark;`
+      : `background: ${bg}; color: ${fg}; border: 1px solid #8a8a8a; box-shadow: 0 4px 14px rgba(0,0,0,.25); color-scheme: light;`;
     root.innerHTML = `<style>
-      .list { position: fixed; left: ${Math.max(0, Math.min(r.left, innerWidth - Math.max(r.width, 120)))}px; ${up ? `bottom: ${innerHeight - r.top}px` : `top: ${r.bottom}px`};
+      .list { position: fixed; left: ${Math.max(0, Math.min(r.left, innerWidth - Math.max(r.width, 120)))}px; ${up ? `bottom: ${innerHeight - r.top + (dark ? 4 : 0)}px` : `top: ${r.bottom + (dark ? 4 : 0)}px`};
         min-width: ${Math.max(r.width, 120)}px; max-width: 90vw; max-height: ${Math.min(room, innerHeight * 0.6)}px; overflow: auto; box-sizing: border-box;
-        background: #fff; color: #111; border: 1px solid #8a8a8a; box-shadow: 0 4px 14px rgba(0,0,0,.25); font: 14px/1.2 system-ui, sans-serif; color-scheme: light; }
-      .o { padding: 5px 10px; white-space: nowrap; cursor: default; }
-      .o.on { background: #1a73e8; color: #fff; }
-      .o.off { color: #999; }
-      .g { padding: 5px 8px 3px; font-weight: 600; color: #444; }
+        font: 14px/1.2 system-ui, sans-serif; ${look} }
+      .o { padding: ${dark ? '7px 10px' : '5px 10px'}; white-space: nowrap; cursor: default; ${dark ? 'border-radius: 6px;' : ''} }
+      .o.on { ${dark ? 'background: rgba(255,255,255,.1); color: #fff;' : 'background: #1a73e8; color: #fff;'} }
+      .o.off { color: ${dark ? 'rgba(255,255,255,.35)' : '#999'}; }
+      .g { padding: 5px 8px 3px; font-weight: 600; color: ${dark ? 'rgba(255,255,255,.55)' : '#444'}; }
       .g ~ .o { padding-left: 20px; }
+      .list::-webkit-scrollbar { width: 8px; } .list::-webkit-scrollbar-thumb { background: ${dark ? 'rgba(255,255,255,.16)' : 'rgba(0,0,0,.25)'}; border-radius: 4px; }
     </style><div class="list"></div>`;
     const list = root.querySelector('.list');
     let i = 0;

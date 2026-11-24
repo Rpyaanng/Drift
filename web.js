@@ -95,6 +95,7 @@ let uaSet = false;
 //   win(key)       monitor `key`'s Drift window, and display(key) its display (for the offscreen page's size, scale and frame rate)
 //   pageSize(key)  { w, h }: the pixels to draw the page at, with the browser on monitor `key` (that monitor's own size, stretched a little toward mirrors' shapes)
 //   gain()         the volume mixer's level for the pages' sound, 0..1
+//   accent()       { a, b }: Drift's accent and its second colour, for the start page (surf-home.js /api/accent)
 // and for the hub's browser (`headless`) only:
 //   muted()        should its pages be silent on this PC (a capture still has their sound: spike S1)
 //   held(d)        a download is waiting for the host: d = { id, name, size, site, who, save(), refuse() }. Returns false to refuse it now.
@@ -134,7 +135,7 @@ module.exports = function createWeb(hooks, opts = {}) {
   // the host may change it, which they're taken to be doing when the last click or key in its pages was theirs (`lastHand`).
   let lastHand = false;
   const home = createHome(PART, { private: headless, tabs: () => tabs.length, front: () => (on && !parked && !out && alive() ? cur().url : ''),
-    showcase: hooks.showcase, owner: hooks.owner, hostTouched: () => lastHand });
+    showcase: hooks.showcase, owner: hooks.owner, hostTouched: () => lastHand, accent: hooks.accent });
   const restream = () => { sid = (alive() && cur().ready) || (out && out.id) ? `${run}-${++made}` : ''; };       // a page still on its way in can't be captured yet
 
   function sess() {

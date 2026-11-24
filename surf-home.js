@@ -8,7 +8,9 @@
 // GET  /api/weather?q=city    { place, now: { t, code, wind, hum, feels }, days: [{ d, hi, lo, code }], unit } (Open-Meteo)
 // GET  /api/news?src=hn       [{ title, url, by, score, n }] (Hacker News)
 // GET  /api/stats             { system, browsing } (either null when not shown)
-// GET  /api/mode              { hub, canEdit, specs, browsing }: on the hub's browser, what its host lets guests see, and
+// GET  /api/accent            { a, b }: Drift's own accent and second colour (the palette picked in Scenes), which the page takes
+//                             unless one of its own is picked in Customize
+// GET  /api/mode             { hub, canEdit, specs, browsing }: on the hub's browser, what its host lets guests see, and
 //                             whether the last click in it was the host's (only they may change its start page)
 //
 // Only the start page itself may use these. Chromium hands a custom scheme's handler no Origin or Referer, so the page is served
@@ -190,6 +192,7 @@ module.exports = function createHome(part, opts = {}) {
       // click or key in it came from this PC), and shows the host's specs and browsing only if they've chosen to in Settings.
       const hub = !!opts.private, show = hub && opts.showcase ? opts.showcase() || {} : {};
       const canEdit = !hub || !!(opts.hostTouched && opts.hostTouched());
+      if (what === 'accent') return json(opts.accent ? opts.accent() : null);
       if (what === 'mode') return json({ hub, canEdit, specs: !hub || !!show.specs, browsing: !hub || !!show.browsing });
       if (what === 'settings') {
         if (req.method === 'PUT' || req.method === 'POST') {

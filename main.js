@@ -952,6 +952,7 @@ function guestCmd(m) {
 // their mouse, keyboard and Surf bar sent back. Your own browser is put away meanwhile (surfKept) and comes back, with its
 // tabs, once you disconnect.
 const SURF = ['go', 'home', 'new', 'tab', 'close', 'back', 'fwd', 'reload', 'hard', 'reopen', 'step', 'nth', 'zoom'];       // (the last five: keyboard shortcuts)
+let appAccent = { a: '#22c08a', b: '#b58cff' };       // Drift's accent and its second colour, as the windows last said ('accent'): the start page's by default
 const screenFor = (key) => (visWins.some((x) => x.key === key) ? key : (visWins.find((x) => (allDisplays().find((d) => d.key === x.key) || {}).primary) || visWins[0] || { key: 'd0' }).key);
 const SURF_FIT_MIN = 0.85;       // while mirroring, the least the Surf monitor shrinks the page to make room for other monitors' shapes (pageSize)
 const web = createWeb({
@@ -974,6 +975,7 @@ const web = createWeb({
   profile: () => path.join(app.getPath('userData'), 'browser-profile'),
   gpu: () => !!state.surfGpu,
   gain: () => mixGain().surf,
+  accent: () => appAccent,
   win: (key) => { const x = visWins.find((y) => y.key === key); return x && !x.win.isDestroyed() ? x.win : null; },
   display: (key) => { const x = visWins.find((y) => y.key === key); return x && !x.win.isDestroyed() ? screen.getDisplayMatching(x.win.getBounds()) : null; },
   // The size in pixels to draw the page at, with the browser on monitor `key`. Its layout is that monitor's own, at its scale: it's
@@ -1053,6 +1055,7 @@ function hubBrowser() {
       allowLan: () => state.hubSurf.allowLan,
       showcase: () => ({ specs: state.hubSurf.showSpecs, browsing: state.hubSurf.showBrowsing }),       // the host's choice, in Settings
       owner: () => web.home,
+      accent: () => appAccent,       // (the host's: it's their start page everyone in the hub sees)
       cursor: ssCursor,
       // Enter that the page didn't take (web.js "Enter"): the chat box of whoever pressed it, the host's here, a member's on their PC
       chatOk: (who) => { const h = chat && chat.info().hubs.find((x) => x.id === hubWebId); return !!(h && h.channels.length) && (who !== chat.myId() || h.status === 'connected'); },
@@ -2946,6 +2949,11 @@ ipcMain.on('cmd', async (e, c) => {
       if (names.length) sfxPlay(names, !!c.preview);
       break;
     }
+    case 'accent': {       // the windows' accent (the palette's main colour, renderer/app.js setAccent): Surf's start page takes it
+      const hex = (x) => (/^#[0-9a-f]{6}$/i.test(String(x)) ? String(x).toLowerCase() : '');
+      if (hex(c.a) && hex(c.b)) appAccent = { a: hex(c.a), b: hex(c.b) };
+      break;
+    }
     case 'tab-focus': {       // the panel tab a window is on: kept for a rebuild, and friends see how many are on each
       const v = visWins.find((x) => x.win.webContents === e.sender);
       if (v) tabOf[v.key] = String(c.tab || '').slice(0, 20);
@@ -3551,6 +3559,96 @@ async function runShots() {
       const off = await press();
       await pageRun(wc, () => { if (window.chatUI) window.chatUI.closeQuick(); });
       tl('enterOverHubPage', { ready, inBox, off });
+      // "Are you sure?" in the start page's own box (surf-home.html ask), where the browser's confirm() used to be: in the hub's
+      // browser that one never showed (surf-hub-guard.js answers it "no"), so Reset never worked there
+      tl('startPageAsk', ready ? await f().executeJavaScript(`(async () => {
+        document.querySelector('#customize').click(); await new Promise((r) => setTimeout(r, 300));
+        const reset = [...document.querySelectorAll('button')].find((b) => b.textContent === 'Reset to defaults');
+        if (!reset) return { reset: false };
+        reset.click(); await new Promise((r) => setTimeout(r, 100));
+        const box = document.querySelector('.ask'), r = { reset: true, shown: !!box, title: box ? box.querySelector('b').textContent : '', focused: !!box && document.activeElement === box.querySelector('button.danger') };
+        if (box) [...box.querySelectorAll('button')].find((b) => b.textContent === 'Cancel').click();
+        r.gone = !document.querySelector('.ask');
+        return r;
+      })()`).catch((e) => ({ err: e.message })) : null);
+      // the start page's label: Drift's logo and "Drift · Surf", Surf in Drift's accent, which follows the palette picked in Scenes
+      // (renderer/app.js setAccent → main → surf-home.js /api/accent) unless the page has one of its own picked
+      const look = () => f().executeJavaScript(`(() => { const l = document.querySelector('.brand .logo'), r = l ? l.getBoundingClientRect() : null, sw = document.querySelector('.swatches button');
+        return { logo: r ? [Math.round(r.width), Math.round(r.height)] : null, text: document.querySelector('.brand').innerText.replace(/\\s+/g, ' ').trim(),
+          surf: getComputedStyle(document.querySelector('.brand .surf')).color, accent: getComputedStyle(document.documentElement).getPropertyValue('--accent').trim(),
+          hi: getComputedStyle(document.documentElement).getPropertyValue('--hi').trim(), firstSwatch: sw ? sw.className : '' }; })()`).catch((e) => ({ err: e.message }));
+      const rgbOf = (x) => `rgb(${parseInt(x.slice(1, 3), 16)}, ${parseInt(x.slice(3, 5), 16)}, ${parseInt(x.slice(5, 7), 16)})`;
+      const was = state.palette;
+      const first = ready ? await look() : null, appFirst = { ...appAccent };
+      patch({ palette: 'sunset' });
+      const followed = ready && await until(async () => (await look()).accent === appAccent.a && appAccent.a !== appFirst.a, 8000);
+      await wait(800);       // (the label's colour eases over .6 s)
+      const after = ready ? await look() : null;
+      tl('startPageLabel', { first, appFirst, followed, after, app: { ...appAccent }, surfIsAccent: !!after && after.surf === rgbOf(appAccent.a) });
+      patch({ palette: was });
+      // a list opened in the hub's browser (drawn offscreen: surf-select.js draws it) is in the page's own dark colours. Clicked as
+      // anyone's mouse is, through web.js input(); the picture is kept for a look (select.png)
+      if (ready) {
+        await f().executeJavaScript("document.body.classList.remove('custom'); true");
+        const at = await f().executeJavaScript('(() => { const r = document.querySelector("#engine").getBoundingClientRect(); return { x: (r.left + r.width / 2) / innerWidth, y: (r.top + r.height / 2) / innerHeight }; })()');
+        hw.input({ k: 'down', x: at.x, y: at.y, b: 0, n: 1 }, true, chat.myId(), wc); hw.input({ k: 'up', x: at.x, y: at.y, b: 0, n: 1 }, true, chat.myId(), wc);
+        await wait(700);
+        const opened = await f().executeJavaScript("[...document.body.children].some((e) => e.style.zIndex === '2147483647')");
+        let shot = '';
+        try { const pw = BrowserWindow.getAllWindows().find((w) => w.webContents.mainFrame === f()); if (pw) { const img = await pw.webContents.capturePage(); fs.writeFileSync(path.join(SHOT_DIR, 'select.png'), img.toPNG()); shot = img.getSize().width + 'x' + img.getSize().height; } } catch (e) { shot = 'no picture: ' + e.message; }
+        tl('selectList', { opened, shot });
+      }
+      // the Surf tab showing the hub's stream: whose it is sits at the end of the bar's row of tabs, not floating over the page, and the
+      // hint about the edges (shown the first few times, not in tests) never covers the bar
+      if (ready) {
+        hubShow((visWins.find((x) => x.win.webContents === wc) || {}).key);
+        await until(() => pageRun(wc, () => document.querySelector('#ssLine').classList.contains('on')), 8000);
+        await wait(400);
+        tl('ssDocked', await pageRun(wc, () => {
+          const el = document.querySelector('#ssLine'), bar = document.querySelector('#surfBar'), tabs = document.querySelector('#sbTabs').getBoundingClientRect();
+          bar.style.transition = 'none'; bar.classList.add('show');
+          const r = el.getBoundingClientRect(), t = document.querySelector('#sbTabs').getBoundingClientRect();
+          return { on: el.classList.contains('on'), inBar: !!el.closest('#surfBar .sbTop'), docked: el.classList.contains('docked'), text: el.textContent, title: el.title,
+            level: Math.abs((r.top + r.height / 2) - (t.top + t.height / 2)) < 2, after: r.left >= t.right - 1, rightEdge: Math.round(bar.getBoundingClientRect().right - r.right), had: Math.round(tabs.width) };
+        }));
+        await pageRun(wc, () => { const bar = document.querySelector('#surfBar'); bar.classList.remove('show'); bar.style.transition = ''; });
+      }
+    }
+    // Drift's own "are you sure?" (ask() in app.js), in place of the system's confirm(): Delete asks first, Cancel keeps the
+    // message; Enter answers with the button that has the keyboard (yes), Esc says no
+    {
+      wc.send('cmd', { type: 'show-panel', tab: 'hub' }); await wait(600);
+      const count = () => pageRun(wc, () => document.querySelectorAll('#chList .chMsg').length);
+      const n0 = await count();
+      const del = await pageRun(wc, async () => {
+        const b = [...document.querySelectorAll('#chList .chMsg .chTools button')].find((x) => x.textContent === 'Delete');
+        if (!b) return { found: false };
+        b.click(); await new Promise((r) => setTimeout(r, 100));
+        const c = document.querySelector('#confirm'), r = { found: true, on: c.classList.contains('on'), title: document.querySelector('#confirmTitle').textContent, yes: document.querySelector('#confirmYes').textContent, red: document.querySelector('#confirmYes').classList.contains('danger'), focused: document.activeElement === document.querySelector('#confirmYes') };
+        document.querySelector('#confirmNo').click();
+        r.closed = !c.classList.contains('on');
+        return r;
+      });
+      await wait(800);
+      const keys = await pageRun(wc, async () => {
+        const key = (k) => setTimeout(() => dispatchEvent(new KeyboardEvent('keydown', { key: k, cancelable: true })), 50);
+        const shown = () => getComputedStyle(document.querySelector('#confirmDetail')).display;
+        const p0 = window.driftAsk({ title: 'Zero?', detail: 'https://example.com/a' }); const withDetail = shown(); document.querySelector('#confirmNo').click(); await p0;
+        const p1 = window.driftAsk({ title: 'One?', yes: 'Yes' }); const noDetail = shown(); key('Enter'); const enter = await p1;
+        const p2 = window.driftAsk({ title: 'Two?', yes: 'Yes' }); key('Escape'); const esc = await p2;
+        const p3 = window.driftAsk({ title: 'Three?', yes: 'Go', danger: false }); const plain = document.querySelector('#confirmYes').className;
+        const p4 = window.driftAsk({ title: 'Four?' }); const replaced = await p3; document.querySelector('#confirmNo').click(); await p4;
+        return { withDetail, noDetail, enter, esc, plain, replaced, closed: !document.querySelector('#confirm').classList.contains('on') };
+      });
+      // Settings' Reset everything asks first; Cancel leaves every setting as it was
+      const before = JSON.stringify(state.share);
+      state.share.name = 'Hosty kept'; const mark = JSON.stringify(state.share);
+      const resetAsk = await pageRun(wc, () => { document.querySelector('#reset').click(); const r = { on: document.querySelector('#confirm').classList.contains('on'), title: document.querySelector('#confirmTitle').textContent, yes: document.querySelector('#confirmYes').textContent }; document.querySelector('#confirmNo').click(); return r; });
+      await wait(600);
+      resetAsk.untouched = JSON.stringify(state.share) === mark; state.share = JSON.parse(before);
+      tl('askBox', { del, kept: (await count()) === n0, keys, resetAsk });
+      // Settings' plain text box (Local addresses it may open) is styled like the others
+      tl('textBox', await pageRun(wc, () => { const s = getComputedStyle(document.querySelector('#hsLan')); return { bg: s.backgroundColor, radius: s.borderRadius, color: s.color }; }));
     }
     // the picture over a game you broadcast: the overlay window, sent what bcOvSync sends it (the message, then its picture)
     const ov = new BrowserWindow({ show: false, webPreferences: { preload: path.join(__dirname, 'bc-overlay-preload.js'), sandbox: true, contextIsolation: true } });
@@ -3886,7 +3984,7 @@ async function runShots() {
         log.push('surf guest: ' + JSON.stringify(f1) + ` · ${((f1.framesIn - f0.framesIn) / 3).toFixed(1)} frames a second, ${(((f1.bytesIn - f0.bytesIn) * 8) / 3e6).toFixed(2)} Mb/s`);
         tl('the host\'s certificate checked', await until(() => (chat.info().ss.watching || {}).verdict === 'verified', 40000));       // (room for one reconnect: see ssCert in renderer/app.js)
         tl('the Surf bar shows the host\'s page', await until(() => surfView().title === 'Test one' && surfView().tabs.length >= 1, 15000));
-        tl('the line along the top says whose it is', await until(() => js("document.querySelector('#ssLine').classList.contains('on') && /Surf stream · .* · everyone can control/.test(document.querySelector('#ssLine').textContent)"), 10000));
+        tl('the Surf bar says whose stream it is', await until(() => js("document.querySelector('#ssLine').classList.contains('on') && !!document.querySelector('#ssLine').closest('#surfBar') && /Surf stream · .* · everyone can control/.test(document.querySelector('#ssLine').title)"), 10000));
         await step('watching');
         ipcMain.emit('cmd', { sender: wc }, { type: 'web-ptr', x: 0.6, y: 0.6 });
         click(0.25, 0.25);
@@ -4549,16 +4647,16 @@ async function runShots() {
       if (tab === 'scenes') { await pageJs(visWins[0].win.webContents, "document.querySelector('#presets').scrollIntoView({ block: 'center' })"); await wait(1500); log.push('ambient: ' + await pageJs(visWins[0].win.webContents, "JSON.stringify({ top: document.querySelector('#content').scrollTop, presets: [...document.querySelectorAll('.preset')].map((b) => b.textContent + (b.classList.contains('active') ? '*' : '')) })")); await snap('panel-scenes-ambient'); } }
     await pageJs(visWins[0].win.webContents, "document.querySelector('.tabs button[data-tab=surf]').click()"); await wait(5000); await snap('panel-surf');       // Surf: the browser opens on Drift's start page
     log.push('surf: ' + JSON.stringify(web.info()));
-    {       // Settings' "Forget Surf's sign-ins and history": a cookie set in Surf is gone after two clicks, and so is the browser
+    {       // Settings' "Forget Surf's sign-ins and history": it asks, and once that's answered a cookie set in Surf is gone, and so is the browser
       const ws = session.fromPartition('persist:web'), wc = visWins[0].win.webContents;
       await ws.cookies.set({ url: 'https://example.com', name: 'drifttest', value: '1', expirationDate: Date.now() / 1000 + 3600 });
       const before = (await ws.cookies.get({})).length;
       await pageJs(wc, "document.querySelector('.tabs button[data-tab=settings]').click(); document.querySelector('#content').scrollTop = 1e5"); await wait(800);
       await pageJs(wc, "document.querySelector('#forgetSurf').click()"); await wait(300);
-      const asked = await pageJs(wc, "document.querySelector('#forgetSurf').textContent");
+      const asked = await pageJs(wc, "document.querySelector('#confirm').classList.contains('on') ? document.querySelector('#confirmTitle').textContent : 'not asked'");
       log.push('settings dom: ' + await pageJs(wc, "JSON.stringify({ active: document.querySelector('.tabs button.active').dataset.tab, open: document.querySelector('#panel').className, section: (document.querySelector('#content section.active') || {}).dataset, btnVisible: !!document.querySelector('#forgetSurf').offsetParent })"));
       await snap('forget-ask');
-      await pageJs(wc, "document.querySelector('#forgetSurf').click()"); await wait(1500);
+      await pageJs(wc, "document.querySelector('#confirmYes').click()"); await wait(1500);       // (Drift's own question box: ask() in app.js)
       log.push(`forget: cookies ${before} -> ${(await ws.cookies.get({})).length}, asked="${asked}", browser open=${web.info().open} tabs=${web.info().tabs.length}`);
     }
   }

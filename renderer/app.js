@@ -169,6 +169,14 @@
   // the controls take the palette's main colour, lifted when it is too dim to see on the panel (the Dark palette)
   const accentHex = () => { const c = currentColors()[2], m = Math.max(...c, 0.001); return toHex(m < 0.6 ? c.map((v) => Math.min(1, v * 0.6 / m)) : c); };
   const toHex = (c) => '#' + c.map((v) => Math.round(v * 255).toString(16).padStart(2, '0')).join('');
+  // The accent goes to main too, for Surf's start page, which takes it by default (surf-home.js /api/accent), with the palette's
+  // lightest colour as its second (Aurora's two are the start page's own green and lilac). Only a change is sent.
+  let accentSent = '';
+  function setAccent() {
+    const a = accentHex(), b = toHex(currentColors()[3]);
+    document.documentElement.style.setProperty('--accent', a);
+    if (a + b !== accentSent) { accentSent = a + b; api.cmd({ type: 'accent', a, b }); }
+  }
 
   // caption for algorithm scenes (bottom-left of the leftmost screen in Span)
   const algoEl = $('#algo'); let capAt = 0;
@@ -598,7 +606,7 @@
       fill(sk); $('#vdur').textContent = clockStr(dur);
     }
     if (tab === 'media' && panel.classList.contains('show') && videoOn() && performance.now() - pgAt > 1000) { pgAt = performance.now(); paintProgress(); }
-    if (S.palette === 'cycle' && performance.now() - accentAt > 500) { accentAt = performance.now(); document.documentElement.style.setProperty('--accent', accentHex()); }
+    if (S.palette === 'cycle' && performance.now() - accentAt > 500) { accentAt = performance.now(); setAccent(); }
     const sl = $('#o-sleep');
     if (S.sleepAt > Date.now()) { const m = Math.ceil((S.sleepAt - Date.now()) / 60000); sl.textContent = m + ' min left'; } else if (sl.textContent) sl.textContent = '';
   }
@@ -624,17 +632,37 @@
     step();
   }
 
-  // ---------- "Close Drift?" ----------
-  // Esc, the ✕ button and Alt+F4 all ask first. Enter closes, Esc (or a click outside) stays.
+  // ---------- questions: "Close Drift?", and every other "are you sure?" ----------
+  // Drift's own box, in place of the system's (confirm()), so it looks like the rest of Drift and stays on Drift's screen.
+  // question({ title, note, detail, yes, no, danger, mon }) resolves true for yes, false for anything else: no, Esc, a click outside,
+  // or another question taking its place. `detail` is a line shown as it is (a link's whole address); `danger: false` makes yes a
+  // plain go-ahead rather than red. Enter answers with the button that has the keyboard (yes, to begin with); chat.js uses it too.
   const confirmEl = $('#confirm');
+  let asking = null;       // { done(answer), quit }
+  function question(o) {
+    if (asking) asking.done(false);
+    $('#confirmTitle').textContent = o.title || 'Are you sure?';
+    $('#confirmNote').textContent = o.note || '';
+    $('#confirmDetail').textContent = o.detail || ''; $('#confirmDetail').hidden = !o.detail;
+    $('#confirmNo').textContent = o.no || 'Cancel';
+    const yes = $('#confirmYes');
+    yes.textContent = o.yes || 'OK'; yes.className = `btn ${o.danger === false ? 'primary' : 'danger'}`;
+    $('#confirmMon').style.display = o.mon ? '' : 'none';
+    confirmEl.classList.add('on'); yes.focus();
+    return new Promise((resolve) => {
+      asking = { quit: !!o.quit, done: (v) => { asking = null; confirmEl.classList.remove('on'); document.activeElement?.blur(); resolve(!!v); } };
+    });
+  }
+  window.driftAsk = question;
+  // Esc, the ✕ button and Alt+F4 all ask first. Enter closes, Esc (or a click outside) stays.
   function askQuit() {
     const p = S.p2p || {}, n = (p.peers || []).length;
-    $('#confirmNote').textContent = p.role === 'host' && n ? `${n === 1 ? p.peers[0].name : n + ' friends'} will stop seeing your video.`
+    const note = p.role === 'host' && n ? `${n === 1 ? p.peers[0].name : n + ' friends'} will stop seeing your video.`
       : p.role === 'guest' ? `You'll leave ${p.host || 'your friend'}'s video.` : 'Your settings are saved for next time.';
-    $('#confirmMon').style.display = init.displays.filter((d) => !S.displaysOff.includes(d.index)).length > 1 ? '' : 'none';
-    confirmEl.classList.add('on'); $('#confirmYes').focus();
+    question({ title: 'Close Drift?', note, yes: 'Close Drift', no: 'Stay', quit: true, mon: init.displays.filter((d) => !S.displaysOff.includes(d.index)).length > 1 })
+      .then((yes) => { if (yes) api.cmd({ type: 'quit' }); });
   }
-  function closeAsk() { confirmEl.classList.remove('on'); document.activeElement?.blur(); }
+  function closeAsk() { if (asking) asking.done(false); }
 
   // ---------- panel ----------
   const panel = $('#panel');
@@ -732,7 +760,7 @@
   }
   new ResizeObserver(() => placeInk(true)).observe($('.tabGroup'));
   function syncUI() {
-    document.documentElement.style.setProperty('--accent', accentHex());
+    setAccent();
     $('#cycleSecs').value = String(S.cycleSecs); $('#cycleSecs').disabled = S.palette !== 'cycle';
     $('#overlay').value = S.overlay; $('#algoInfo').checked = !!S.algoInfo;
     const cur = sceneFor(S);
@@ -834,8 +862,19 @@
   let heldList = [], heldTick = 0;       // downloads on the hub's Surf stream waiting for this PC (its host): drawHeld
   let gpuEl = null;       // the canvas a page drawn offscreen is drawn in (web.js), here on its own monitor (gpuEl.own) or mirroring it
   const pageEl = () => webEl || (gpuEl && gpuEl.own ? gpuEl : null);       // what stands for our own page on this screen, for friends' capture
-  const edgeHint = () => { if (!init.testMode) toast('Mouse to the top edge for tabs and the address  ·  to the bottom edge for Drift’s controls', 7000); };
-  // A page drawn bigger than this monitor (the widest monitor showing it sets its size: web.js pageSize) is shrunk to fit, whole, with
+  // Where the hidden controls are, said quietly along the bottom (the bar is peeking at the top at the same moment), for the first few
+  // visits only. The start page says it in its own footer.
+  let edgeTimer = 0;
+  const edgeHint = () => {
+    const w = S.web || {};
+    if (init.testMode || /^drift:\/\/home/i.test(w.url || '')) return;
+    let n = 0; try { n = +localStorage.getItem('drift.edgeHints') || 0; localStorage.setItem('drift.edgeHints', n + 1); } catch { /* shown anyway */ }
+    if (n >= 3) return;
+    const el = $('#edgeHint');
+    el.innerHTML = '<span><b>↑</b> Top edge: tabs and address</span><span><b>↓</b> Bottom edge: Drift’s controls</span>';
+    el.classList.add('on'); clearTimeout(edgeTimer); edgeTimer = setTimeout(() => el.classList.remove('on'), 5000);
+  };
+  // A page drawn bigger than this monitor (while mirroring, other monitors' shapes stretch it a little: pageSize in main.js) is shrunk to fit, whole, with
   // black bars where its shape differs. Its layout stays its own; friends and mirrors get its full size.
   function fitPage(el, px) {
     const dpr = devicePixelRatio || 1, w = px ? px.w / dpr : innerWidth, h = px ? px.h / dpr : innerHeight;
@@ -1484,7 +1523,7 @@
       if (many) btns.append(t.live ? bcBtn('bcBtn', 'Stop preview', `Stop watching ${t.who}'s broadcast: its tile goes back to a still`, () => bcAct('bcUnwatch', t.bc), BC_EYE_OFF)
         : bcBtn('bcBtn', 'Preview', `Play ${t.who}'s broadcast here in its tile, next to the others`, () => bcWatch(t.bc, false), BC_EYE));
     }
-    if (bcHost && !t.mine) btns.append(bcBtn('bcBtn ghost', 'Stop it', 'As the host, you can stop anyone\'s broadcast', () => { if (confirm(`Stop ${t.who}'s broadcast for everyone?`)) bcAct('bcHostStop', bcHub, t.bc); }));
+    if (bcHost && !t.mine) btns.append(bcBtn('bcBtn ghost', 'Stop it', 'As the host, you can stop anyone\'s broadcast', async () => { if (await question({ title: `Stop ${t.who}'s broadcast?`, note: 'It stops for everyone watching it.', yes: 'Stop it' })) bcAct('bcHostStop', bcHub, t.bc); }));
     tl.foot.replaceChildren(who, btns);
   }
   // The Share tab's own page (Go live, and while you're live, how it's going) opens in the panel over the grid
@@ -1575,19 +1614,24 @@
   window.bcTestPoint =       // a mouse at fractions of the full-screen picture, as the real mousemove handler sends it (for the pointer checks)
     (x, y) => { const b = bcBox(); if (!b) return false; const e = { clientX: b.l + x * b.w, clientY: b.t + y * b.h }; bcPtrAt = 0; bcPoint(e); return true; };
 
-  // The line along the top while the Surf tab is a hub's Surf stream: whose it is, that everyone can steer it, and who's watching
+  // While the Surf tab is a hub's Surf stream: whose it is, that everyone can steer it, and who's watching. It sits at the end of the
+  // bar's row of tabs, out of sight with the bar. Only "starting…" and a note (something went wrong) float on their own at the top.
   let ssLineKey = '';
   function syncSsLine(w, here) {
-    const el = $('#ssLine'), on = here && !!w.hub;
+    const el = $('#ssLine'), on = here && !!w.hub, loud = !!(w.note || w.waiting);
     el.classList.toggle('on', on);
     if (!on) { ssLineKey = ''; return; }
+    const home = loud ? document.body : $('#surfBar .sbTop');
+    if (el.parentNode !== home) home.append(el);
+    el.classList.toggle('docked', !loud);
     const ids = (w.watchers || []).slice(0, 8), k = JSON.stringify([w.hubId, w.hubName, ids, w.waiting, w.note]);
     if (k === ssLineKey) return;
     ssLineKey = k;
     const ui = window.chatUI, faces = ids.map((id) => (ui ? ui.face(w.hubId, id, '.small') : null)).filter(Boolean);
     const text = document.createElement('span');
-    text.textContent = w.note || (w.waiting ? `Surf stream · ${w.hubName} · starting…` : `Surf stream · ${w.hubName} · everyone can control`);
-    el.replaceChildren(text, ...faces);
+    text.textContent = w.note || (w.waiting ? `${w.hubName} · starting the stream…` : w.hubName);
+    el.title = `Surf stream · ${w.hubName} · everyone can control`;
+    el.replaceChildren(...(loud ? [] : [Object.assign(document.createElement('i'), { className: 'live' })]), text, ...faces);
   }
   const onRtc = (c) => { if (!c.d || typeof c.d !== 'object') return; (c.local ? rtcMirror(c.d) : c.from ? rtcHost(c.from, c.d) : Promise.resolve()).catch((e) => console.log('stream set-up: ' + e.message)); };
 
@@ -2191,30 +2235,26 @@
   };
   let vTimer;
   $('#vsearch').addEventListener('input', (e) => { clearTimeout(vTimer); vTimer = setTimeout(() => { const q = e.target.value.trim(); if (q) searchVideos(q); else openDir(libRoot); }, 250); });
-  $('#reset').addEventListener('click', () => api.cmd({ type: 'reset' }));
+  $('#reset').addEventListener('click', async () => {       // (main.js 'reset': the settings only; hubs, chat and Surf's data are their own)
+    if (await question({ title: 'Reset everything?', note: 'Every setting goes back to how it started, on every monitor, and sharing stops. Your playlist, folders and name stay, and so do your hubs and Surf.', yes: 'Reset everything' })) api.cmd({ type: 'reset' });
+  });
   // It signs you out everywhere in Surf, so the first click asks and a second click within a few seconds does it.
-  let forgetArm = 0;
   // Settings: the hub's Surf stream, for its host
   $('#hsNoDl').addEventListener('change', (e) => api.patch({ hubSurf: { noDownloads: e.target.checked } }));
   $('#hsLan').addEventListener('change', (e) => api.patch({ hubSurf: { allowLan: e.target.value } }));
   $('#hsSpecs').addEventListener('change', (e) => api.patch({ hubSurf: { showSpecs: e.target.checked } }));
   $('#hsBrowsing').addEventListener('change', (e) => api.patch({ hubSurf: { showBrowsing: e.target.checked } }));
-  $('#hsClear').addEventListener('click', () => api.cmd({ type: 'hub-surf-clear' }));
-  $('#forgetSurf').addEventListener('click', (e) => {
-    const b = e.currentTarget;
-    if (Date.now() - forgetArm > 4000) {
-      forgetArm = Date.now(); b.textContent = 'Sign out everywhere in Surf? Click again'; b.classList.add('danger');
-      setTimeout(() => { if (Date.now() - forgetArm >= 4000) { b.textContent = 'Forget Surf\'s sign-ins and history'; b.classList.remove('danger'); } }, 4100);
-      return;
-    }
-    forgetArm = 0; b.textContent = 'Forget Surf\'s sign-ins and history'; b.classList.remove('danger');
-    api.cmd({ type: 'surf-forget' });
+  $('#hsClear').addEventListener('click', async () => {
+    if (await question({ title: 'Clear the hub\'s browser?', note: 'Its tabs close, and it forgets every sign-in, cookie and page it has visited, for everyone in the hub.', yes: 'Clear it' })) api.cmd({ type: 'hub-surf-clear' });
+  });
+  $('#forgetSurf').addEventListener('click', async () => {
+    if (await question({ title: 'Forget Surf\'s sign-ins and history?', note: 'You\'ll be signed out of every site in Surf, and its cookies, site data, cache and history are cleared. Your normal browser isn\'t touched.', yes: 'Forget everything' })) api.cmd({ type: 'surf-forget' });
   });
   $('#play').addEventListener('click', ctxToggle);
   $('#prevTrack').addEventListener('click', () => ctxStep(-1));
   $('#nextTrack').addEventListener('click', () => ctxStep(1));
   $('#exit').addEventListener('click', askQuit);
-  $('#confirmYes').addEventListener('click', () => api.cmd({ type: 'quit' }));
+  $('#confirmYes').addEventListener('click', () => { if (asking) asking.done(true); });
   $('#confirmNo').addEventListener('click', closeAsk);
   $('#confirmMon').addEventListener('click', () => { closeAsk(); api.cmd({ type: 'monitor-off', index: me.index }); });
   confirmEl.addEventListener('mousedown', (e) => { if (e.target === confirmEl) closeAsk(); });      // a click outside the box means "stay"
@@ -2270,7 +2310,7 @@
   addEventListener('keydown', (e) => {
     if (confirmEl.classList.contains('on')) {       // the question is up: only it gets keys
       e.preventDefault();
-      if (e.key === 'Enter') api.cmd({ type: 'quit' });
+      if (e.key === 'Enter') { const b = document.activeElement; if (b && b.matches('#confirm .btn')) b.click(); else $('#confirmYes').click(); }
       else if (e.key === 'Escape') closeAsk();
       else if (e.key === 'Tab' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {      // move between the buttons that are showing
         const bs = $$('#confirm .btn').filter((b) => b.offsetParent), i = bs.indexOf(document.activeElement);
@@ -2331,7 +2371,7 @@
   api.on('cmd', (c) => {
     if (c.type === 'show-panel') { tab = c.tab === 'video' || c.tab === 'music' ? 'media' : c.tab; tellTab(); showPanel(true); clearTimeout(hideTimer); syncUI(); }
     else if (c.type === 'toast') { if (isCenter || panel.classList.contains('show')) toast(c.text, Math.max(3200, Math.min(9000, c.text.length * 70))); }     // one screen is enough
-    else if (c.type === 'ask-quit') { if (confirmEl.classList.contains('on')) api.cmd({ type: 'quit' }); else askQuit(); }
+    else if (c.type === 'ask-quit') { if (asking && asking.quit) api.cmd({ type: 'quit' }); else askQuit(); }       // (asked twice: Alt+F4 again closes)
     else if (c.type === 'rtc') onRtc(c);
     else if (c.type === 'ss-rtc') { if (c.d && typeof c.d === 'object') ssRtc(c.d).catch((e) => console.log('Surf stream set-up: ' + e.message)); }
     else if (c.type === 'ss-out') ssSend(c.m);

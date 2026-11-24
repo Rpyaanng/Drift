@@ -177,6 +177,20 @@ body.web #algo, body.web #clockFace, body.web #breath { display: none; }
 #ssLine.on { display: flex; }
 body.idle #ssLine { opacity: .35; }
 #ssLine .face { pointer-events: auto; }
+/* ...docked at the end of the bar's row of tabs: a pane of the same glass */
+#surfBar .sbTop { display: flex; align-items: center; gap: 10px; min-width: 0; }
+#surfBar .sbTop #sbTabs { flex: 1 1 auto; }
+#ssLine.docked { position: static; transform: none; flex: none; height: 32px; box-sizing: border-box; padding: 0 5px 0 12px; gap: 7px; max-width: 40%;
+  background: rgba(11,13,19,.66); backdrop-filter: blur(30px) saturate(150%); border-color: var(--line); box-shadow: 0 10px 34px rgba(0,0,0,.4); color: var(--dim); pointer-events: auto; cursor: default; }
+#ssLine.docked span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 7px; }
+body.idle #ssLine.docked { opacity: 1; }
+#ssLine .live { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+/* where the hidden controls are: a quiet line along the bottom, the first few times (edgeHint in app.js) */
+#edgeHint { position: fixed; z-index: 24; left: 50%; bottom: 26px; transform: translate(-50%, 6px); display: flex; gap: 18px; padding: 7px 16px; border-radius: 999px;
+  background: rgba(10,12,18,.5); backdrop-filter: blur(20px); border: 1px solid var(--line); color: var(--dim); font-size: 12px; white-space: nowrap;
+  opacity: 0; pointer-events: none; transition: opacity .5s ease, transform .5s ease; }
+#edgeHint.on { opacity: 1; transform: translate(-50%, 0); }
+#edgeHint b { color: var(--ink); font-weight: 600; margin-right: 4px; }
 /* a download on the Surf stream waiting for the host: one row, like the vote card */
 #heldCard { position: fixed; left: 50%; top: 52px; transform: translateX(-50%); z-index: 40; display: flex; flex-direction: column; gap: 6px; max-width: min(640px, calc(100vw - 32px)); }
 #heldCard[hidden] { display: none; }
@@ -187,14 +201,18 @@ body.idle #ssLine { opacity: .35; }
   border: 1px solid var(--line); color: var(--ink); font-size: 13px; opacity: 0; transition: opacity .6s; pointer-events: none; white-space: nowrap; }
 #toast.on { opacity: 1; }
 
-/* ---------- "Close Drift?" ---------- */
+/* ---------- questions: "Close Drift?" and every other "are you sure?" (ask() in app.js) ---------- */
 #confirm { position: fixed; inset: 0; z-index: 26;       /* (over the Broadcast scene, 20, and the panel, 22) */ display: none; place-items: center; background: rgba(0,0,0,.45); backdrop-filter: blur(6px); }
 #confirm.on { display: grid; }
 body:has(#confirm.on) { cursor: auto; }
 #confirm .box { width: min(480px, 92vw); padding: 24px 24px 20px; border-radius: 18px; text-align: center; background: rgba(11,13,19,.84); backdrop-filter: blur(30px) saturate(150%);
   border: 1px solid var(--line); box-shadow: 0 24px 80px rgba(0,0,0,.6); }
 #confirm b { font-size: 16px; font-weight: 600; }
-#confirm p { color: var(--dim); margin: 6px 0 20px; }
+#confirm p { color: var(--dim); margin: 6px 0 20px; white-space: pre-line; overflow-wrap: anywhere; }
+#confirm p:empty { margin: 0 0 16px; }
+#confirm code { display: block; margin: -10px 0 20px; padding: 8px 10px; border-radius: 9px; background: rgba(255,255,255,.06); border: 1px solid var(--line);
+  color: var(--dim); font: 11.5px/1.45 ui-monospace, Consolas, monospace; text-align: left; overflow-wrap: anywhere; max-height: 7.5em; overflow: auto; }
+#confirm code[hidden] { display: none; }       /* (display: block above would otherwise show it empty) */
 #confirm .row { justify-content: center; margin: 0; }
 #confirm .btn { min-width: 88px; text-align: center; white-space: nowrap; }
 #confirm .btn:focus { outline: 2px solid var(--ink); outline-offset: 2px; }
@@ -212,6 +230,9 @@ body:has(#confirm.on) { cursor: auto; }
 #content section.active { display: block; }
 #content::-webkit-scrollbar { width: 8px; }
 #content::-webkit-scrollbar-thumb { background: rgba(255,255,255,.14); border-radius: 4px; }
+/* the scroll bars stop short of their box's rounded corners, rather than running into them */
+#content::-webkit-scrollbar-track, #subResults::-webkit-scrollbar-track, #chSide::-webkit-scrollbar-track, #chList::-webkit-scrollbar-track,
+#shHelp::-webkit-scrollbar-track, #shOpts::-webkit-scrollbar-track { background: transparent; margin: 12px 0; }
 
 h3 { margin: 0; font: 600 11px/1 "Segoe UI Variable Text", "Segoe UI", system-ui; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
 h3.sub { margin: 16px 0 10px; }
@@ -387,11 +408,11 @@ input[type=range]::-webkit-slider-thumb { appearance: none; width: 14px; height:
 @media (max-width: 760px) { .vlib { grid-template-columns: 1fr; } }
 
 /* search boxes, and the "now playing" cards in the Hub tab */
-#gifKey { width: 170px; background: rgba(255,255,255,.07); border: 1px solid var(--line); border-radius: 9px; padding: 6px 11px; color: var(--ink); font: inherit; outline: none; user-select: text; }
-#gifKey:focus { border-color: var(--accent); }
-input[type=search] { background: rgba(255,255,255,.07); border: 1px solid var(--line); border-radius: 9px; padding: 6px 11px; color: var(--ink); font: inherit; outline: none; width: 170px; user-select: text; }
-input[type=search]:focus { border-color: var(--accent); }
-input[type=search]::placeholder { color: var(--dim); }
+/* every text box: search boxes, plain ones (Local addresses it may open) and the GIPHY key */
+input[type=search], input[type=text], input[type=password] { background: rgba(255,255,255,.07); border: 1px solid var(--line); border-radius: 9px; padding: 6px 11px; color: var(--ink); font: inherit; outline: none; width: 170px; user-select: text; }
+input[type=search]:focus, input[type=text]:focus, input[type=password]:focus { border-color: var(--accent); }
+input[type=search]::placeholder, input[type=text]::placeholder, input[type=password]::placeholder { color: var(--dim); }
+.optRow > input[type=text] { flex: none; width: 230px; margin: 0; }       /* (as wide as the lists beside it in Settings) */
 .spnow { display: flex; align-items: center; gap: 14px; padding: 16px; border-radius: 12px; border: 1px solid var(--line); background: rgba(255,255,255,.04); margin-bottom: 12px; }
 .spnow b { display: block; font-size: 14px; font-weight: 600; }
 .spnow span { color: var(--dim); font-size: 12px; }

@@ -17,7 +17,7 @@
 <div id="webEdge"></div>
 <div id="surfEdge"></div>
 <div id="surfBar">
-  <div id="sbTabs"></div>
+  <div class="sbTop"><div id="sbTabs"></div></div>
   <div class="sbNav">
     <button class="glass round" id="sbBack" title="Back (Alt+←)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 6l-6 6 6 6"/></svg></button>
     <button class="glass round" id="sbFwd" title="Forward (Alt+→)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
@@ -29,6 +29,7 @@
   </div>
 </div>
 <div id="toast"></div>
+<div id="edgeHint"></div>
 <div id="ssLine"></div>
 <div id="heldCard" hidden></div>
 <div id="callBar"></div>
@@ -77,7 +78,7 @@
 </svg>
 </div>
 <div id="algo"></div>
-<div id="confirm"><div class="box"><b>Close Drift?</b><p id="confirmNote"></p><div class="row"><button class="btn" id="confirmNo">Stay</button><button class="btn ghost" id="confirmMon" title="Turn Drift off on this monitor only. Turn it back on in Settings.">Close this monitor</button><button class="btn danger" id="confirmYes">Close Drift</button></div></div></div>
+<div id="confirm" role="dialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmNote"><div class="box"><b id="confirmTitle">Close Drift?</b><p id="confirmNote"></p><code id="confirmDetail" hidden></code><div class="row"><button class="btn" id="confirmNo">Stay</button><button class="btn ghost" id="confirmMon" title="Turn Drift off on this monitor only. Turn it back on in Settings.">Close this monitor</button><button class="btn danger" id="confirmYes">Close Drift</button></div></div></div>
 
 <div id="panel">
   <div id="content">
