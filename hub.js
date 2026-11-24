@@ -39,6 +39,16 @@ const LIMITS = { line: 256 * 1024, text: 4000, name: 24, channel: 32, channels: 
   file: 4 * 1024 * 1024, fileChunk: 160 * 1024, files: 300 * 1024 * 1024, reactions: 20 };       // file: the biggest picture or GIF (bytes), sent fileChunk at a time; files: all of a hub's together
 const TURN_SECS = 24 * 3600;       // how long relay credentials last (the relay also stops as soon as someone leaves the room or stops listening)
 const INVITE_DAYS = 7;
+// Where a member connects from, as far as reaching each other's shares goes ("reach" below): 'near' for this PC, its own network
+// and the other private ranges (a VPN such as Tailscale included), whose PCs reach one another; otherwise their public address
+// (for IPv6 its first half, one home's).
+function placeOf(ip) {
+  const a = String(ip || '').replace(/^::ffff:/i, ''), b = ipBytes(a);
+  if (!b) return 'near';
+  if (b.length === 4) return /^(10\.|127\.|0\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/.test(a) ? 'near' : a;
+  const loop = b.subarray(0, 15).every((x) => !x) && b[15] === 1;
+  return loop || (b[0] & 0xfe) === 0xfc || (b[0] === 0xfe && (b[1] & 0xc0) === 0x80) ? 'near' : b.subarray(0, 8).toString('hex');
+}
 
 // ---- the hub's certificate: X.509 for a P-256 key, written by hand (Node can read certificates but not make them) ----
 const der = (tag, ...parts) => {
@@ -232,8 +242,29 @@ module.exports = function createHub(opts) {
   // ---- connections ----
   const online = new Map();       // member id -> Set of sessions (a member may be on two PCs)
   const mics = new Map();         // member id -> does their PC have a microphone (only while online)
-  const lives = new Map();        // member id -> what they're sharing right now: { from, code, title, watching, since }. Never stored.
-  const liveList = () => [...lives.values()];
+  const lives = new Map();        // member id -> what they're sharing right now: { from, code, title, watching, since, reach, place }. Never stored.
+  const liveList = () => [...lives.values()].map(({ place: _p, ...l }) => l);
+  // ---- reach: can everyone online get to a share? ----
+  // A share is watched by connecting straight to the sharing PC (p2p.js), so someone whose router doesn't let friends in can only
+  // be watched from their own network. Listed anyway, everyone else was pulled into something they couldn't get, while its sender
+  // thought it was on. So the sharer says how far their PC can be reached (reach: 'internet', 'lan', or 'manual': couldn't be
+  // checked), and the hub, which sees where each member connects from (place), keeps a 'lan' share off the stream while anyone
+  // online is somewhere else, now or when they come online. A 'manual' one goes on, and comes off if a member says they couldn't
+  // connect to it (live-fail). Taken off, its sender hears why (live-no, why 'reach' or 'unreached', with who), and plays it alone.
+  // ('internet', and a Drift from before that says nothing, are left on: a member who can't connect then is likely the trouble.)
+  const placesOf = (id) => new Set([...(online.get(id) || [])].map((x) => x.place));
+  const nameOf = (id) => (S.member.get(id) || {}).name || 'Someone';
+  function outside(l) {       // who online can't get to share `l`: not on its sender's network
+    if (l.reach !== 'lan') return [];
+    return [...online.keys()].filter((id) => id !== l.from && !placesOf(id).has(l.place));
+  }
+  function liveOff(from, why, who) {
+    if (!lives.delete(from)) return;
+    everyone({ t: 'lives', list: liveList() });
+    for (const x of online.get(from) || []) x.wire.send({ t: 'live-no', why, who: who.slice(0, 3).map(nameOf) });
+    recount();       // (a vote to replace it has nothing left to replace)
+  }
+  const reachCheck = () => { for (const l of [...lives.values()]) { const out = outside(l); if (out.length) liveOff(l.from, 'reach', out); } };
   const sessions = new Set();
   let server = null, port = 0;
   const everyone = (m, but) => { const line = JSON.stringify(m); for (const s of sessions) if (s.id && s !== but) s.wire.send(line); };
@@ -275,7 +306,7 @@ module.exports = function createHub(opts) {
 
   function onConnection(sock) {
     if (sessions.size >= LIMITS.connections) { sock.destroy(); return; }
-    const s = { id: null, nonce: crypto.randomBytes(24).toString('base64url'), wire: null, acts: { msg: [], other: [], live: [], sig: [], bc: [], react: [], part: [] }, typed: 0, upload: null };
+    const s = { id: null, nonce: crypto.randomBytes(24).toString('base64url'), wire: null, acts: { msg: [], other: [], live: [], sig: [], bc: [], react: [], part: [] }, typed: 0, upload: null, place: placeOf(sock.remoteAddress) };
     sessions.add(s);
     const login = setTimeout(() => { if (!s.id) s.wire.close(); }, 15000);
     s.wire = wire(sock, null, (m) => { try { onMessage(s, m); } catch (e) { reply(s, m, { error: 'Something went wrong on the hub.' }); if (opts.log) opts.log('hub: ' + (e && e.stack || e)); } }, () => {
@@ -319,6 +350,7 @@ module.exports = function createHub(opts) {
       s.id = id;
       if (!online.has(id)) online.set(id, new Set());
       online.get(id).add(s);
+      reachCheck();       // (a share they couldn't get to comes off before they hear of it)
       reply(s, m, { me: id, host: id === ownerId, hub: hubName, addrs: opts.addrs ? opts.addrs() : [], members: bent.list(s, memberList()), channels: channelList(), lives: liveList(), voice: voiceList(), room: roomId, bcs: bcList(), surf: surfOut() });       // addrs: so members can still find the hub when its addresses change
       membersNews(s);
       for (const b of bcs.values()) if (b.thumb) s.wire.send({ t: 'bc-thumb', id: b.id, from: b.from, ...b.thumb });       // each broadcast's latest still, for their grid
@@ -453,6 +485,8 @@ module.exports = function createHub(opts) {
         if (slow(s, 'live')) return;
         const code = String(m.code || '').replace(/[^A-Za-z0-9_:-]/g, '').slice(0, 400);
         if (!code) return;
+        const reach = ['lan', 'manual'].includes(m.reach) ? m.reach : 'internet', out = outside({ from: s.id, reach, place: s.place });
+        if (out.length) { if (lives.has(s.id)) liveOff(s.id, 'reach', out); else s.wire.send({ t: 'live-no', why: 'reach', who: out.slice(0, 3).map(nameOf) }); return; }       // (see "reach")
         if (sharingBesides(s.id)) {       // someone else's is on: only the winner of a vote takes over, and theirs replaces it
           if (!granted || granted.id !== s.id || granted.until < Date.now()) { s.wire.send({ t: 'live-no' }); return; }
           for (const id of [...lives.keys()]) if (id !== s.id) lives.delete(id);
@@ -460,8 +494,14 @@ module.exports = function createHub(opts) {
         if (granted && granted.id === s.id) granted = null;
         const was = lives.get(s.id);
         lives.set(s.id, { from: s.id, code, title: cleanText(m.title).replace(/\s+/g, ' ').slice(0, 120),
-          watching: (Array.isArray(m.watching) ? m.watching : []).slice(0, 8).map(cleanName).filter(Boolean), since: was && was.code === code ? was.since : Date.now() });
+          watching: (Array.isArray(m.watching) ? m.watching : []).slice(0, 8).map(cleanName).filter(Boolean), since: was && was.code === code ? was.since : Date.now(), reach, place: s.place });
         everyone({ t: 'lives', list: liveList() });
+        return;
+      }
+      case 'live-fail': {       // this member couldn't connect to a share that's on (see "reach")
+        if (slow(s, 'live')) return;
+        const code = String(m.code || '').replace(/[^A-Za-z0-9_:-]/g, '').slice(0, 400), l = [...lives.values()].find((x) => x.code === code);
+        if (l && l.from !== s.id && l.reach !== 'internet') liveOff(l.from, 'unreached', [s.id]);
         return;
       }
       case 'media-ask': {       // put something on while someone else's is on: ask everyone online
@@ -814,4 +854,4 @@ module.exports = function createHub(opts) {
     }),
   };
 };
-Object.assign(module.exports, { encodeInvite, decodeInvite, pinOfPeer, memberId, rawKey, loginText, cleanText, cleanAvatar, avatarId, sniffImage, cleanEmoji, VERSION, LIMITS });
+Object.assign(module.exports, { encodeInvite, decodeInvite, pinOfPeer, memberId, rawKey, loginText, cleanText, cleanAvatar, avatarId, sniffImage, cleanEmoji, placeOf, VERSION, LIMITS });

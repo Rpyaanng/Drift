@@ -825,7 +825,7 @@
     $('#nowName').title = $('#nowName').textContent;
     const pp2 = S.p2p || {}, mine = S.music.source === 'files' || S.music.source === 'generative';
     $('#mShare').textContent = tm ? `You are listening to ${pp2.host || 'your friend'}'s music${tm.on ? '' : ' (paused)'}: ${tmName}. Your own music waits until you leave${pp2.ctrl ? '. Play, pause and skip work on theirs' : `. Only ${pp2.host || 'your friend'} can change it`}.`
-      : pp2.role === 'host' ? (spOn ? 'Spotify can\'t be sent to friends. Ambient sound and music from your library can.' : mine ? `Friends${(pp2.peers || []).length ? '' : ' who join'} hear your ${S.music.source === 'files' ? 'music' : 'ambient sound'} with you.` : '') : '';
+      : pp2.role === 'host' ? (spOn ? 'Spotify can\'t be sent to friends. Ambient sound and music from your library can.' : mine ? `Friends${(pp2.peers || []).length ? '' : ' who join'} hear your ${S.music.source === 'files' ? 'music' : 'ambient sound'} with you.` : '') : S.mediaSolo || '';       // (mediaSolo: why what you play isn't on the hub's stream: main.js mediaRefused)
   }
 
   // ---------- a web page on this screen (watching a web page together): main's web.js loads and steers it ----------
@@ -969,13 +969,17 @@
   $('#sbHome').addEventListener('click', () => surf('home'));
   $('#sbOut').addEventListener('click', () => { surf('outside'); surfHideSoon(300); });
   $('#sbMirror').addEventListener('click', () => api.patch({ surfMirror: !S.surfMirror }));
-  // 💬 in the chat overlay's corner (shown over Surf): the hub chat's quick box (chat.js), since over Surf Enter belongs to the
-  // page. Pressed again, it closes. Once the box closes, the keys go back to the page.
+  // The hub chat's quick box (chat.js) over Surf: 💬 in the chat overlay's corner (pressed again, it closes), or Enter pressed in
+  // the page while nothing in it was taking typing (web.js "Enter"; main.js sends 'chat-quick'). Once the box closes, the keys
+  // go back to the page.
+  function quickOverSurf() {
+    if ($('#chatOverlay').classList.contains('typing') || !window.chatUI || !window.chatUI.quick()) return;
+    $('#coInput').addEventListener('blur', () => setTimeout(() => { if (document.body.classList.contains('surfing') && document.activeElement !== $('#coInput')) toPage(); }, 120), { once: true });
+  }
   $('#coBtn').addEventListener('mousedown', (e) => e.preventDefault());       // (so pressing it doesn't first take the box's focus away)
   $('#coBtn').addEventListener('click', () => {
     if ($('#chatOverlay').classList.contains('typing')) { $('#coInput').value = ''; if (window.chatUI) window.chatUI.closeQuick(); return; }
-    if (!window.chatUI || !window.chatUI.quick()) return;
-    $('#coInput').addEventListener('blur', () => setTimeout(() => { if (document.body.classList.contains('surfing') && document.activeElement !== $('#coInput')) toPage(); }, 120), { once: true });
+    quickOverSurf();
   });
   const keyMods = (e) => [e.shiftKey && 'shift', e.ctrlKey && 'control', e.altKey && 'alt', e.metaKey && 'meta'].filter(Boolean);
   const toPage = () => { if (webEl) webEl.focus(); else if (vidEl) vidEl.focus(); else if (mirEl) mirEl.focus(); else if (gpuEl) gpuEl.focus(); };       // the keys go back to the page
@@ -2340,6 +2344,7 @@
     else if (c.type === 'music-pos') musicPos = { t: +c.t || 0, d: +c.d || 0, at: performance.now() };
     else if (c.type === 'ptrs') showPtrs(Array.isArray(c.list) ? c.list : []);
     else if (c.type === 'web-url') toBar();       // Ctrl+L in the web page
+    else if (c.type === 'chat-quick') { if (webEl) webEl.blur(); quickOverSurf(); }       // Enter in a Surf page that wasn't for the page (web.js "Enter")
     else if (c.type === 'web-esc') { if (webEl) webEl.blur(); window.focus(); tab = 'surf'; showPanel(true); syncUI(); }       // Esc in the web page: our controls, and the keys come back to us
     else if (c.type === 'share-code') { $('#chCode').value = c.code; $('#chCode').focus(); }
   });

@@ -156,6 +156,7 @@ function wire(sock, head, onMsg, onClose, max = 2e6) {       // max: the longest
 //   publicIp()            promise of this PC's address on the internet
 //   say(text)             show a message on screen
 //   changed()             something in info() changed
+//   unreached(code)       as a guest: the sharing PC of invite `code` never answered. Returns what to say instead of the usual, or ''
 module.exports = function createP2P(hooks) {
   let role = 'off', status = '', note = '', code = '', reach = '', port = 0, gen = 0;
   let server = null, key = null, mapping = null, opts = {}, tick = null, lastSnap = '', lastFile = '', holding = false, pubIp = '', settling = false;
@@ -348,7 +349,7 @@ module.exports = function createP2P(hooks) {
     if (my !== gen) { if (hit) hit.sock.destroy(); return; }
     if (!hit) {
       if (full) { over('That session is full.'); return; }
-      if (Date.now() > c.until) { over(c.was ? 'Lost the connection to your friend\'s PC.' : 'Couldn\'t connect. Check that your friend is still sharing and that this is their latest invite code.'); return; }
+      if (Date.now() > c.until) { over(c.was ? 'Lost the connection to your friend\'s PC.' : (hooks.unreached && hooks.unreached(c.text)) || 'Couldn\'t connect. Check that your friend is still sharing and that this is their latest invite code.'); return; }
       c.retry = setTimeout(() => connect(c, my), 2000);
       return;
     }
@@ -397,7 +398,7 @@ module.exports = function createP2P(hooks) {
     const my = ++gen;
     myName = cleanName(name) || 'Friend';
     role = 'guest'; status = 'connecting'; note = ''; code = '';
-    g = { ...c, addr: '', offset: 0, best: Infinity, state: null, host: '', who: [], tabs: {}, until: Date.now() + 20000, was: false, agent: new https.Agent({ keepAlive: true, maxSockets: 16 }) };
+    g = { ...c, text: String(text || '').trim(), addr: '', offset: 0, best: Infinity, state: null, host: '', who: [], tabs: {}, until: Date.now() + 20000, was: false, agent: new https.Agent({ keepAlive: true, maxSockets: 16 }) };
     changed(); connect(g, my);
     return { ok: true };
   }

@@ -48,7 +48,9 @@ const ok = (cond, what) => { console.log(`${cond ? 'ok  ' : 'FAIL'} ${what}`); i
   ok(q.sent && q.closed && q.toast === 'Sent in #general', `...Enter sends it, the box closes, and a note says where it went ("${q.toast}")`);
   ok(R.enterHubTab && R.enterHubTab.main && !R.enterHubTab.quick, 'with the Hub tab open, Enter goes to its own message box');
   ok(R.enterInTextBox, 'Enter in another text box stays there');
-  ok(R.enterOverSurf && !R.enterOverSurf.quick && !R.enterOverSurf.main, 'over Surf, Enter is left to the page');
+  const fs2 = R.enterFromSlider || {}, sl = fs2.slider || {}, bx = fs2.box || {};
+  ok(sl.had && sl.quick && bx.had && bx.quick, `Enter still opens the quick box after a slider or a tick box was used (${JSON.stringify(fs2)})`);
+  ok(R.enterOverSurf && R.enterOverSurf.quick && !R.enterOverSurf.main, 'over Surf, with the page not holding the keys, Enter opens the quick box too');
   const sb = R.surfButton || {};
   ok(sb.shown === 'grid' && sb.opens && sb.closes, `over Surf, a chat button in the overlay's corner opens the quick box, and closes it pressed again (${JSON.stringify(sb)})`);
   ok(sb.beside === 6 && sb.level, 'it sits just left of the box, level with it');
@@ -57,6 +59,12 @@ const ok = (cond, what) => { console.log(`${cond ? 'ok  ' : 'FAIL'} ${what}`); i
   ok(fb.still && fb.moved && fb.after, `the button is faded while the mouse is still, shows when it moves, and fades again after 2.5 s (${JSON.stringify(fb)})`);
   ok(sb.lit, 'it stays lit while the box is open');
   ok(sb.goneOffSurf, 'and it isn\'t there off Surf (Enter does it)');
+  const mr = R.mediaRefused || {};
+  ok(mr.stopped && /^Not shared to the hub: Ben isn't on your network/.test(mr.note || '') && /router|Options|provider/.test(mr.note || ''), `a share someone online can't reach stops, and the Media tab says why ("${mr.note}")`);
+  ok(/Playing for you only: Ben/.test(mr.toast || ''), `...with a note on screen ("${mr.toast}")`);
+  const eh = R.enterOverHubPage || {}, ib = eh.inBox || {}, of = eh.off || {};
+  ok(eh.ready && ib.page === 1 && !ib.quick, `over the hub's Surf page, Enter in its text box goes to the page (${JSON.stringify(eh)})`);
+  ok(of.page === 1 && of.quick, '...and with nothing in the page selected, it opens the quick box instead');
   ok(R.gifOff, 'GIF search is off: no GIF button, no GIPHY key in Options');
   const c = R.composer || {}, mid = (x) => x && x[0] + x[1] / 2;
   ok(c.input && Math.abs(mid(c.input) - mid(c.emoji)) < 1 && Math.abs(mid(c.input) - mid(c.file)) < 1 && c.input[1] === c.emoji[1], `one line of text sits level with the box's buttons (${JSON.stringify(c)})`);
