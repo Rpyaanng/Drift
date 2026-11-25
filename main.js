@@ -3548,7 +3548,11 @@ async function runShots() {
     const quick = await enter();
     await pageRun(wc, () => { const c = document.querySelector('#coInput'); c.value = 'quick hello'; c.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', cancelable: true })); });
     const sentQuick = await until(async () => (await chat.history(hubId, ch, { limit: 5 })).msgs.some((m) => m.text === 'quick hello'));
-    tl('enterQuick', { ...quick, sent: sentQuick, toast: await pageRun(wc, () => document.querySelector('#toast').textContent), closed: await pageRun(wc, () => !document.querySelector('#chatOverlay').classList.contains('typing')) });
+    tl('enterQuick', { ...quick, sent: sentQuick, ...await pageRun(wc, () => {
+      const t = document.querySelector('#toast'), rows = [...document.querySelectorAll('#coList .coMsg')];
+      return { toast: t.classList.contains('on') ? t.textContent : '', log: rows.length, shown: rows.filter((r) => !r.classList.contains('old')).map((r) => r.innerText.replace(/\n+/g, ' ')),
+        closed: !document.querySelector('#chatOverlay').classList.contains('typing') };
+    }) });
     wc.send('cmd', { type: 'show-panel', tab: 'hub' }); await wait(600);
     tl('enterHubTab', await enter());
     tl('enterInTextBox', await pageRun(wc, () => { const t = document.querySelector('#chCode'); t.focus(); t.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); return document.activeElement === t; }));

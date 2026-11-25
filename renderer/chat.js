@@ -761,6 +761,7 @@
       return;
     }
     if (msg.from === info.me.id || (hub === sel.hub && msg.ch === sel.ch && looking())) return;
+    if (coLogOn(hub, msg.ch)) { overlayShow(info.hubs.find((y) => y.id === hub), msg, COLOG_MS); api.cmd({ type: 'sfx', name: 'message' }); return; }       // its log is up: it joins it
     const x = info.hubs.find((y) => y.id === hub), c = x && x.channels.find((y) => y.id === msg.ch);
     toast(`${nameOf(x, msg.from)} in #${c ? c.name : '?'}: ${(msg.text || picWord(msg)).replace(/\s+/g, ' ').slice(0, 90)}`);
     api.cmd({ type: 'sfx', name: 'message' });       // (main.js sends a new message to one screen only, so it's heard once)
@@ -967,13 +968,32 @@
   let overlaySetting = 'all', coTarget = null, coTyped = 0;
   const co = $('#chatOverlay'), coList = $('#coList'), coInput = $('#coInput');
   const canBeHeard = (x, id) => { const v = vEntry(x, id), c = info.call; return !!v && v.listen && v.talk && !!v.mic && !!c && !!x && c.hub === x.id && (c.peers || []).includes(id); };
-  function overlayShow(x, msg) {
+  const coFade = (row, ms) => { clearTimeout(row.fadeT); row.classList.remove('old'); row.fadeT = setTimeout(() => row.classList.add('old'), ms); };
+  function overlayShow(x, msg, ms = 12000) {
+    if (msg.id && [...coList.children].some((r) => r.dataset.id === String(msg.id))) return;       // (already in the log)
     const c = x && x.channels.find((y) => y.id === msg.ch);
-    const row = h('div.coMsg', {}, face(x, msg.from, '.co'),
+    const row = h('div.coMsg', { 'data-id': msg.id || '' }, face(x, msg.from, '.co'),
       h('div.coBody', {}, h('b.coName', {}, nameOf(x, msg.from)), x && x.channels.length > 1 && c ? h('em', {}, '#' + c.name) : null, msg.text ? h('span.coText', {}, render(msg.text)) : null, msg.file && x ? pic(x, msg.file, 240, 160) : null));
     coList.append(row);
     while (coList.children.length > 8) coList.firstChild.remove();
-    setTimeout(() => row.classList.add('old'), 12000);
+    coFade(row, ms);
+  }
+  // The quick box written in while not watching anything of that hub's: the channel's last few messages show above it while
+  // it's open, and for a while after sending (with what comes into that channel meanwhile), then fade like the rest.
+  let coLog = null;       // { hub, ch, until }: the channel whose log is up over the screen
+  const COLOG_MS = 10000;
+  const coLogOn = (hub, ch) => !!coLog && coLog.hub === hub && coLog.ch === ch && (co.classList.contains('typing') || Date.now() < coLog.until);
+  async function coLogFill(hub, ch) {
+    coLog = { hub, ch, until: 0 };
+    coList.replaceChildren();
+    const x = info.hubs.find((y) => y.id === hub), got = cache.get(keyOf(hub, ch));
+    const msgs = got && got.msgs.length ? got.msgs : ((await call('history', hub, ch, { limit: 8 })).msgs || []);
+    if (!coLogOn(hub, ch)) return;       // (closed, or moved on, while it loaded)
+    for (const m of msgs.slice(-8)) overlayShow(x, m, COLOG_MS);
+  }
+  function coLinger() {       // after sending: the log stays up a while, then fades
+    if (coLog) coLog.until = Date.now() + COLOG_MS;
+    for (const r of coList.children) coFade(r, COLOG_MS);
   }
   // The hub the quick box writes to: that of what you're watching (a video together, a broadcast), else your active hub (the
   // one whose voice room you're in, or that's open in the Hub tab), else any hub you're online in. '' when you're in none.
@@ -994,6 +1014,8 @@
     $('#coWhere').textContent = (several ? (x.name || 'Hub') + ' · ' : '') + '#' + x.channels.find((c) => c.id === ch).name;
     coInput.placeholder = 'Say something · Enter sends, Esc closes';
     co.classList.add('typing'); coInput.focus();
+    if (coTarget.over) coLog = null;
+    else if (!coLogOn(x.id, ch)) coLogFill(x.id, ch);
     return true;
   }
   function closeCompose() { co.classList.remove('typing'); coTarget = null; if (document.activeElement === coInput) coInput.blur(); }
@@ -1031,10 +1053,8 @@
     const t = coTarget, r = await call('send', t.hub, t.ch, text);
     if (r.error) { toast(r.error); return; }
     coInput.value = ''; closeCompose();
-    if (!t.over) {       // not over anything of that hub's, so it doesn't show here: say where it went
-      const x = info.hubs.find((y) => y.id === t.hub), c = x && x.channels.find((y) => y.id === t.ch);
-      toast(`Sent in ${info.hubs.filter((y) => upHub(y.id)).length > 1 && x ? (x.name || 'Hub') + ' · ' : ''}#${c ? c.name : '?'}`);
-    }
+    if (!t.over && r.msg) overlayShow(info.hubs.find((y) => y.id === t.hub), r.msg);       // (not over anything of that hub's, main.js doesn't send it back here)
+    coLinger();
   });
   // A vote to change what's on (main.js "media stream"; the hub counts it): a card over the video on every screen, for
   // everyone online in the hub, until they vote or it's decided. The asker sees how it's going and can call it off.

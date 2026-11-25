@@ -45,7 +45,7 @@ const ok = (cond, what) => { console.log(`${cond ? 'ok  ' : 'FAIL'} ${what}`); i
   ok(a0.pic && a0.pic.img && g.loaded === 300, `...and the picture fills it once it arrives (${JSON.stringify({ a0, loaded: g.loaded })})`);
   const q = R.enterQuick || {};
   ok(q.quick && q.where === '#general', `Enter with the panel away opens the quick box for #general, though nothing is being watched (${JSON.stringify(q)})`);
-  ok(q.sent && q.closed && q.toast === 'Sent in #general', `...Enter sends it, the box closes, and a note says where it went ("${q.toast}")`);
+  ok(q.sent && q.closed && !q.toast && q.log > 1 && /quick hello$/.test((q.shown || []).slice(-1)[0] || ''), `...Enter sends it, the box closes, and #general's log stays up over the screen with it, not a note (${JSON.stringify(q)})`);
   ok(R.enterHubTab && R.enterHubTab.main && !R.enterHubTab.quick, 'with the Hub tab open, Enter goes to its own message box');
   ok(R.enterInTextBox, 'Enter in another text box stays there');
   const fs2 = R.enterFromSlider || {}, sl = fs2.slider || {}, bx = fs2.box || {};
@@ -61,7 +61,7 @@ const ok = (cond, what) => { console.log(`${cond ? 'ok  ' : 'FAIL'} ${what}`); i
   ok(sb.goneOffSurf, 'and it isn\'t there off Surf (Enter does it)');
   const mr = R.mediaRefused || {};
   ok(mr.stopped && /^Not shared to the hub: Ben isn't on your network/.test(mr.note || '') && /router|Options|provider/.test(mr.note || ''), `a share someone online can't reach stops, and the Media tab says why ("${mr.note}")`);
-  ok(/Playing for you only: Ben/.test(mr.toast || ''), `...with a note on screen ("${mr.toast}")`);
+  ok(/Playing for you only: Ben/.test(mr.toast || ''), `...and Drift says so in a note ("${mr.toast}")`);
   const eh = R.enterOverHubPage || {}, ib = eh.inBox || {}, of = eh.off || {};
   ok(eh.ready && ib.page === 1 && !ib.quick, `over the hub's Surf page, Enter in its text box goes to the page (${JSON.stringify(eh)})`);
   ok(of.page === 1 && of.quick, '...and with nothing in the page selected, it opens the quick box instead');
