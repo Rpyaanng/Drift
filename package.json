@@ -1,7 +1,7 @@
 {
   "name": "drift",
   "productName": "Drift",
-  "version": "1.8.8",
+  "version": "1.9.0",
   "description": "Relaxing multi-monitor ambient visuals and soundscapes",
   "main": "main.js",
   "author": "Ryan",
