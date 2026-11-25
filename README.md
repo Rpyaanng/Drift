@@ -340,6 +340,9 @@ or share, and closes them afterwards. The hub uses port 47900 (TCP for chat, UDP
 TCP 47800. If the router refuses, the Hub tab says so, and its **Help** page explains how to forward the ports by hand.
 If your router doesn't report its public address, Drift looks it up at api.ipify.org.
 
+Drift tries this once when you go online in a hub (and again every half hour), before you share anything. If friends online on
+other networks couldn't reach your PC, **Share to hub** is greyed out and says why; if Drift couldn't tell, it warns you.
+
 If your internet provider shares one address between homes (CGNAT), no router setting can help. Ask the provider for a
 public IP address, let a friend whose connection works host the hub, or use a VPN such as Tailscale on both PCs. Windows
 asks once whether to let Drift through its firewall: allow it.
@@ -466,6 +469,7 @@ Tests (each starts its own copies of Drift, with their own settings):
 | Command | Checks |
 | --- | --- |
 | `node scripts/test-chat.js`, `node scripts/test-voice.js` | Chat and voice logic (no Electron needed) |
+| `node scripts/test-reach.js` | The check of whether friends elsewhere could watch, before anything is shared (no Electron needed; `DRIFT_REACH=internet\|lan\|manual` decides what it finds) |
 | `node scripts/test-calls.js` | Three copies in a voice room, honestly and with the hub tampering (`DRIFT_HUB_TAMPER=fingerprint\|unsigned\|replay\|swapkey`) |
 | `node scripts/test-mic.js` | The microphone test and noise suppression |
 | `node scripts/test-covers.js` | Song covers, titles and artists from tags |

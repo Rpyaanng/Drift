@@ -15,7 +15,7 @@
   const CUT = .063;        // the paws end 6.3% above the drawing's bottom: nothing below is shown
   // the glow around the whole cat (it was a CSS drop-shadow on it): two blurs, in CSS px, awake and asleep. Their colours are
   // --cat-glow1 and --cat-glow2 in style.css
-  const GLOW = { awake: [4, 16], asleep: [3, 12] };
+  const GLOW = { awake: [2, 8], asleep: [2, 6] };
   const COLOURS = ['base', 'mid', 'hi', 'rim', 'lo', 'shade', 'deep', 'dark', 'glow1', 'glow2', 'z'];
   // the layers, back to front. Awake, the glows sit behind everything (as the drop-shadow did), each moving with its piece
   const AWAKE = ['haloBang', 'haloTail', 'haloBody', 'bang', 'tail', 'body', 'eyes'];
@@ -53,7 +53,8 @@
     body: (s) => drop(s, '.catBang, .catTail, .catEyes, .catShut, .catZ'),
     eyes: (s) => keepOnly(s, '.catEyes'),
     // asleep it's a ghost: its fur faded right down as one piece (so no overlaps show through), the face clearer, eyes shut
-    sleep: (s) => set(set(set(drop(s, '.catBang, .catEyes, .catZ'), '.catFur', { opacity: .22 }), '.catFace', { opacity: .6 }), '.catShut', { stroke: '#b8c2b8' }),
+    // (the face drawn light, as the ink mouth would be lost on a video)
+    sleep: (s) => set(set(set(drop(s, '.catBang, .catEyes, .catZ'), '.catFur', { opacity: .22 }), '.catFace', { opacity: .6 }), '.catShut, .catMouth', { stroke: '#b8c2b8' }),
     z: (n, z) => (s) => set(keepOnly(s, `.catZ > path:nth-child(${n})`), '.catZ', { stroke: z }),
   };
 

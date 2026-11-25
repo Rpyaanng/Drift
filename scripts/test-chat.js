@@ -176,6 +176,8 @@ async function until(pred, what, ms = 8000) {
   ok(placeOf('::ffff:203.0.113.7') === '203.0.113.7' && placeOf('203.0.113.7') !== placeOf('198.51.100.2'), 'two homes on the internet are two places');
   ok(placeOf('2001:db8:1:2::5') === placeOf('2001:db8:1:2:ffff::9') && placeOf('2001:db8:1:2::5') !== placeOf('2001:db8:1:3::5'), 'an IPv6 home is its first half');
   const fails = (p) => p.events.filter((e) => e.t === 'live-no');
+  // apart (hub.js apartFrom): who online is somewhere else, before anyone shares. All here are on this PC: nobody.
+  ok([ana, ben, cat].every((p) => Array.isArray(p.hub(H).apart) && !p.hub(H).apart.length), 'everyone hears that nobody online is on another network');
   ben.events.length = 0;
   ben.chat.announce(H, { code: 'drift:benlan', title: 'B', watching: [], reach: 'lan' });
   await until(() => livesOf(cat).join() === ben.chat.myId(), 'only reachable on its own network, but everyone online is on it: it goes on');

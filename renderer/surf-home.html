@@ -558,7 +558,7 @@
       <mask id="kLit" maskUnits="userSpaceOnUse" x="150" y="90" width="1360" height="820"><rect x="150" y="90" width="1360" height="820" fill="#fff"/><ellipse cx="672" cy="414" rx="584" ry="392" fill="#000"/></mask>
       <filter id="kLight" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur in="SourceGraphic" stdDeviation="9" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
       <clipPath id="kClip"><path d="${BODY}"/></clipPath>
-      <filter id="kWobble" x="-10%" y="-10%" width="120%" height="120%"><feTurbulence type="fractalNoise" baseFrequency=".03" numOctaves="2" seed="7"/><feDisplacementMap in="SourceGraphic" scale="9"/></filter></defs></svg>`;
+      <filter id="kWobble" filterUnits="userSpaceOnUse" x="0" y="-50" width="1700" height="1050"><feTurbulence type="fractalNoise" baseFrequency=".03" numOctaves="2" seed="7"/><feDisplacementMap in="SourceGraphic" scale="9"/></filter></defs></svg>`;
     const CAT = `<div class="cat" title="Meow">
       <svg class="tail" ${VB}><g fill="none" stroke-linejoin="round" filter="url(#kWobble)"><path d="${TAIL}" stroke="${PAPER}" stroke-width="128"/><path d="${TAIL}" stroke="${INK}" stroke-width="92"/></g><path d="${TAIL}" fill="url(#kTail)" stroke="url(#kRim)" stroke-width="5" stroke-linejoin="round"/></svg>
       <svg class="bodyl" ${VB}>
@@ -581,7 +581,7 @@
         <g fill="none" stroke="${INK}" stroke-width="12" stroke-linecap="round" opacity=".7"><path d="M478 790v40M548 790v40M988 790v40M1058 790v40"/></g>
         <path d="${PAWSH(0)}" style="fill:var(--cat-shade)"/><path d="${PAWSH(510)}" style="fill:var(--cat-shade)"/>
         <ellipse cx="470" cy="630" rx="58" ry="30" fill="#ff8fb8" opacity=".35"/><ellipse cx="1025" cy="630" rx="58" ry="30" fill="#ff8fb8" opacity=".35"/>
-        <path d="M690 552C690 594 738 596 750 562C762 596 810 594 810 552" fill="none" stroke="#f4fff4" stroke-width="22" stroke-linecap="round" stroke-linejoin="round" filter="url(#kLight)"/>
+        <path d="M690 552C690 594 738 596 750 562C762 596 810 594 810 552" fill="none" stroke="${INK}" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
       <div class="eyes">
         <svg ${VB}><g filter="url(#kLight)" fill="#f4fff4"><circle cx="545" cy="530" r="64"/><circle cx="950" cy="530" r="64"/></g>

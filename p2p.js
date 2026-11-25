@@ -126,6 +126,42 @@ async function upnpMap(port, proto = 'TCP') {
   return { ip: await externalIp(svc).catch(() => ''), remove: () => { clearInterval(renew); return unmap().catch(() => {}); } };
 }
 
+// ---- can friends elsewhere get in? ----
+const TLS_PSK = (k) => ({ ...TLS, pskCallback: () => ({ psk: k, identity: ID }), checkServerIdentity: () => undefined });
+// Does this PC answer at its public address (a port forwarded by hand)? Many routers let a PC call its own public address, so a
+// yes is certain; a no only means it couldn't be checked from inside.
+const reachable = (ip, port, key) => new Promise((resolve) => {
+  const req = https.request({ host: ip, port, path: '/ping', agent: false, timeout: 3500, ...TLS_PSK(key) }, (r) => { r.resume(); resolve(true); });
+  req.on('timeout', () => req.destroy()); req.on('error', () => resolve(false)); req.end();
+});
+// How far this PC's `port` (a server answering TLS keyed by `key`) can be reached. Resolves { reach, pubIp, why, mapping }:
+//   reach 'internet' friends anywhere can get in (the port answered at the public address, or the router opened it);
+//         'lan'      only friends on this network (why 'cgnat': the router itself is behind the provider's shared address);
+//         'manual'   couldn't be told from inside (why 'noupnp': the router won't open it; 'double': behind two routers of your own).
+//   pubIp  the address friends elsewhere would use ('' when there's none). mapping: a promise of the router's port mapping or
+//   null, for the caller to keep or remove. DRIFT_REACH=internet|lan|manual makes it say that without asking anything (tests).
+async function lookOut(port, key, publicIp) {
+  const forced = process.env.DRIFT_REACH;
+  if (['internet', 'lan', 'manual'].includes(forced)) return { reach: forced, pubIp: '', why: { lan: 'cgnat', manual: 'noupnp' }[forced] || '', mapping: Promise.resolve(null) };
+  const mapping = upnpMap(port).catch(() => null);
+  const seen = await publicIp().catch(() => '');
+  const pubIp = isPublic(seen) ? seen : '';
+  if (pubIp && await reachable(pubIp, port, key)) return { reach: 'internet', pubIp, why: '', mapping };       // already open: nothing more to do
+  const m = await mapping;
+  if (m && (isPublic(m.ip) || (!m.ip && pubIp))) return { reach: 'internet', pubIp: m.ip || pubIp, why: '', mapping };
+  if (m && /^100\./.test(m.ip)) return { reach: 'lan', pubIp: '', why: 'cgnat', mapping };       // the provider's shared address (100.64.0.0/10)
+  // No UPnP, or UPnP on a router behind another of your own: a port forwarded by hand may still let friends in, and this PC
+  // can't tell from inside. The first friend who connects from elsewhere settles it (onUpgrade). (pubIp stays what the internet
+  // sees: the code needs it for a port forwarded by hand.)
+  return { reach: 'manual', pubIp, why: m ? 'double' : 'noupnp', mapping };
+}
+// What the Hub tab says about it while sharing.
+function reachNote(why, port) {
+  if (why === 'cgnat') return 'Your internet provider shares one address between several homes, so friends elsewhere can\'t reach this PC directly. Friends on your own network can still join — or connect both PCs with a VPN such as Tailscale and start sharing again.';
+  if (why !== 'double' && why !== 'noupnp') return '';
+  return `Friends elsewhere can only watch if TCP port ${port} is open to this PC (${localAddrs()[0] || 'its local address'}). ${why === 'double' ? 'Your PC is behind two routers, and only the inner one opened it' : 'Your router doesn\'t open it by itself (UPnP is off)'}: forward the port in the router's settings, or turn on UPnP. If it's already forwarded, ignore this — some routers can't be checked from the inside, and this note goes away once a friend from elsewhere joins.`;
+}
+
 // ---- newline-separated JSON over a socket ----
 function wire(sock, head, onMsg, onClose, max = 2e6) {       // max: the longest line accepted, in characters
   let buf = '', closed = false;
@@ -177,10 +213,10 @@ module.exports = function createP2P(hooks) {
   }
 
   // ================= sharing =================
-  function listen(srv, want) {
+  function listen(srv, want, local = opts.local) {
     return new Promise((resolve, reject) => {
       const tries = [...Array.from({ length: 8 }, (_x, i) => want + i).filter((p) => p > 1023 && p < 65536), 0];
-      let host = opts.local ? '127.0.0.1' : '::';
+      let host = local ? '127.0.0.1' : '::';
       const next = () => {
         if (!tries.length) { reject(new Error('no port')); return; }
         const p = tries[0];
@@ -195,10 +231,12 @@ module.exports = function createP2P(hooks) {
   }
   const makeCode = () => { code = encodeCode({ port, key, addrs: opts.local ? ['127.0.0.1'] : [...(isPublic(pubIp) ? [pubIp] : []), ...localAddrs()] }); };
   async function share(o) {
+    starting = true;       // (no probe begins now: it would take the port)
+    if (probing) await probing.catch(() => {});       // (it holds the port for a moment: see probe)
     if (role !== 'off') await stop();
     const my = ++gen;
     opts = { ...o }; myName = cleanName(o.name) || 'Host';
-    role = 'host'; status = 'starting'; note = ''; reach = 'lan'; code = ''; pubIp = ''; settling = false; lastSnap = ''; lastFile = ''; holding = false;
+    starting = false; role = 'host'; status = 'starting'; note = ''; reach = 'lan'; code = ''; pubIp = ''; settling = false; lastSnap = ''; lastFile = ''; holding = false;
     key = crypto.randomBytes(16);
     const srv = server = https.createServer({ ...TLS, pskCallback: (_s, id) => (id === ID ? key : null) }, onRequest);
     srv.on('upgrade', onUpgrade); srv.on('tlsClientError', () => {}); srv.on('clientError', (_e, sock) => { try { sock.destroy(); } catch { /* gone */ } });
@@ -211,42 +249,43 @@ module.exports = function createP2P(hooks) {
     changed();
     if (o.internet) openInternet(my);
   }
-  // Can this PC already be reached at its public address (a port forwarded by hand)? Many routers let a PC call its own
-  // public address, so a yes is certain; a no only means it couldn't be checked from inside.
-  const reachable = (ip) => new Promise((resolve) => {
-    const req = https.request({ host: ip, port, path: '/ping', agent: false, timeout: 3500, ...clientTls(key) }, (r) => { r.resume(); resolve(true); });
-    req.on('timeout', () => req.destroy()); req.on('error', () => resolve(false)); req.end();
-  });
   // Works out how friends outside the home can get in. The invite code isn't offered until this is settled, so a code
   // copied early can never be missing the public address.
   async function openInternet(my) {
     settling = true; note = ''; changed();
-    const mapping0 = upnpMap(port).catch(() => null);
-    const drop = () => mapping0.then((m) => { if (m) m.remove(); });
-    const seen = await hooks.publicIp().catch(() => '');
-    if (my !== gen) { drop(); return; }
-    if (isPublic(seen)) { pubIp = seen; makeCode(); }
-    if (pubIp && await reachable(pubIp)) {       // the port is already open: nothing more to do
-      if (my !== gen) { drop(); return; }
-      reach = 'internet'; note = ''; settling = false; changed();
-      mapping0.then((m) => { if (my === gen) mapping = m; else if (m) m.remove(); });
-      return;
-    }
-    const mapped = await mapping0;
-    if (my !== gen) { if (mapped) mapped.remove(); return; }
-    mapping = mapped;
-    if (mapped && (isPublic(mapped.ip) || (!mapped.ip && pubIp))) { pubIp = mapped.ip || pubIp; reach = 'internet'; note = ''; }
-    else if (mapped && /^100\./.test(mapped.ip)) {       // the router itself sits behind the provider's shared address (100.64.0.0/10)
-      pubIp = ''; reach = 'lan';
-      note = 'Your internet provider shares one address between several homes, so friends elsewhere can\'t reach this PC directly. Friends on your own network can still join — or connect both PCs with a VPN such as Tailscale and start sharing again.';
-    } else {
-      // No UPnP, or UPnP on a router that sits behind another one of your own: a port forwarded by hand may still let friends
-      // in, and this PC can't tell from inside. The first friend who connects from elsewhere settles it (onUpgrade).
-      reach = 'manual';       // (pubIp stays what the internet sees: the code needs it for a port forwarded by hand)
-      note = `Friends elsewhere can only watch if TCP port ${port} is open to this PC (${localAddrs()[0] || 'its local address'}). ${mapped ? 'Your PC is behind two routers, and only the inner one opened it' : 'Your router doesn\'t open it by itself (UPnP is off)'}: forward the port in the router's settings, or turn on UPnP. If it's already forwarded, ignore this — some routers can't be checked from the inside, and this note goes away once a friend from elsewhere joins.`;
-      hooks.say('Friends outside your network may not be able to watch: see the Hub tab');
-    }
+    const r = await lookOut(port, key, hooks.publicIp);
+    if (my !== gen) { r.mapping.then((m) => { if (m) m.remove(); }); return; }
+    r.mapping.then((m) => { if (my === gen) mapping = m; else if (m) m.remove(); });
+    pubIp = r.pubIp; reach = r.reach; note = reachNote(r.why, port);
+    if (r.why === 'double' || r.why === 'noupnp') hooks.say('Friends outside your network may not be able to watch: see the Hub tab');
     makeCode(); settling = false; changed();
+  }
+  // A dry run of openInternet, before anything is shared: listens on the port a share would use (answering nothing but the
+  // check itself), asks the router to open it, tries it, and lets it all go again. Resolves { reach, why, port }, as a share
+  // would find it (reach '' if it couldn't be tried). While sharing, it's what the share found. A share started meanwhile
+  // waits for it, so the two never hold the port (or the router's mapping) at once.
+  let probing = null, starting = false;
+  function probe(o = {}) {
+    if (starting) return Promise.resolve({ reach: '', why: '', port: 0 });
+    if (role === 'host') return Promise.resolve({ reach: settling ? '' : reach, why: '', port });
+    if (o.internet === false) return Promise.resolve({ reach: 'lan', why: 'off', port: 0 });
+    if (probing) return probing;
+    probing = (async () => {
+      const k = crypto.randomBytes(16);
+      const srv = https.createServer({ ...TLS, pskCallback: (_s, id) => (id === ID ? k : null) }, (_req, res) => { res.writeHead(204); res.end(); });
+      srv.on('tlsClientError', () => {}); srv.on('clientError', (_e, sock) => { try { sock.destroy(); } catch { /* gone */ } });
+      let p = 0;
+      try { p = await listen(srv, +o.port || 47800, !!o.local); } catch { return { reach: '', why: '', port: 0 }; }
+      try {
+        const r = await lookOut(p, k, hooks.publicIp);
+        const m = await r.mapping;
+        if (m) await Promise.race([m.remove(), new Promise((res) => setTimeout(res, 1500))]);
+        return { reach: r.reach, why: r.why, port: p };
+      } finally {
+        srv.close(); if (srv.closeAllConnections) srv.closeAllConnections();
+      }
+    })().finally(() => { probing = null; });
+    return probing;
   }
   function fileSpec(req) {
     const u = new URL(req.url, 'http://x');
@@ -334,7 +373,7 @@ module.exports = function createP2P(hooks) {
   function setOptions(o) { opts = { ...opts, ...o }; if (o.name !== undefined) myName = cleanName(o.name) || myName; weigh(); if (role === 'host') { lastSnap = ''; sync(); } }
 
   // ================= joining =================
-  const clientTls = (k) => ({ ...TLS, pskCallback: () => ({ psk: k, identity: ID }), checkServerIdentity: () => undefined });
+  const clientTls = TLS_PSK;
   function dial(c, addr) {
     return new Promise((resolve, reject) => {
       const req = https.request({ host: addr, port: c.port, path: '/ctl?v=1&n=' + encodeURIComponent(myName), headers: { Connection: 'Upgrade', Upgrade: 'drift' }, agent: false, timeout: 7000, ...clientTls(c.key) });
@@ -468,7 +507,7 @@ module.exports = function createP2P(hooks) {
     peers: role === 'host' ? who() : g ? g.who : [], host: role === 'host' ? myName : g ? g.host : '', waiting: holding,
     tabs: role === 'host' ? tabCounts() : g && status === 'connected' ? g.tabs : {} });
 
-  return { share, join, stop, info, sync, weigh, carryOn, setOptions, setTab, relay, json, send, sendTo, ids: () => [...peers.keys()], ready, role: () => role, connected: () => role === 'guest' && status === 'connected', count: () => peers.size };
+  return { share, probe, join, stop, info, sync, weigh, carryOn, setOptions, setTab, relay, json, send, sendTo, ids: () => [...peers.keys()], ready, role: () => role, connected: () => role === 'guest' && status === 'connected', count: () => peers.size };
 };
 module.exports.encodeCode = encodeCode;
 module.exports.decodeCode = decodeCode;

@@ -265,6 +265,9 @@ module.exports = function createHub(opts) {
     for (const x of online.get(from) || []) x.wire.send({ t: 'live-no', why, who: who.slice(0, 3).map(nameOf) });
     recount();       // (a vote to replace it has nothing left to replace)
   }
+  // Who online a share from session `s` couldn't reach if it turned out 'lan' (only their ids: nobody learns where anyone is).
+  // Each member's Drift uses it to say, before they share, whether their router matters (main.js shareCheck).
+  const apartFrom = (s) => [...online.keys()].filter((id) => id !== s.id && !placesOf(id).has(s.place));
   const reachCheck = () => { for (const l of [...lives.values()]) { const out = outside(l); if (out.length) liveOff(l.from, 'reach', out); } };
   const sessions = new Set();
   let server = null, port = 0;
@@ -295,7 +298,7 @@ module.exports = function createHub(opts) {
   }
   // key: the member's raw Ed25519 public key, so members can check each other's call signatures (and that it hashes to the id)
   const memberList = () => S.members.all().map((m) => ({ id: m.id, key: Buffer.from(m.key).toString('base64url'), name: m.name, host: m.id === ownerId, online: online.has(m.id), av: m.av || '', mic: online.has(m.id) && mics.has(m.id) ? mics.get(m.id) : null, at: online.has(m.id) ? wheres.get(m.id) || '' : '' }));
-  const membersNews = (but) => { const list = memberList(); for (const s of sessions) if (s.id && s !== but) s.wire.send({ t: 'members', list: bent.list(s, list) }); };
+  const membersNews = (but) => { const list = memberList(); for (const s of sessions) if (s.id && s !== but) s.wire.send({ t: 'members', list: bent.list(s, list), apart: apartFrom(s) }); };
   const channelList = () => S.channels.all().map((c) => ({ id: c.id, name: c.name }));
 
   function invite({ by, days = INVITE_DAYS, uses = 25 }) {
@@ -352,7 +355,7 @@ module.exports = function createHub(opts) {
       if (!online.has(id)) online.set(id, new Set());
       online.get(id).add(s);
       reachCheck();       // (a share they couldn't get to comes off before they hear of it)
-      reply(s, m, { me: id, host: id === ownerId, hub: hubName, addrs: opts.addrs ? opts.addrs() : [], members: bent.list(s, memberList()), channels: channelList(), lives: liveList(), voice: voiceList(), room: roomId, bcs: bcList(), surf: surfOut() });       // addrs: so members can still find the hub when its addresses change
+      reply(s, m, { me: id, host: id === ownerId, hub: hubName, addrs: opts.addrs ? opts.addrs() : [], members: bent.list(s, memberList()), apart: apartFrom(s), channels: channelList(), lives: liveList(), voice: voiceList(), room: roomId, bcs: bcList(), surf: surfOut() });       // addrs: so members can still find the hub when its addresses change
       membersNews(s);
       for (const b of bcs.values()) if (b.thumb) s.wire.send({ t: 'bc-thumb', id: b.id, from: b.from, ...b.thumb });       // each broadcast's latest still, for their grid
       return;

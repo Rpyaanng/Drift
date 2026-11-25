@@ -293,7 +293,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
         changed(); return;
       }
       c.status = 'connected'; c.note = ''; c.tries = 0;
-      c.me = m.me; c.host = !!m.host; setMembers(c, m.members); c.channels = m.channels || []; c.lives = Array.isArray(m.lives) ? m.lives : []; c.voice = Array.isArray(m.voice) ? m.voice : []; c.roomId = TOKEN.test(String(m.room || '')) ? String(m.room) : ''; c.oldRoomId = ''; c.bcs = cleanBcs(m.bcs); c.surf = cleanSurf(m.surf);
+      c.me = m.me; c.host = !!m.host; setMembers(c, m.members); c.apart = cleanApart(m.apart); c.channels = m.channels || []; c.lives = Array.isArray(m.lives) ? m.lives : []; c.voice = Array.isArray(m.voice) ? m.voice : []; c.roomId = TOKEN.test(String(m.room || '')) ? String(m.room) : ''; c.oldRoomId = ''; c.bcs = cleanBcs(m.bcs); c.surf = cleanSurf(m.surf);
       if (myLive && myLive.hub === c.h.id) sendLive(c, myLive.live);       // still sharing: tell the hub again after a reconnect
       const mine = c.members.find((x) => x.id === myId), want = avatarId(me.avatar || '');
       if (mine && (mine.av || '') !== want) c.wire.send({ t: 'avatar', re: 'av', data: me.avatar || '' });       // a picture chosen (or removed) while away
@@ -310,7 +310,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
     if (m.re !== undefined && c.pending.has(m.re)) { const p = c.pending.get(m.re); c.pending.delete(m.re); p(m.t === 'err' ? { ...m, error: String(m.error || 'The hub said no.') } : m); return; }
     switch (m.t) {
       case 'pong': return;
-      case 'members': setMembers(c, m.list); changed(); break;
+      case 'members': setMembers(c, m.list); c.apart = cleanApart(m.apart); changed(); break;
       case 'voice': c.rosterSeq++; c.voice = Array.isArray(m.list) ? m.list : []; onRoster(c, m.room); changed(); return;
       case 'voice-signal': onSignal(c, m); return;
       case 'voice-ended': c.inRoom = false; c.bumped = true; c.roomNote = String(m.why || '').slice(0, 200); if (call && call.hub === c.h.id) endCall(c.roomNote); changed(); return;
@@ -558,7 +558,9 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
   // The broadcast and screen windows only ever get SDPs that passed, and verdicts, as voice's does.
   let myBc = null;
   const watches = new Map();
-  const cleanBcs = (list) => (Array.isArray(list) ? list : []).filter((b) => b && TOKEN.test(String(b.id)) && typeof b.from === 'string').map((b) => ({
+  // apart: the ids of who online is on another network from this PC (hub.js apartFrom); null from a hub that doesn't say.
+  const cleanApart = (list) => (Array.isArray(list) ? list.filter((id) => typeof id === 'string' && id.length <= 80).slice(0, 64) : null);
+  const cleanBcs =(list) => (Array.isArray(list) ? list : []).filter((b) => b && TOKEN.test(String(b.id)) && typeof b.from === 'string').map((b) => ({
     id: String(b.id), from: b.from, title: String(b.title || '').slice(0, LIMITS.bcTitle), kind: b.kind === 'window' ? 'window' : 'screen', audio: !!b.audio, since: +b.since || 0,
     viewers: (Array.isArray(b.viewers) ? b.viewers : []).filter((v) => typeof v === 'string').slice(0, 32) }));
   const bcPeer = () => ({ want: '', offered: '', prints: null, verdict: '', refused: '', told: false });
@@ -1141,7 +1143,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
       hubs: saved.map((h) => {
         const c = conns.get(h.id), t = trust[h.id] || {}, up = !!c && c.status === 'connected';
         return { id: h.id, name: h.name, mine: !!h.mine, status: h.gone ? 'gone' : c ? c.status : away.has(h.id) ? 'away' : 'offline', note: h.gone || (c && c.note) || (away.has(h.id) ? (resting.has(h.id) ? 'Offline.' : 'Disconnected.') : ''),
-          host: !!(c && c.host), members: c ? c.members.map(({ key: _k, ...m }) => ({ ...m, verified: !!(t[m.id] && t[m.id].verified) })) : [], channels: c ? c.channels : [], lives: up ? c.lives : [], vote: (up && c.mediaVote) || null,
+          host: !!(c && c.host), members: c ? c.members.map(({ key: _k, ...m }) => ({ ...m, verified: !!(t[m.id] && t[m.id].verified) })) : [], channels: c ? c.channels : [], lives: up ? c.lives : [], apart: up ? c.apart : null, vote: (up && c.mediaVote) || null,
           voice: up ? c.voice : [], bcs: up ? c.bcs.filter((b) => !blocked.has(b.from)) : [], surf: up ? c.surf : null, room:{ in: !!(c && c.inRoom), note: (c && c.roomNote) || '' }, away: away.has(h.id), suspect: c ? [...c.suspect].map(([id, name]) => ({ id, name })) : [], lookalikes: c ? lookalikes(c) : [] };
       }),
       voiceHub: want.hub,

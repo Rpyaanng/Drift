@@ -1089,7 +1089,7 @@ body.surfing.inHub #chatOverlay.typing #coBtn { bottom: calc(50% - 17px); }     
    those images, and everything below only moves and fades them, so no cat is drawn again per frame. It sits on the panel (see
    lift in chat.js), under the chat, so messages stack up above it; it pops in, breathes, glows, blinks and swishes its tail */
 /* the cats sit along one line, each at its own spot (--cat-x, placeCat in app.js); the line is as tall as a cat, so chat stacks up above them */
-:root { --cat-w: clamp(23px, 2vw, 37px); }
+:root { --cat-w: clamp(17px, 1.5vw, 28px); }
 #coCats { position: relative; height: calc(var(--cat-w) * .565); margin-top: 2px; }
 #chatOverlay:not(.cat) #coCats { display: none; }
 .coCat { position: absolute; left: var(--cat-x, 0px); bottom: calc(var(--cat-w) * -.038); display: none; width: var(--cat-w); aspect-ratio: 1360 / 820;
@@ -1101,20 +1101,22 @@ body.surfing.inHub #chatOverlay.typing #coBtn { bottom: calc(50% - 17px); }     
   overflow: hidden; pointer-events: none; }
 .catClip img { position: absolute; left: 0; top: 0; width: var(--cat-iw, 0); height: var(--cat-ih, 0); max-width: none; pointer-events: none; }
 /* the colours cats.js draws with (read off a hidden .catPaint), mixed from the theme's accent, so a palette change draws them
-   again. --cat-glow1 and 2: the glow around the whole cat, blurred 4 and 16 px (3 and 12 asleep, in cats.js) */
+   again. --cat-glow1 and 2: the glow around the whole cat, blurred 2 and 8 px (2 and 6 asleep, in cats.js) */
 .catPaint {
   --cat-base: var(--accent); --cat-mid: color-mix(in oklab, var(--accent), white 22%); --cat-hi: color-mix(in oklab, var(--accent), white 62%);
   --cat-rim: color-mix(in oklab, var(--accent), white 80%); --cat-lo: color-mix(in oklab, var(--accent), black 12%); --cat-shade: color-mix(in oklab, var(--accent), black 48%);
   --cat-deep: color-mix(in oklab, var(--accent), black 50%); --cat-dark: color-mix(in oklab, var(--accent), black 72%);
-  --cat-glow1: color-mix(in srgb, var(--cat-hi) 80%, transparent); --cat-glow2: color-mix(in srgb, var(--accent) 55%, transparent);  /* the "z Z Z" keeps its own colour: the accent's opposite, kept light */
+  --cat-glow1: color-mix(in srgb, var(--cat-hi) 50%, transparent); --cat-glow2: color-mix(in srgb, var(--accent) 28%, transparent);  /* the "z Z Z" keeps its own colour: the accent's opposite, kept light */
   --cat-z: oklch(from var(--accent) max(l, .82) max(c, .12) calc(h + 180)); }
 /* asleep, the cat dims: its colours mixed darker and its glow turned down */
 .catPaint.asleep {
   --cat-base: color-mix(in oklab, var(--accent), black 28%); --cat-mid: color-mix(in oklab, var(--accent), black 18%); --cat-hi: color-mix(in oklab, var(--accent), white 22%);
   --cat-rim: color-mix(in oklab, var(--accent), white 40%); --cat-lo: color-mix(in oklab, var(--accent), black 35%); --cat-shade: color-mix(in oklab, var(--accent), black 60%);
   --cat-deep: color-mix(in oklab, var(--accent), black 62%); --cat-dark: color-mix(in oklab, var(--accent), black 80%);
-  --cat-glow1: color-mix(in srgb, var(--cat-hi) 30%, transparent); --cat-glow2: color-mix(in srgb, var(--accent) 16%, transparent); }
-.coCat.here { display: block; animation: catIn .7s cubic-bezier(.3, 1.6, .5, 1), catBreathe 3.6s ease-in-out .7s infinite; }
+  --cat-glow1: color-mix(in srgb, var(--cat-hi) 20%, transparent); --cat-glow2: color-mix(in srgb, var(--accent) 9%, transparent); }
+/* landing (summoned, from another screen, or after the edge moved): a slow rise and fade with a small settle, each after its
+   turn (the delays are set by landAt in app.js; hidden till then) */
+.coCat.here { display: block; animation: catIn 1.1s cubic-bezier(.25, 1.25, .45, 1) backwards, catBreathe 3.6s ease-in-out 1.1s infinite; }
 .coCat.leaving { animation: catOut .35s ease-out forwards !important; pointer-events: none; }
 .coCat.here:not(.leaving) { pointer-events: auto; }       /* (the overlay itself lets the mouse through) so its name shows on hover */
 /* the hovered cat's name, in a little pill just above it (placed by app.js) */
@@ -1127,7 +1129,7 @@ body.surfing.inHub #chatOverlay.typing #coBtn { bottom: calc(50% - 17px); }     
 /* asleep it's a ghost (one picture, drawn by cats.js: its fur faded right down, eyes shut), and its glow, blinking and tail
    are hidden. Nothing here animates every frame: only the moment one arrives or leaves */
 .coCat .catAsleep { display: none; }
-#chatOverlay.asleep .coCat.here { animation: catIn .7s cubic-bezier(.3, 1.6, .5, 1); scale: 1.04 .93; }
+#chatOverlay.asleep .coCat.here { animation: catIn 1.1s cubic-bezier(.25, 1.25, .45, 1) backwards; scale: 1.04 .93; }
 #chatOverlay.asleep .coCat * { animation: none; }
 #chatOverlay.asleep .coCat .catAwake { display: none; }
 #chatOverlay.asleep .coCat .cl-sleep, #chatOverlay.asleep[data-z="1"] .coCat .cl-z1, #chatOverlay.asleep[data-z="2"] .coCat :is(.cl-z1, .cl-z2),
@@ -1137,7 +1139,7 @@ body.surfing.inHub #chatOverlay.typing #coBtn { bottom: calc(50% - 17px); }     
 .coCat .cl-eyes { transform-origin: var(--cat-eyes-o, center); animation: catBlink 5.2s infinite; will-change: transform; }
 .coCat :is(.cl-tail, .cl-haloTail) { transform-origin: var(--cat-tail-o, center); animation: catTail 2.8s ease-in-out infinite; will-change: transform; }
 .coCat :is(.cl-bang, .cl-haloBang) { animation: catBang 4.4s ease-in-out infinite; will-change: opacity; }
-@keyframes catIn { from { opacity: 0; transform: translateY(14px) scale(.8); } }
+@keyframes catIn { from { opacity: 0; transform: translateY(10px) scale(.9); } 45% { opacity: 1; } }
 @keyframes catOut { to { opacity: 0; } }
 @keyframes catBreathe { 50% { transform: scale(1.035, .97); } }
 @keyframes catBlink { 0%, 92%, 100% { transform: none; } 95% { transform: scaleY(.08); } }

@@ -494,13 +494,16 @@
   const U = me.union, cx = U.x + U.width / 2, cy = U.y + U.height / 2, b = me.bounds;
   const isCenter = cx >= b.x && cx < b.x + b.width && cy >= b.y && cy < b.y + b.height;
   const clockEl = $('#clockFace'), breathEl = $('#breath'), coEl = $('#chatOverlay'), ring = $('#breath .ring'), breathTxt = $('#breath span');
+  // when a cat lands (catIn, 1.1 s in style.css) after waiting d seconds, then starts breathing, each cat out of step with the others
+  const CAT_IN = 1.1;
+  function landAt(c, d) { const k = +c.dataset.k || 0; c.style.animationDelay = `${d.toFixed(2)}s, ${(d + CAT_IN + (k * 1.1) % 3.6).toFixed(2)}s`; }
   // the cats: the drawing in index.html is only a template. cats.js draws its pieces once into small images, and each cat is
   // a stack of those (all the cats share them), which CSS only moves. They sit in a row under the chat.
   const catEls = (() => {
     const tpl = $('#coCat'), row = document.createElement('div'), out = [];
     row.id = 'coCats'; tpl.replaceWith(row); Cats.start(tpl);
     for (let k = 0; k < CAT_MAX; k++) out.push(row.appendChild(Cats.make()));
-    out.forEach((c, k) => { c.style.animationDelay = `0s, ${(.7 + (k * 1.1) % 3.6).toFixed(1)}s`; });       // they breathe out of step
+    out.forEach((c, k) => { c.dataset.k = k; landAt(c, 0); });
     // each has its own name (the same cat k on every screen), shown in a little tag above it while the mouse is on it
     const tag = document.createElement('span'); tag.id = 'coCatTag'; row.append(tag);
     out.forEach((c, k) => {
@@ -519,7 +522,9 @@
   // spread the cats on this screen at random along the edge, never overlapping (called again when the overlay moves: lift in chat.js)
   // where along the edge the cats can sit (the panel's top while it shows, else the bottom of the screen), and a free spot on it
   const catRoom = () => { const pan = $('#panel'); return Math.max(0, (pan.classList.contains('show') ? pan.offsetWidth - 44 : innerWidth - 56) - (catEls[0].getBoundingClientRect().width || 33)); };
-  function placeCat(c) {
+  // i: its place among the cats landing at once, so they come one after another (a moment after the overlay fades back in)
+  function placeCat(c, i = 0) {
+    landAt(c, 0.15 + i * 0.14);
     const room = catRoom(), w = (c.getBoundingClientRect().width || 33) + 8;
     const taken = catEls.filter((o) => o !== c && o.classList.contains('here') && !o.classList.contains('leaving')).map((o) => parseFloat(o.style.getPropertyValue('--cat-x')) || 0);
     let best = Math.random() * room, bestGap = -1;
@@ -546,7 +551,8 @@
     $('#coCatTag').classList.remove('on');
     here.forEach((c) => c.style.removeProperty('--cat-x'));
     here.forEach((c) => { c.classList.remove('here'); });
-    here.forEach((c) => { c.classList.add('here'); placeCat(c); });
+    void coEl.offsetWidth;       // (seen without 'here' for a moment, so they land again rather than just jump)
+    here.forEach((c, i) => { c.classList.add('here'); placeCat(c, i); });
   }
   coEl.addEventListener('catmove', scatterCats);
   $('#catCount').max = CAT_MAX;
@@ -573,8 +579,9 @@
     const catsHere = catEls.map((c, k) => !!S.cat && k < catCount() && catAt[k] === me.index), catKey = catsHere.join();
     if (catKey !== catWas) {       // one arrived or left. One that's leaving fades away; the ones arriving land in free spots
       const was = catWas.split(','); catWas = catKey;
+      let landing = 0;
       catEls.forEach((c, k) => {
-        if (catsHere[k]) { c.classList.remove('leaving'); if (!c.classList.contains('here')) { c.classList.add('here'); placeCat(c); } }
+        if (catsHere[k]) { c.classList.remove('leaving'); if (!c.classList.contains('here')) { c.classList.add('here'); placeCat(c, landing++); } }
         else if (c.classList.contains('here') && was[k] === 'true' && S.cat && k < catCount()) { fadeOff(c); catTagOff(k); }
         else { c.classList.remove('here', 'leaving'); catTagOff(k); }
       });
@@ -644,6 +651,7 @@
   // or another question taking its place. `detail` is a line shown as it is (a link's whole address); `danger: false` makes yes a
   // plain go-ahead rather than red. Enter answers with the button that has the keyboard (yes, to begin with); chat.js uses it too.
   // `alt` adds a third answer between no and yes: its button resolves 'alt' (a pick in a hub: play it just here).
+  // `yesOff` shows yes but greys it out (sharing to a hub friends couldn't watch it in), and the keyboard starts on alt instead.
   const confirmEl = $('#confirm');
   let asking = null;       // { done(answer), quit }
   function question(o) {
@@ -656,21 +664,25 @@
     yes.textContent = o.yes || 'OK'; yes.className = `btn ${o.danger === false ? 'primary' : 'danger'}`;
     yes.title = o.yesTip || ''; alt.textContent = o.alt || ''; alt.title = o.altTip || '';
     alt.style.display = o.alt ? '' : 'none'; alt.hidden = !o.alt;
+    yes.disabled = !!o.yesOff;
     $('#confirmMon').style.display = o.mon ? '' : 'none';
-    confirmEl.classList.add('on'); yes.focus();
+    confirmEl.classList.add('on'); (o.yesOff ? (o.alt ? alt : $('#confirmNo')) : yes).focus();
     return new Promise((resolve) => {
       asking = { quit: !!o.quit, done: (v) => { asking = null; confirmEl.classList.remove('on'); document.activeElement?.blur(); resolve(v === 'alt' ? 'alt' : !!v); } };
     });
   }
   // A video or music picked while online in a hub (main.js mediaPlay): play it just here, share it to the hub (which asks
   // everyone first when someone else's is on: the vote card), or neither. The answer goes back as 'media-choice'.
+  // c.reach (main.js shareCheck): friends elsewhere couldn't watch it (block: Share is greyed out, and says why), or might not.
   function askMedia(c) {
-    const what = String(c.title || 'this').slice(0, 80), hub = String(c.hub || 'the hub').slice(0, 40);
-    const note = c.vote ? `${c.on || 'Something'} is on in ${hub}. Sharing asks everyone there to switch to yours.`
+    const what = String(c.title || 'this').slice(0, 80), hub = String(c.hub || 'the hub').slice(0, 40), r = c.reach || null;
+    const about = c.vote ? `${c.on || 'Something'} is on in ${hub}. Sharing asks everyone there to switch to yours.`
       : c.hosting ? `It replaces what you're sharing in ${hub} now.`
       : `Everyone online in ${hub} will watch along with you.`;
+    const note = !r ? about : r.block ? String(r.text || '') : `${about}\n\n${String(r.text || '')}`;       // (#confirm p keeps the line breaks)
     question({ title: `Play “${what}”`, note, no: 'Cancel', alt: 'Just for me', altTip: 'Play it on this PC only. Nobody in the hub sees it.',
-      yes: c.vote ? 'Ask to share' : 'Share to hub', yesTip: c.vote ? 'Everyone online votes, and it goes on if more than half agree' : 'Play it for everyone online in the hub', danger: false })
+      yes: c.vote ? 'Ask to share' : 'Share to hub', yesOff: !!(r && r.block), danger: false,
+      yesTip: r && r.block ? 'Friends on other networks can\'t reach this PC' : c.vote ? 'Everyone online votes, and it goes on if more than half agree' : 'Play it for everyone online in the hub' })
       .then((v) => api.cmd({ type: 'media-choice', id: c.id, choice: v === 'alt' ? 'private' : v ? 'share' : 'cancel' }));
   }
   window.driftAsk = question;

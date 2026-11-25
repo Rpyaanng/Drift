@@ -1577,6 +1577,7 @@ function syncLive() {
   // (or so it turned out: someone couldn't, mediaRefused); 'manual' couldn't be checked. The hub uses it to keep the share off
   // the stream while someone online couldn't watch it (hub.js "reach").
   const reach = p.reach === 'manual' && mediaUnreached.has(liveHub) ? 'lan' : p.reach || 'lan';
+  if (p.role === 'host' && p.reach && !p.settling) shareReach = { ...shareReach, reach: p.reach, port: p.port, at: Date.now(), key: reachKey() };       // (what a real share found beats a dry run)
   const live = p.role === 'host' && liveHub && p.code && !p.settling ? { code: p.code, title: shareTitle(), watching: (p.peers || []).map((x) => x.name).slice(0, 8), reach } : null;
   const key = JSON.stringify([liveHub, live]);
   if (key === liveSent) return;
@@ -1617,12 +1618,52 @@ function mediaRefused(hub, m) {
   if (why === 'unreached') mediaUnreached.add(hub);
   const who = (Array.isArray(m.who) ? m.who : []).map((n) => String(n || '').replace(/[\x00-\x1f<>]/g, '').trim().slice(0, 24)).filter(Boolean).slice(0, 3);
   const names = who.length ? who.join(', ') : 'Someone in the hub', one = who.length === 1;
-  const fix = state.share.internet === false ? 'Sharing over the internet is off in Options, so only people on this network can watch.'
-    : /shares one address/.test(p.note || '') ? 'Your internet provider shares one address between several homes, so nobody outside can connect to this PC. A VPN such as Tailscale on both PCs gets round it.'
-    : `Your router doesn't let friends in by itself: forward TCP port ${p.port || state.share.port || 47800} to this PC in the router's settings, or turn on UPnP there.`;
+  const fix = reachFix(/shares one address/.test(p.note || '') ? 'cgnat' : '', p.port);
   mediaSolo = { hub, text: `Not shared to the hub: ${names} ${why === 'unreached' ? 'couldn\'t connect' : one ? 'isn\'t on your network and can\'t reach' : 'aren\'t on your network and can\'t reach'} this PC, so what you play stays here. ${fix}` };
   say(`Playing for you only: ${names} can't reach this PC`);
   pushState();
+}
+// What to do about friends elsewhere not getting in (why: p2p.js lookOut's, 'cgnat' or anything else).
+function reachFix(why, port) {
+  return state.share.internet === false ? 'Sharing over the internet is off in Options, so only people on this network can watch.'
+    : why === 'cgnat' ? 'Your internet provider shares one address between several homes, so nobody outside can connect to this PC. A VPN such as Tailscale on both PCs gets round it.'
+    : `Your router doesn't let friends in by itself: forward TCP port ${port || state.share.port || 47800} to this PC in the router's settings, or turn on UPnP there.`;
+}
+// ---- before sharing: could friends elsewhere watch? ----
+// p2p.probe tries this PC's router the way a share would (p2p.js lookOut) while nothing is shared, so the question a pick asks
+// (mediaChoose) can say up front what sharing would do. It's tried on going online in a hub, after REACH_MS, and when the options
+// it depends on change. What a share itself finds replaces it (syncLive), and a friend who couldn't connect outweighs it
+// (mediaUnreached). The hub says who online is on another network (apart: hub.js apartFrom); with nobody apart, it doesn't matter.
+const REACH_MS = 30 * 60e3;       // (each try opens and closes a mapping on the router: not too often)
+let shareReach = { reach: '', why: '', port: 0, at: 0, key: '' }, reachBusy = false;
+const reachKey = () => JSON.stringify([state.share.internet !== false, state.share.port]);
+function reachSoon() {
+  if (!chat || reachBusy || p2p.role() === 'host' || !chat.info().hubs.some((x) => x.status === 'connected')) return;
+  if (process.env.DRIFT_SHARE_LOCAL && !process.env.DRIFT_REACH) return;       // (test copies on one PC: nothing to find out, unless a test says what to find)
+  const key = reachKey();
+  if (shareReach.key === key && Date.now() - shareReach.at < REACH_MS) return;
+  reachBusy = true;
+  p2p.probe({ port: state.share.port, internet: state.share.internet, local: !!process.env.DRIFT_SHARE_LOCAL })
+    .then((r) => { shareReach = { reach: r.reach || '', why: r.why || '', port: r.port || 0, at: Date.now(), key }; })
+    .catch(() => {})
+    .finally(() => { reachBusy = false; });
+}
+// What sharing to hub `h` would do, for the question a pick asks: null if it's fine (or can't be told yet), else { block, text }.
+// block: the hub would turn it down (hub.js "reach"), so Share is greyed out; otherwise friends elsewhere might not get in.
+function shareCheck(h) {
+  if (!h || (p2p.role() === 'host' && liveHub === h.id)) return null;       // (sharing there already: it's on, or it's been said)
+  const apart = Array.isArray(h.apart) ? h.apart : null;       // (null: a hub from before 1.9.1 doesn't say)
+  if (apart && !apart.length) return null;       // everyone online is on this network (or a VPN with it)
+  const known = shareReach.key === reachKey() ? shareReach : { reach: '', why: '', port: 0 };
+  let reach = state.share.internet === false ? 'lan' : known.reach;
+  if (reach === 'manual' && mediaUnreached.has(h.id)) reach = 'lan';       // (it was tried, and a friend couldn't get in: as syncLive)
+  if (!reach || reach === 'internet') return null;
+  const who = (apart || []).map((id) => ((h.members || []).find((m) => m.id === id) || {}).name).filter(Boolean).slice(0, 3);
+  const names = who.length ? who.join(', ') : 'Friends on other networks', one = who.length === 1;
+  const fix = reachFix(known.why, known.port);
+  if (reach === 'lan' && apart) return { block: true, text: `${names} ${one ? 'isn\'t' : 'aren\'t'} on your network and can't reach this PC, so it can only play here. ${fix}` };
+  if (reach === 'lan') return { block: false, text: `Friends on other networks can't reach this PC. ${fix}` };
+  return { block: false, text: `${names} might not be able to watch: Drift couldn't check whether TCP port ${known.port || state.share.port || 47800} is open to this PC from outside. If it's forwarded already, share away.` };
 }
 // Playing something of your own while watching someone else's: leave theirs (it isn't joined again), then share yours.
 async function mediaOwn() { if (remote) { mediaTried = joinedCode; await p2p.stop(); } }
@@ -1651,7 +1692,7 @@ async function mediaPlay(title, go, from) {
   const who = theirs ? (h.members.find((m) => m.id === t.from) || {}).name || 'Someone' : '';
   const choice = await mediaChoose(from, {
     title, hub: h.name || 'the hub', vote: !!theirs, hosting,
-    on: theirs ? `${who}'s ${t.title || 'pick'}` : '',
+    on: theirs ? `${who}'s ${t.title || 'pick'}` : '', reach: shareCheck(h),
   });
   if (choice === 'private') {
     mediaBusy = true;
@@ -1692,6 +1733,7 @@ function onMediaVote(hub, v) {
 function mediaCheck() {
   if (!chat) return;
   const me = chat.myId(), role = p2p.role(), hubs = chat.info().hubs;
+  reachSoon();
   if (role === 'off') mediaIn = '';
   else if (role === 'host' && liveHub) mediaIn = liveHub;
   else { const sh = sessionHub(); if (sh) mediaIn = sh; }
