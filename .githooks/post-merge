@@ -1,0 +1,3 @@
+#!/bin/sh
+# Rebuild the Windows dev copy after a pull or merge brings in new commits.
+node "$(git rev-parse --show-toplevel)/scripts/dev-build.js" || echo "post-merge: dev build failed (the pull itself is kept)"
