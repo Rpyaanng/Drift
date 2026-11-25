@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('drift', {
   listDir: (d, kind) => ipcRenderer.invoke('list-dir', d, kind),
   searchLib: (kind, root, q) => ipcRenderer.invoke('search-lib', kind, root, q),
   readFile: (p) => ipcRenderer.invoke('read-file', p),
+  songTags: (p, big) => ipcRenderer.invoke('song-tags', p, !!big),       // { title, artist, album, art: data: URL or '' } (tags.js)
   subCues: () => ipcRenderer.invoke('sub-cues'),
   subSearch: (q) => ipcRenderer.invoke('sub-search', q),
   subDownload: (item) => ipcRenderer.invoke('sub-download', item),

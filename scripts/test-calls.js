@@ -61,6 +61,10 @@ function check(mode, R) {
     ok(R[r].notInVoiceAtFirst === true, `${mode}: ${label(r)} wasn't in voice on opening the hub, until pressing Join voice`);
     ok(R[r].trayBefore && /Unmute/.test(R[r].barBefore || '') && /Leave voice/.test(R[r].barBefore || ''), `${mode}: ${label(r)} had the tray light, Unmute and Leave voice while only listening ("${R[r].barBefore}")`);
     ok(R[r].test && R[r].test.micOpens === 1 && R[r].lightTalking === 'live', `${mode}: ${label(r)} pressed Talk: the microphone opened once and the light went red`);
+    const fb = R[r].facesBefore || [], ft = R[r].facesTalking || [];
+    ok(fb.length === 3 && fb.some((f) => /\bme\b/.test(f.cls) && /\baway\b/.test(f.cls)), `${mode}: ${label(r)}'s hub bar shows all three online before joining voice, their own face without the in-voice badge (${JSON.stringify(fb.map((f) => f.cls))})`);       // (the others may have joined already)
+    ok(ft.length === 3 && ft.every((f) => /\binCall\b/.test(f.cls)), `${mode}: ...and all three in voice once they join (${JSON.stringify(ft.map((f) => f.cls))})`);
+    ok(ft.filter((f) => !/\bme\b/.test(f.cls)).every((f) => /On Scenes/.test(f.title)), `${mode}: ...each of the others says the screen they're on ("${ft.map((f) => f.title.replace(/\n/g, ' / ')).join('" "')}")`);
     if (r !== 'host') ok(R[r].disconnected === true, `${mode}: ${label(r)} pressed Leave hub: the voice window and tray light went, and the hub shows as away`);
   }
   if (target) {

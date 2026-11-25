@@ -4,26 +4,34 @@
 (() => {
   const els = new Map();       // member id -> { el, x, y, at }
   // a person's colour comes from their name, as everywhere else in Drift (renderer/app.js ptrColor)
-  const color = (name) => { let h = 0; for (const ch of String(name)) h = (h * 31 + ch.charCodeAt(0)) % 360; return `hsl(${h} 90% 62%)`; };
+  let accent = '';       // Drift's accent, as main last sent it: colours follow the palette (cursors.js driftPtrColor)
+  const color = (name) => window.driftPtrColor(name, accent);
   const NS = 'http://www.w3.org/2000/svg';
-  function arrow() {
+  let grads = 0;
+  function arrow(el) {       // the arrow, lit from above in the person's colours (as app.js ptrShape)
     const svg = document.createElementNS(NS, 'svg');
     svg.setAttribute('viewBox', '0 0 20 24'); svg.setAttribute('width', '20'); svg.setAttribute('height', '24');
+    const id = 'g' + (++grads), defs = document.createElementNS(NS, 'defs'), g = document.createElementNS(NS, 'linearGradient');
+    g.setAttribute('id', id); g.setAttribute('x1', '0'); g.setAttribute('y1', '0'); g.setAttribute('x2', '.35'); g.setAttribute('y2', '1');
+    for (const [o, v] of [['0', '--c-hi'], ['.55', '--c'], ['1', '--c-lo']]) { const s = document.createElementNS(NS, 'stop'); s.setAttribute('offset', o); s.setAttribute('style', `stop-color:var(${v})`); g.append(s); }
+    defs.append(g);
     const p = document.createElementNS(NS, 'path');
     p.setAttribute('d', 'M3.2 4Q3.2 2.4 4.5 3.4L16.6 13.2Q17.8 14.3 16.2 14.6L10.8 15.2Q9.6 15.3 8.8 16.2L5.2 20.4Q3.2 22.4 3.2 19.8Z');
-    svg.append(p);
+    svg.append(defs, p);
+    el.style.setProperty('--fill', `url(#${id})`);
     return svg;
   }
   const W = () => window.innerWidth, H = () => window.innerHeight;
   window.bcOverlay.on((m) => {
     const list = Array.isArray(m.list) ? m.list : [], now = Date.now();
+    if (/^#[0-9a-f]{6}$/i.test(String(m.accent || ''))) accent = m.accent;
     for (const [id, q] of els) if (!list.some((x) => x.id === id)) { q.el.remove(); els.delete(id); }
     for (const x of list) {
       let q = els.get(x.id);
       if (!q) {
         const el = document.createElement('div'); el.className = 'ptr';
         const b = document.createElement('b');
-        el.append(arrow(), b);
+        el.append(arrow(el), b);
         document.body.append(el);
         els.set(x.id, q = { el, x: -1, y: -1, at: now });
       }

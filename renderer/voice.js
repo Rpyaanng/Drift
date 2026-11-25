@@ -1,7 +1,9 @@
 /* Drift — the voice room (docs/plans/broadcast.md §1). This hidden window exists while you listen in your active hub's
    voice room. It never opens the microphone until you press Talk, and closes it again when you stop: before that,
    every connection it makes is receive-only. Each connection has one audio transceiver from the start; talking puts
-   the microphone's track on it with replaceTrack, so nothing is renegotiated and talking starts at once.
+   the microphone's track on it with replaceTrack, so nothing is renegotiated and talking starts at once. The microphone
+   and speakers are the ones picked in Options, and by default the microphone goes through RNNoise (noise-worklet.js)
+   before it's sent.
 
    chat.js decides which connections to have (everyone, while the room is small; else only where someone talks) and who
    makes each offer, and tells this window through main.js. The window never sees a key or the hub. main.js hands it
@@ -27,35 +29,56 @@
     return out;
   }
 
-  // ---- the microphone (or, for tests, a steady tone): opened on Talk, closed (not just muted) when you stop ----
+  // ---- the speakers chosen in Options (cfg.out) ----
+  let outId = '';
+  const sink = (el) => { if (el.setSinkId && el.sinkId !== outId) el.setSinkId(outId).catch((e) => log('speakers: ' + e.message)); };
+
+  // ---- the microphone (or, for tests, a steady tone): opened on Talk, closed (not just muted) when you stop. mic.js opens
+  // it with the device and noise suppression chosen in Options (cfg.mic, cfg.ns); local is what's sent ----
+  let mic = null, nsUsed = '';
   async function openMic() {
     if (local) return;
     opens++;
     if (cfg.tone) {
       const osc = ctx.createOscillator(), dst = ctx.createMediaStreamDestination(), g = ctx.createGain();
       osc.frequency.value = 440; g.gain.value = 0.25; osc.connect(g).connect(dst); osc.start();
-      local = dst.stream; local.stopTone = () => osc.stop(); micOk = true;
+      local = dst.stream; local.stopTone = () => osc.stop(); micOk = true; nsUsed = 'tone';
+      micSrc = ctx.createMediaStreamSource(local);
     } else {
       try {
-        local = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
-        micOk = true;
-        local.getAudioTracks()[0].addEventListener('ended', () => { micOk = false; applyTalk(); });       // unplugged
+        mic = await window.driftMic.open(ctx, { mic: cfg.mic, ns: cfg.ns }, log);
       } catch (e) {
         log('no microphone: ' + e.message);
-        micOk = false; local = null;
+        micOk = false; local = null; mic = null;
         return;
       }
+      mic.raw.getAudioTracks()[0].addEventListener('ended', () => { micOk = false; applyTalk(); });       // unplugged
+      local = mic.stream; nsUsed = mic.ns; micOk = true;
     }
     localAn = ctx.createAnalyser(); localAn.fftSize = 1024;
-    micSrc = ctx.createMediaStreamSource(local); micSrc.connect(localAn);
+    (mic ? mic.out : micSrc).connect(localAn);
   }
   function closeMic() {
     if (!local) return;
-    for (const t of local.getTracks()) t.stop();       // stopped, so Windows' microphone light goes out too
+    if (mic) mic.close();
+    for (const t of local.getTracks()) t.stop();
     if (local.stopTone) local.stopTone();
     if (micSrc) micSrc.disconnect();
-    local = null; localAn = null; micSrc = null; micOk = false;
+    if (localAn) localAn.disconnect();
+    local = null; mic = null; localAn = null; micSrc = null; micOk = false; nsUsed = '';
   }
+  // Options changed the devices or the suppression: the speakers switch at once, and an open microphone reopens with them
+  // (a gap of a moment for the others).
+  let devChain = Promise.resolve();
+  const setDevices = (m) => { devChain = devChain.then(async () => {
+    cfg = { ...cfg, mic: m.mic, out: m.out, ns: m.ns };
+    outId = await window.driftMic.pickDevice('audiooutput', cfg.out);
+    for (const p of peers.values()) if (p.el) sink(p.el);
+    if (opening) await opening;
+    if (!talk) return;
+    closeMic();       // (or none was found: try the new choice)
+    await setTalk(true);
+  }).catch((e) => log('devices: ' + e.message)); };
   const track = () => (local ? local.getAudioTracks()[0] || null : null);
   // Hold-to-talk switches the track off rather than taking it away, so talking starts at once once Talk is on.
   const sending = () => talk && micOk && (!ptt || keyDown);
@@ -167,6 +190,7 @@
     if (p.el) { p.el.srcObject = stream; return; }
     p.el = new Audio();
     p.el.srcObject = stream; p.el.volume = p.vol * master;
+    sink(p.el);
     p.el.play().catch(() => {});
     p.an = ctx.createAnalyser(); p.an.fftSize = 1024;
     ctx.createMediaStreamSource(stream).connect(p.an);
@@ -190,8 +214,9 @@
     cfg = { ...m, volumes: m.volumes || {} };
     if (isFinite(m.master)) master = Math.max(0, Math.min(1, +m.master));
     ptt = !!m.ptt;
-    ctx = new AudioContext({ latencyHint: 'interactive' });
+    ctx = new AudioContext({ latencyHint: 'interactive', sampleRate: 48000 });       // RNNoise's rate, and Opus's
     cert = await RTCPeerConnection.generateCertificate({ name: 'ECDSA', namedCurve: 'P-256' });       // a fresh one each time you enter a room
+    outId = await window.driftMic.pickDevice('audiooutput', cfg.out);
     startedOk();
     applyTalk();
     if (m.talk) await setTalk(true);
@@ -207,6 +232,7 @@
         case 'talk': setTalk(!!m.on); break;
         case 'ptt': ptt = !!m.on; keyDown = false; applyTalk(); break;
         case 'key': keyDown = !!m.down; applyTalk(); break;
+        case 'devices': setDevices(m); break;
         case 'volume': { const p = peers.get(m.id); cfg.volumes[m.id] = Math.max(0, Math.min(1, +m.v || 0)); if (p) { p.vol = cfg.volumes[m.id]; if (p.el) p.el.volume = p.vol * master; } break; }
         case 'master': master = Math.max(0, Math.min(1, +m.v || 0)); for (const p of peers.values()) if (p.el) p.el.volume = p.vol * master; break;       // the volume mixer's master
         default: break;
@@ -217,7 +243,7 @@
 
   // For main.js's checks: each connection's state, path, sound and certificates, and whether the microphone was ever opened.
   window.voiceTest = async () => {
-    const out = { me: cfg && cfg.me, mic: micOk, micOpens: opens, talk, peers: {} };
+    const out = { me: cfg && cfg.me, mic: micOk, micOpens: opens, talk, ns: nsUsed, outId, peers: {} };
     for (const [id, p] of peers) {
       const st = await p.pc.getStats(), r = { state: p.pc.connectionState, level: +p.max.toFixed(3), signed: prints(p.pc.remoteDescription ? p.pc.remoteDescription.sdp : '').toLowerCase() };
       p.max = 0;

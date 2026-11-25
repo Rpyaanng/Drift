@@ -235,13 +235,16 @@ module.exports = function createP2P(hooks) {
     const mapped = await mapping0;
     if (my !== gen) { if (mapped) mapped.remove(); return; }
     mapping = mapped;
-    if (mapped) {
-      if (isPublic(mapped.ip)) pubIp = mapped.ip; else if (mapped.ip) pubIp = '';      // the router itself sits behind a shared address
-      reach = pubIp ? 'internet' : 'lan';
-      note = pubIp ? '' : 'Your internet provider shares one address between several homes, so friends elsewhere can\'t reach this PC directly. Friends on your own network can still join — or connect both PCs with a VPN such as Tailscale and start sharing again.';
+    if (mapped && (isPublic(mapped.ip) || (!mapped.ip && pubIp))) { pubIp = mapped.ip || pubIp; reach = 'internet'; note = ''; }
+    else if (mapped && /^100\./.test(mapped.ip)) {       // the router itself sits behind the provider's shared address (100.64.0.0/10)
+      pubIp = ''; reach = 'lan';
+      note = 'Your internet provider shares one address between several homes, so friends elsewhere can\'t reach this PC directly. Friends on your own network can still join — or connect both PCs with a VPN such as Tailscale and start sharing again.';
     } else {
-      reach = 'manual';
-      note = `Friends on your own network can join now. Drift couldn't confirm that friends elsewhere can: your router doesn't open ports by itself (no UPnP), so TCP port ${port} has to be forwarded to this PC (${localAddrs()[0] || 'its local address'}) in the router's settings. If that's already done, send the code and try it — some routers can't be checked from the inside.`;
+      // No UPnP, or UPnP on a router that sits behind another one of your own: a port forwarded by hand may still let friends
+      // in, and this PC can't tell from inside. The first friend who connects from elsewhere settles it (onUpgrade).
+      reach = 'manual';       // (pubIp stays what the internet sees: the code needs it for a port forwarded by hand)
+      note = `Friends elsewhere can only watch if TCP port ${port} is open to this PC (${localAddrs()[0] || 'its local address'}). ${mapped ? 'Your PC is behind two routers, and only the inner one opened it' : 'Your router doesn\'t open it by itself (UPnP is off)'}: forward the port in the router's settings, or turn on UPnP. If it's already forwarded, ignore this — some routers can't be checked from the inside, and this note goes away once a friend from elsewhere joins.`;
+      hooks.say('Friends outside your network may not be able to watch: see the Hub tab');
     }
     makeCode(); settling = false; changed();
   }
@@ -299,6 +302,9 @@ module.exports = function createP2P(hooks) {
       if (role === 'host') { hooks.say(`${p.name} left`); weigh(); sync(true); changed(); }
     });
     peers.set(p.id, p);
+    // A friend got in from a public address that isn't this home's own: the port is open after all (see openInternet).
+    const from = String(req.socket.remoteAddress || '').replace(/^::ffff:/i, '');
+    if (reach === 'manual' && isPublic(from) && from !== pubIp) { reach = 'internet'; note = ''; }
     hooks.say(`${p.name} joined`);
     lastSnap = ''; sync(); weigh(); changed();
   }

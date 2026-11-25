@@ -242,6 +242,7 @@ module.exports = function createHub(opts) {
   // ---- connections ----
   const online = new Map();       // member id -> Set of sessions (a member may be on two PCs)
   const mics = new Map();         // member id -> does their PC have a microphone (only while online)
+  const wheres = new Map();       // member id -> the screen their Drift shows ('scenes' | 'media' | 'surf' | 'broadcast'), for the hub bar's jump to it (only while online)
   const lives = new Map();        // member id -> what they're sharing right now: { from, code, title, watching, since, reach, place }. Never stored.
   const liveList = () => [...lives.values()].map(({ place: _p, ...l }) => l);
   // ---- reach: can everyone online get to a share? ----
@@ -293,7 +294,7 @@ module.exports = function createHub(opts) {
     everyone({ t: 'media-vote', vote: voteOut() });
   }
   // key: the member's raw Ed25519 public key, so members can check each other's call signatures (and that it hashes to the id)
-  const memberList = () => S.members.all().map((m) => ({ id: m.id, key: Buffer.from(m.key).toString('base64url'), name: m.name, host: m.id === ownerId, online: online.has(m.id), av: m.av || '', mic: online.has(m.id) && mics.has(m.id) ? mics.get(m.id) : null }));
+  const memberList = () => S.members.all().map((m) => ({ id: m.id, key: Buffer.from(m.key).toString('base64url'), name: m.name, host: m.id === ownerId, online: online.has(m.id), av: m.av || '', mic: online.has(m.id) && mics.has(m.id) ? mics.get(m.id) : null, at: online.has(m.id) ? wheres.get(m.id) || '' : '' }));
   const membersNews = (but) => { const list = memberList(); for (const s of sessions) if (s.id && s !== but) s.wire.send({ t: 'members', list: bent.list(s, list) }); };
   const channelList = () => S.channels.all().map((c) => ({ id: c.id, name: c.name }));
 
@@ -314,7 +315,7 @@ module.exports = function createHub(opts) {
       if (opts.log) opts.log(`hub: ${s.id || 'someone not signed in'} disconnected`);
       if (s.id && online.has(s.id)) {
         const set = online.get(s.id); set.delete(s);
-        if (!set.size) { online.delete(s.id); mics.delete(s.id); membersNews(); if (lives.delete(s.id)) everyone({ t: 'lives', list: liveList() }); recount(); }
+        if (!set.size) { online.delete(s.id); mics.delete(s.id); wheres.delete(s.id); membersNews(); if (lives.delete(s.id)) everyone({ t: 'lives', list: liveList() }); recount(); }
       }
       if (s.id && surfWatch.get(s.id) === s) { surfWatch.delete(s.id); relayCheck(s.id); relayCheck(ownerId); surfNews(); }
       if (s.id && voice.get(s.id) && voice.get(s.id).s === s) leaveRoom(s.id);
@@ -544,6 +545,13 @@ module.exports = function createHub(opts) {
         const on = !!m.on;
         if (mics.get(s.id) === on) return;
         mics.set(s.id, on);
+        membersNews();
+        return;
+      }
+      case 'where': {       // which screen this member's Drift shows: the hub bar jumps there when someone clicks them
+        const at = ['scenes', 'media', 'surf', 'broadcast'].includes(m.at) ? m.at : '';
+        if ((wheres.get(s.id) || '') === at) return;
+        wheres.set(s.id, at);
         membersNews();
         return;
       }

@@ -28,7 +28,11 @@
     chat: '<path d="M4 5h16v11H9l-5 4z"/>',
     film: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9l5 3-5 3z"/>',
     globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
-    lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',  };
+    lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+    cursor: '<path d="M5 3l14 7.5-6.2 1.7L10 19 5 3Z"/>',
+    cursorOff: '<path d="M5 3l14 7.5-6.2 1.7L10 19 5 3Z"/><path d="M3 21L21 3"/>',
+    screen: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
+    sparkle: '<path d="M10 3.5l1.6 4.6 4.6 1.6-4.6 1.6L10 15.9l-1.6-4.6L3.8 9.7l4.6-1.6z"/><path d="M17.5 13.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/>',  };
   function icon(name) {
     const el = h('span.ico');
     el.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
@@ -571,6 +575,58 @@
       h('p.note', {}, `Compare it with ${p.name} in person or on the phone. If yours match, nobody (not even the hub) can pretend to be either of you in voice.`),
       h('button.mini', { onclick: () => call('verify', x.id, p.id, !p.verified).then((r) => r.error && toast(r.error)) }, p.verified ? 'Not verified any more' : 'They match: mark as verified'));
   }
+  // ---- who's online in a hub, for the hub bar: in voice or not, what they share, and what they're looking at ----
+  // share: their broadcast, or their watch-together. sees: someone's broadcast or watch-together they're watching, else the
+  // screen their Drift shows (hub.js 'where': Scenes, Media, Surf, which in a hub is its shared browser, or Share).
+  const SCREEN_NAMES = { scenes: 'Scenes', media: 'Media', surf: 'Surf', broadcast: 'Share' };
+  function presence(x) {
+    const bcs = x.bcs || [], lives = x.lives || [];
+    return x.members.filter((m) => m.online).map((m) => {
+      const id = m.id, isMe = id === info.me.id, who = isMe ? 'You' : nameOf(x, id), v = vEntry(x, id);
+      const voice = v && v.listen ? v : null, myBc = bcs.find((b) => b.from === id), myLv = lives.find((l) => l.from === id);
+      const share = myBc ? { kind: 'bc', b: myBc } : myLv ? { kind: 'live', l: myLv } : null;
+      const inBc = bcs.find((b) => b.from !== id && b.viewers.includes(id)), inLv = lives.find((l) => l.from !== id && l.watching.includes(m.name));
+      const sees = inBc ? { kind: 'bc', b: inBc } : inLv ? { kind: 'live', l: inLv } : SCREEN_NAMES[m.at] ? { kind: 'tab', at: m.at } : null;
+      return { id, isMe, who, voice, muted: !!voice && !(voice.talk && voice.mic), lock: voice && !isMe ? lockOf(x, id) : null, share, sees };
+    });
+  }
+  function presenceText(x, p) {
+    const bits = [p.who + (p.voice ? (p.muted ? ' · in voice, muted' : ' · in voice') : '')];
+    if (p.share) bits.push(p.share.kind === 'bc' ? `Live: ${p.share.b.title || 'a broadcast'}` : `Sharing to watch together${p.share.l.title ? ': ' + p.share.l.title : ''}`);
+    if (p.sees && !p.share) bits.push(p.sees.kind === 'bc' ? `Watching ${p.sees.b.from === info.me.id ? 'your' : nameOf(x, p.sees.b.from) + '\'s'} broadcast` : p.sees.kind === 'live' ? `Watching with ${nameOf(x, p.sees.l.from)}` : `On ${SCREEN_NAMES[p.sees.at]}`);
+    if (p.lock) bits.push(p.lock.text);
+    if (!p.isMe && (p.share || p.sees)) bits.push('Click to go there');
+    return bits.join('\n');
+  }
+  // One face in the hub bar: a headset badge while they're in voice (a red slashed mic, and a red ring, while they're muted),
+  // and an outer ring, with a screen badge, while they're sharing. A click takes you to what they share, or what they see.
+  function personFace(x, p) {
+    const tag = p.share ? (p.share.kind === 'bc' ? '.bc' : '.lv') : '';
+    return h('button.cbFace' + (p.voice ? '.inCall' : '.away') + (p.muted ? '.muted' : '') + (p.share ? '.sharing' + tag : '') + (p.isMe ? '.me' : ''),
+      { 'data-speak': p.id, 'data-member': p.id, title: presenceText(x, p), 'aria-label': presenceText(x, p).replace(/\n/g, '. '), onclick: () => jumpTo(x, p) },
+      face(x, p.id, '.small'),
+      p.lock && p.lock.kind === 'bad' ? h('i', {}, '!') : null,
+      p.share ? h('b.cbShare', {}, icon(p.share.kind === 'bc' ? 'screen' : 'film')) : null,
+      p.voice ? h('b.cbCall', {}, icon('join')) : null,
+      p.muted ? h('b.cbMuted', {}, icon('micOff')) : p.sees && SEES_ICON(p.sees) ? h('b.cbWhere', {}, icon(SEES_ICON(p.sees))) : null);
+  }
+  // the little icon in the corner the mute badge takes (muted wins): the tab they're on, or what they're watching
+  const TAB_ICONS = { scenes: 'sparkle', media: 'film', surf: 'globe', broadcast: 'screen' };
+  const SEES_ICON = (s) => (s.kind === 'bc' ? 'screen' : s.kind === 'live' ? 'film' : TAB_ICONS[s.at]);
+  async function jumpTo(x, p) {
+    if (p.isMe) return;
+    const t = p.share || p.sees, ui = window.appUI;
+    if (!t) return toast(`${p.who} isn't sharing anything, and their Drift doesn't say what it shows.`);
+    if (t.kind === 'bc') {
+      if (t.b.from === info.me.id) return toast(`${p.who} is watching your broadcast.`);
+      const r = await call('bcWatch', x.id, t.b.id, ui && ui.key, true);
+      if (r && r.error) toast(r.error);
+    } else if (t.kind === 'live') {
+      if (t.l.from === info.me.id) return toast(`${p.who} is watching what you share.`);
+      if (p2p.role === 'guest' && joined === t.l.code) { if (ui) ui.setTab('media'); return; }       // (already watching it with them)
+      joinLive(x, t.l);
+    } else if (ui) ui.setTab(t.at);       // Scenes, Media, Share, or Surf (the hub's shared browser)
+  }
   // ---- the hub bar over the scenes, on every screen while you're online in a hub's voice room or watching together ----
   // Join voice / Disconnect, Mute and Leave hub are always one click away. With no input it fades into the scene (style.css, body.idle),
   // but never while your microphone is open (.hot).
@@ -578,48 +634,65 @@
     const bar = $('#callBar'), c = info.call, live = info.live, x = info.hubs.find((y) => y.id === activeHubId() && y.status === 'connected');
     const inRoom = !!(x && x.room && x.room.in), watching = p2p.role === 'host' || p2p.role === 'guest';
     if (!inRoom && !watching) { bar.classList.remove('on', 'hot'); bar.replaceChildren(); document.documentElement.style.setProperty('--cbw', '0px'); return; }
-    const parts = [];
+    // A rail down the left edge (style.css #callBar): the hub's monogram, who's in voice, then the buttons (icons; each one's
+    // title says what it does), then what's being shared. Hovering it opens a card beside it that says it all in words.
+    let head;
+    const fly = [], acts = [], tail = [];
+    const ptrOn = shareSet.cursor !== false;       // (on by default: main.js state.share.cursor)
+    // named for what a click does, and red while it's off, as Mute / Unmute is
+    const cursorBtn = h('button.cbBtn.cbCursor' + (ptrOn ? '' : '.muted'), {
+      title: ptrOn ? 'Hide cursor: others see your cursor over broadcasts you watch full screen and over a paused shared video' : 'Show cursor: it\'s hidden from everyone now. Let others see where you point over broadcasts and a paused shared video',
+      'aria-pressed': ptrOn ? 'true' : 'false', onclick: () => api.patch({ share: { cursor: !ptrOn } }),
+    }, icon(ptrOn ? 'cursor' : 'cursorOff'), ptrOn ? 'Hide cursor' : 'Show cursor');
     if (inRoom) {
       const n = c && c.hub === x.id ? e2eNote(x) : { text: '' };
       const inVoice = (x.voice || []).filter((v) => v.listen);       // everyone in voice, a red ring and a slashed mic on whoever is muted
       const mic = !voiceSet.talk ? '' : live && live.mic === 'none' ? 'No microphone' : live && live.mic === 'open' ? `Hold ${KEY_NAMES[voiceSet.pttKey] || 'the key'} to talk` : '';
-      parts.push(
-        h('span.cbWhere', { title: n.text }, n.ok ? h('span.lock.ok', {}, '🔒') : null, x.name || 'Hub'),
-        h('span.cbFaces', {}, inVoice.map((v) => {
-          const id = v.id, l = id === info.me.id ? null : lockOf(x, id), muted = !(v.talk && v.mic);
-          const who = id === info.me.id ? 'You' : nameOf(x, id);
-          return h('span.cbFace' + (muted ? '.muted' : ''), { 'data-speak': id, title: `${who}${muted ? ' (muted)' : ''}${l ? ' · ' + l.text : ''}` },
-            face(x, id, '.small'), l && l.kind === 'bad' ? h('i', {}, '!') : null, muted ? h('b.cbMuted', {}, icon('micOff')) : null);
-        })),
-        mic ? h('span.cbMic', {}, mic) : null,
-        joinButton('cbBtn', x),
+      // everyone online in the hub, in voice or not: sharing first, then those in voice, then the rest (blocked people left out)
+      const people = presence(x).filter((p) => !info.blocked.includes(p.id)), rank = (p) => (p.share ? 0 : p.voice ? 1 : 2);
+      people.sort((a, b) => rank(a) - rank(b) || (a.id === info.me.id) - (b.id === info.me.id));
+      const many = people.length > 6, shown = many ? people.slice(0, 5) : people;       // (a big hub: five faces and "+N")
+      head = h('span.cbHead', { title: n.text || x.name || 'Hub' }, [...(x.name || 'Hub').trim()][0].toUpperCase());
+      fly.push(h('b.cbName', {}, n.ok ? h('span.lock.ok', {}, '🔒') : null, x.name || 'Hub'),
+        h('span.cbLine', {}, `${people.length} online · ${inVoice.length ? `${inVoice.length} in voice${n.ok ? ' · encrypted' : ''}` : 'nobody in voice'}`),
+        mic ? h('span.cbLine.cbMic', {}, mic) : null);
+      if (people.length) acts.push(h('span.cbFaces', {}, shown.map((p) => personFace(x, p)),
+        many ? h('span.cbMore', { title: people.slice(5).map((p) => p.who).join('\n') }, '+' + (people.length - 5)) : null), h('span.cbSep'));
+      acts.push(joinButton('cbBtn', x),
         voiceSet.deaf ? null : talkButton('cbBtn'),
+        cursorBtn,
         h('button.cbBtn.leave', { title: `Go offline from ${x.name}: stop hearing it and stop showing as online. Press Connect to come back.`, onclick: () => call('disconnect', x.id) }, icon('door'), 'Leave hub'));
-    }
+    } else head = h('span.cbHead.cbHeadIco', { title: 'Watching together' }, icon('film'));
     if (inRoom) {       // broadcasts (docs/plans/broadcast.md §5, §12): yours always shows, with Stop one click away
       const mine = info.bc && info.bc.mine && info.bc.mine.hub === x.id ? info.bc.mine : null, others = (x.bcs || []).filter((b) => b.from !== info.me.id);
       if (mine) {
         const n = ((x.bcs || []).find((b) => b.id === mine.id) || { viewers: [] }).viewers.length;
-        parts.push(h('span.cbSep'), h('span.cbWhere.cbLive', { title: n ? `${n} watching` : 'Nobody watching yet' }, h('span.spdot'), `Live · ${mine.title}${bcLiveS && bcLiveS.paused ? ' (paused)' : ''}`),
-          h('button.cbBtn.leave', { title: 'Stop sharing', onclick: () => call('bcStop') }, 'Stop'));
+        const what = `Live · ${mine.title}${bcLiveS && bcLiveS.paused ? ' (paused)' : ''}`;
+        fly.push(h('span.cbLine.cbLive', {}, h('i.cbPip'), what, h('em', {}, n ? ` · ${n} watching` : ' · nobody watching yet')));
+        tail.push(h('button.cbBtn.leave.cbRec', { title: `Stop your broadcast (${what})`, onclick: () => call('bcStop') }, icon('stop'), 'Stop'));
       }
-      if (bcViewS) parts.push(h('span.cbSep'), h('span.cbWhere', {}, `Watching ${bcViewS.who.join(' and ')}`), h('button.cbBtn', { onclick: () => bcViewS.ids.forEach((id) => call('bcUnwatch', id)) }, 'Stop watching'));
-      else if (others.length) {
-        const b = others[0];
-        parts.push(h('span.cbSep'), h('span.cbWhere', { title: others.map((o) => `${nameOf(x, o.from)} · ${o.title}`).join('\n') }, `${nameOf(x, b.from)} is live${others.length > 1 ? ` (+${others.length - 1})` : ''}`),
-          h('button.cbBtn', { title: 'Watch it on this screen (the Share tab shows everyone who\'s live)', onclick: () => call('bcWatch', x.id, b.id, window.appUI && window.appUI.key, true).then((r) => { if (r && r.error) toast(r.error); }) }, 'Watch'));
+      if (bcViewS) {
+        fly.push(h('span.cbLine', {}, `Watching ${bcViewS.who.join(' and ')}`));
+        tail.push(h('button.cbBtn', { title: `Stop watching ${bcViewS.who.join(' and ')}`, onclick: () => bcViewS.ids.forEach((id) => call('bcUnwatch', id)) }, icon('stop'), 'Stop watching'));
+      } else if (others.length) {
+        const b = others[0], who = `${nameOf(x, b.from)} is live${others.length > 1 ? ` (+${others.length - 1})` : ''}`;
+        fly.push(h('span.cbLine', { title: others.map((o) => `${nameOf(x, o.from)} · ${o.title}`).join('\n') }, h('i.cbPip'), who));
+        tail.push(h('button.cbBtn.cbWatchBc', { title: `${who}: watch it on this screen (the Share tab shows everyone who's live)`, onclick: () => call('bcWatch', x.id, b.id, window.appUI && window.appUI.key, true).then((r) => { if (r && r.error) toast(r.error); }) }, icon('play'), 'Watch'));
       }
     }
     if (watching) {
       const host = p2p.role === 'host', n = (p2p.peers || []).length;
       const what = host ? (n ? `Sharing · ${n} watching` : 'Sharing') : `Watching with ${p2p.host || 'a friend'}`;
-      if (inRoom) parts.push(h('span.cbSep'));
-      parts.push(h('span.cbWhere.cbWatch', { title: host ? (p2p.peers || []).map((p) => p.name || p).join(', ') : '' }, h('span.spdot'), what),
-        h('button.cbBtn.leave', { title: host ? 'Stop sharing with everyone' : 'Stop watching together', onclick: () => api.cmd({ type: 'share-stop' }) }, host ? 'Stop sharing' : 'Leave'));
+      if (!inRoom) fly.push(h('b.cbName', {}, 'Watching together'));
+      fly.push(h('span.cbLine.cbWatch', { title: host ? (p2p.peers || []).map((p) => p.name || p).join(', ') : '' }, h('i.cbPip.green'), what));
+      if (!inRoom) acts.push(cursorBtn);       // (in the hub's room it's already beside Mute)
+      tail.push(h('button.cbBtn.leave' + (host ? '.cbRec' : ''), { title: host ? `Stop sharing with everyone (${what})` : 'Stop watching together', 'data-n': host && n ? String(n) : undefined, onclick: () => api.cmd({ type: 'share-stop' }) },
+        icon(host ? 'stop' : 'door'), host ? 'Stop sharing' : 'Leave'));       // (data-n: how many are watching, a badge on it)
     }
-    bar.replaceChildren(...parts.filter(Boolean));
+    bar.replaceChildren(...[head, h('div.cbFly', {}, ...fly.filter(Boolean)), ...acts, tail.length ? h('span.cbSep') : null, ...tail].filter(Boolean));       // (a null here would show as the word "null")
     bar.classList.add('on');
     document.documentElement.style.setProperty('--cbw', bar.offsetWidth + 'px');       // Surf's bar leaves room for it beside them (style.css)
+    if (!bar.cbwWatch) (bar.cbwWatch = new ResizeObserver(() => { if (bar.classList.contains('on')) document.documentElement.style.setProperty('--cbw', bar.offsetWidth + 'px'); })).observe(bar);       // (and again whenever it changes size)
     bar.classList.toggle('hot', inRoom && (!!voiceSet.talk || !!(info.bc && info.bc.mine)));       // never faded while your mic is open or you're live
     speaking();
   }
@@ -640,7 +713,96 @@
   function drawVoiceOpts() {
     $('#vcDirect').checked = !!voiceSet.direct; $('#vcPtt').checked = !!voiceSet.ptt; $('#vcKey').value = voiceSet.pttKey || 'backquote'; $('#vcKeep').checked = !!voiceSet.keepMic;
     $('#vcKey').disabled = !voiceSet.ptt;
+    $('#vcNs').value = voiceSet.ns || 'strong';
+    fillDevices($('#vcMic'), 'audioinput', voiceSet.mic, 'Microphone');
+    fillDevices($('#vcOut'), 'audiooutput', voiceSet.out, 'Speakers');
+    if (mt && mt.key !== micKey()) micTest(true);       // a new microphone or suppression: test that instead
   }
+
+  // ---- Options' microphone test: opens the microphone as the voice room would (mic.js: the device and the suppression
+  // chosen above) and shows its level: faint, what the microphone picks up; green, what the others would hear. Nothing is
+  // sent. It closes when you press Stop, when the Voice card goes out of sight, or after two minutes. ----
+  let mt = null;       // { key, ctx, mic, raf, timer }
+  const micKey = () => JSON.stringify([voiceSet.mic || {}, voiceSet.ns || 'strong']);
+  const meter = $('#vcMeter'), testBtn = $('#vcTest'), testNote = $('#vcTestNote');
+  const TEST_IDLE = 'See what the others would hear. Nothing is sent.';
+  function drawMicTest(note) {
+    testBtn.textContent = mt ? 'Stop' : 'Test';
+    meter.classList.toggle('on', !!(mt && mt.mic));
+    meter.querySelector('.raw').hidden = !(mt && mt.mic && mt.mic.ns === 'strong');
+    testNote.textContent = note || (!mt ? TEST_IDLE : !mt.mic ? 'Opening your microphone…'
+      : mt.mic.ns === 'strong' ? 'Faint: what your microphone picks up. Green: what the others hear.' : 'Green: what the others hear.');
+  }
+  async function micTest(on) {
+    if (mt) {
+      const x = mt; mt = null;
+      cancelAnimationFrame(x.raf); clearTimeout(x.timer);
+      if (x.mic) x.mic.close();
+      x.ctx.close().catch(() => {});
+    }
+    drawMicTest();
+    if (!on) return;
+    const x = mt = { key: micKey(), ctx: new AudioContext({ sampleRate: 48000 }), mic: null };       // (RNNoise's rate)
+    let mic;
+    try { mic = await window.driftMic.open(x.ctx, { mic: voiceSet.mic, ns: voiceSet.ns || 'strong' }); } catch (e) {
+      if (mt === x) { mt = null; x.ctx.close().catch(() => {}); drawMicTest(/NotFound|Overconstrained/.test(e.name) ? 'No microphone found.' : 'Couldn\'t open your microphone: ' + e.message); }
+      return;
+    }
+    if (mt !== x) { mic.close(); return; }       // stopped while it opened
+    x.mic = mic;
+    x.timer = setTimeout(() => { if (mt === x) micTest(false); }, 120000);
+    const tap = (node) => { const a = x.ctx.createAnalyser(); a.fftSize = 1024; node.connect(a); return a; };
+    const aRaw = tap(mic.src), aOut = tap(mic.out), buf = new Float32Array(1024), shown = { raw: 0, out: 0 };
+    x.levels = () => ({ raw: level(aRaw), out: level(aOut) });       // (for main.js's checks: hidden windows draw no frames)
+    const bars = { raw: meter.querySelector('.raw'), out: meter.querySelector('.out') };
+    const level = (a) => {       // 0..1 across -60..0 dB
+      a.getFloatTimeDomainData(buf);
+      let s = 0; for (let i = 0; i < buf.length; i++) s += buf[i] * buf[i];
+      return Math.max(0, Math.min(1, 1 + (10 * Math.log10(s / buf.length + 1e-12)) / 60));
+    };
+    const frame = () => {
+      if (mt !== x) return;
+      for (const [k, a] of [['raw', aRaw], ['out', aOut]]) {
+        shown[k] = Math.max(level(a), shown[k] - 0.025);       // rises at once, falls gently
+        bars[k].style.transform = `scaleX(${shown[k].toFixed(3)})`;
+      }
+      x.raf = requestAnimationFrame(frame);
+    };
+    drawMicTest();
+    frame();
+  }
+  testBtn.addEventListener('click', () => micTest(!mt));
+  new IntersectionObserver((es) => { if (mt && !es.some((e) => e.isIntersecting)) micTest(false); }).observe(meter);
+  // The microphones and speakers Windows has, for the Voice card's lists. Kept by id and name: the voice window
+  // (renderer/voice.js) finds the device again by its name if the id changes. A chosen one that's unplugged stays listed.
+  let devs = [];
+  async function listDevices() {
+    try { devs = await navigator.mediaDevices.enumerateDevices(); } catch { devs = []; }
+    drawVoiceOpts();
+  }
+  function fillDevices(sel, kind, want, noun) {
+    want = want || {};
+    const list = devs.filter((d) => d.kind === kind && d.deviceId && d.deviceId !== 'default' && d.deviceId !== 'communications')
+      .map((d, i) => ({ id: d.deviceId, label: d.label || `${noun} ${i + 1}` }));
+    const hit = list.find((d) => want.id && d.id === want.id) || list.find((d) => want.label && d.label === want.label);
+    const gone = !hit && (want.id || want.label) ? want.id || 'gone' : '';
+    if (gone) list.push({ id: gone, label: `${want.label || noun} (not connected)` });
+    const key = JSON.stringify(list);
+    if (sel.dataset.key !== key) {       // (rebuilt only when the list changes, so an open list isn't closed under you)
+      sel.dataset.key = key;
+      sel.replaceChildren(h('option', { value: '' }, 'Windows default'), ...list.map((d) => h('option', { value: d.id }, d.label)));
+    }
+    sel.value = hit ? hit.id : gone;
+  }
+  const pickDevice = (sel, field) => {
+    const d = devs.find((x) => x.deviceId && x.deviceId === sel.value);
+    api.patch({ voice: { [field]: !sel.value ? { id: '', label: '' } : d ? { id: d.deviceId, label: d.label } : voiceSet[field] } });
+  };
+  $('#vcMic').addEventListener('change', (e) => pickDevice(e.target, 'mic'));
+  $('#vcOut').addEventListener('change', (e) => pickDevice(e.target, 'out'));
+  $('#vcNs').addEventListener('change', (e) => api.patch({ voice: { ns: e.target.value } }));
+  if (navigator.mediaDevices) navigator.mediaDevices.addEventListener('devicechange', listDevices);
+  listDevices();
   $('#vcDirect').addEventListener('change', (e) => api.patch({ voice: { direct: e.target.checked } }));
   $('#vcPtt').addEventListener('change', (e) => api.patch({ voice: { ptt: e.target.checked } }));
   $('#vcKey').addEventListener('change', (e) => api.patch({ voice: { pttKey: e.target.value } }));
@@ -907,7 +1069,9 @@
   api.on('state', (s) => {
     const was = p2p.role;
     p2p = s.p2p || { role: 'off' };
+    const curWas = shareSet.cursor;
     shareSet = s.share || {}; drawHelp();
+    if (shareSet.cursor !== curWas) drawCall();
     overlaySetting = (s.share && s.share.overlay) || 'all';
     const vs = JSON.stringify(s.voice || {});
     if (vs !== JSON.stringify(voiceSet)) { voiceSet = s.voice || {}; drawVoiceOpts(); drawSide(); drawCall(); }
@@ -1116,5 +1280,5 @@
   window.chatUI = { hub: () => sel.hub,       // app.js shares into this hub
     quick: () => openCompose(), closeQuick: () => closeCompose(),       // over Surf (app.js): the chat button, and Enter the page didn't want
     overlay: () => [...coList.children].map((r) => r.innerText.replace(/\n+/g, ' ')), compose: (t) => { if (!openCompose()) return false; coInput.value = t; coInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); return true; },
-    info: () => info, sel: () => sel, pick, vote: () => (voteBox.hidden ? null : { text: voteBox.innerText.replace(/\n+/g, ' | '), btns: [...voteBox.querySelectorAll('button')].map((b) => b.textContent) }), voteClick: (label) => { const b = [...voteBox.querySelectorAll('button')].find((x) => x.textContent === label); if (b) b.click(); return !!b; }, activeHub: () => activeHubId(), face: (hub, id, cls) => face(info.hubs.find((y) => y.id === hub), id, cls), nameOf: (hub, id) => nameOf(info.hubs.find((y) => y.id === hub), id), toast: (t) => toast(t), canBeHeard: (hub, id) => canBeHeard(info.hubs.find((y) => y.id === hub), id), send: (t) => { input.value = t; input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); } };       // (and main.js's checks)
+    info: () => info, sel: () => sel, pick, micTest: () => mt && { ns: mt.mic ? mt.mic.ns : '', ...(mt.levels ? mt.levels() : {}), btn: testBtn.textContent, note: testNote.textContent }, vote: () => (voteBox.hidden ? null : { text: voteBox.innerText.replace(/\n+/g, ' | '), btns: [...voteBox.querySelectorAll('button')].map((b) => b.textContent) }), voteClick: (label) => { const b = [...voteBox.querySelectorAll('button')].find((x) => x.textContent === label); if (b) b.click(); return !!b; }, activeHub: () => activeHubId(), face: (hub, id, cls) => face(info.hubs.find((y) => y.id === hub), id, cls), nameOf: (hub, id) => nameOf(info.hubs.find((y) => y.id === hub), id), toast: (t) => toast(t), canBeHeard: (hub, id) => canBeHeard(info.hubs.find((y) => y.id === hub), id), send: (t) => { input.value = t; input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); } };       // (and main.js's checks)
 })();

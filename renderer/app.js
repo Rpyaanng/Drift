@@ -175,7 +175,11 @@
   function setAccent() {
     const a = accentHex(), b = toHex(currentColors()[3]);
     document.documentElement.style.setProperty('--accent', a);
-    if (a + b !== accentSent) { accentSent = a + b; api.cmd({ type: 'accent', a, b }); }
+    const pc = currentColors(); ['--mbr0', '--mbr1', '--mbr2', '--mbr3'].forEach((v, i) => $('#mediaBack').style.setProperty(v, i === 2 ? a : toHex(pc[i])));       // Media's own screen wears the palette (style.css tones it down to --mb0..3 until something plays)
+    if (a + b !== accentSent) {
+      accentSent = a + b; api.cmd({ type: 'accent', a, b });
+      for (const el of document.querySelectorAll('.ptr')) if (el.lastChild) el.style.setProperty('--c', el.classList.contains('self') ? window.driftSelfColor(a) : window.driftPtrColor(el.lastChild.textContent, a));       // everyone's pointer takes the new palette (yours is the accent itself)
+    }
   }
 
   // caption for algorithm scenes (bottom-left of the leftmost screen in Span)
@@ -219,7 +223,8 @@
     for (let i = 0; i < 128; i++) specNow[i] += (specTarget[i] - specNow[i]) * (i < 64 ? 0.35 : 0.5);
     aTime += (aTimeTarget - aTime) * 0.15;
     tickPeaks(now);
-    if (R && shown !== 'video') {
+    tickMediaBack();
+    if (R && shown !== 'video' && !mbOn) {       // (under Media's own screen the scene rests)
       const vp = viewParams(), t = sceneTime(), sm = simFor(shown, vp.aspect);
       if (sm) sm.update(t);
       const now = Date.now(), age = beats.map((b) => (b ? (now - b) / 1000 : 99));
@@ -605,6 +610,7 @@
       if (!seeking) { sk.value = at; $('#vcur').textContent = clockStr(at); }
       fill(sk); $('#vdur').textContent = clockStr(dur);
     }
+    if (vtEl.classList.contains('on')) syncPausedTitle(sceneFor(S));       // (moved while paused: where it is now)
     if (tab === 'media' && panel.classList.contains('show') && videoOn() && performance.now() - pgAt > 1000) { pgAt = performance.now(); paintProgress(); }
     if (S.palette === 'cycle' && performance.now() - accentAt > 500) { accentAt = performance.now(); setAccent(); }
     const sl = $('#o-sleep');
@@ -713,6 +719,11 @@
   function setTab(t, toggle) {
     const same = t === tab && panel.classList.contains('open'), bcWas = bcHere();
     tab = t; surfFor(t); bcFor(t); tellTab();
+    if (!SIDE_TABS.includes(t)) screenTab = t;       // (Hub and Settings leave the screen as it is)
+    if (t === 'scenes' && sceneFor(S) === 'video') {       // Scenes over a video: the scene that was on before it comes straight back, as picking its tile would
+      const back = S.prevScene && S.prevScene !== 'video' ? S.prevScene : 'aurora';
+      P(S.mode === 'mix' ? { perDisplay: { [me.key]: back } } : { scene: back });
+    }
     // Surf has no page of its own in the panel: the browser is it. Broadcast's grid is its scene, so picking it shows the grid;
     // picking it again (the grid already here) opens its page (Go live, how it's going) over it.
     panel.classList.toggle('open', t === 'surf' ? false : t === 'broadcast' ? bcWas && !same : !(toggle && same));
@@ -721,6 +732,22 @@
   // The Broadcast scene belongs to the Share tab: picking it shows the hub's broadcasts on this screen (moving them from
   // another monitor); picking Scenes, Media or Surf on its screen puts it away, and whatever was playing in it stops.
   const bcHere = () => !!(S.bcView && S.bcView.key === me.key);
+  // A paused video shows its name over the frame (top left; in Span only on the leftmost screen), with where it stopped. The name
+  // is tidied from the file's: no extension, and dots or underscores between words read as spaces.
+  const vtEl = $('#vTitle');
+  function syncPausedTitle(cur) {
+    const leftmost = S.mode !== 'span' || me.bounds.x === me.union.x;
+    const on = cur === 'video' && !!S.videoUrl && !!S.video.paused && leftmost && !document.body.classList.contains('web') && !bcHere();
+    vtEl.classList.toggle('on', on);
+    if (!on) return;
+    let name = (S.videoName || 'Video').replace(/\.[^.\s]{2,4}$/, '');
+    if (!/\s/.test(name)) name = name.replace(/[._]+/g, ' ').trim();
+    const pp = S.p2p || {}, d = vDur(), at = Math.min(vTime(), d || Infinity);
+    const meta = [d > 0 ? `${clockStr(at)} of ${clockStr(d)}` : '', pp.role === 'guest' ? `Shared by ${pp.host || 'a friend'}` : ''].filter(Boolean).join('  ·  ');
+    const nm = vtEl.querySelector('.vtName'), mt = vtEl.querySelector('.vtMeta');
+    if (nm.textContent !== name) nm.textContent = name;
+    if (mt.textContent !== meta) mt.textContent = meta;
+  }
   function bcFor(t) {
     if (t === 'broadcast') { const h = window.broadcastUI && window.broadcastUI.hub(); if (h) api.chat('bcOpen', h, me.key).catch(() => {}); }
     else if (!SIDE_TABS.includes(t) && bcHere()) api.chat('bcClose').catch(() => {});
@@ -739,7 +766,131 @@
     else if (!SIDE_TABS.includes(t) && (mirEl || (gpuEl && !gpuEl.own))) api.patch({ surfMirror: false });       // on a monitor mirroring the page: Scenes or Media is what was asked for here
   }
   const SIDE_TABS = ['settings', 'hub'];       // tabs that leave what's on screen where it is (the browser, the Broadcast scene)
-  window.appUI = { tab: () => tab, setTab: (t) => { if (panel.classList.contains('open')) setTab(t); else { tab = t; tellTab(); syncUI(); } }, open: () => panel.classList.contains('open'), key: me.key };       // (a closed panel stays closed)       // (broadcast.js: its tab comes and goes)
+  // ---- Media's own screen. Scenes, Media, Surf and Share each put something on this screen; picking Media with no video up used
+  // to leave the scene showing, as if nothing had happened. Now it shows Media's backdrop: what's playing (music, with its
+  // spectrum), or how to start. screenTab: the last of those four picked here (Hub and Settings don't change it). ----
+  let screenTab = ['scenes', 'media', 'surf', 'broadcast'].includes(tab) ? tab : 'scenes';
+  const mbEl = $('#mediaBack'), mbBars = [];
+  for (let i = 0; i < 64; i++) { const b = document.createElement('i'); mbEl.querySelector('.mbBars').append(b); mbBars.push(b); }       // a mirrored skyline: the bass in the middle
+  let mbOn = false, mbKey = '', whereSent = '';
+  // The sleeve shows the song's own cover when it has one (in its tags, or a cover.jpg beside it: main.js song-tags), over the
+  // lights drawn from its title. Only for this PC's own songs: a friend's music keeps the drawn sleeve.
+  const mbSleeve = mbEl.querySelector('.mbSleeve'), mbCover = mbEl.querySelector('.mbCover'), mbArts = new Map();       // path -> data: URL ('' for none), the last few
+  let mbArtFor = null;
+  function sleeveArt(p) {
+    if (p === mbArtFor) return;
+    mbArtFor = p;
+    const show = (url) => {
+      if (url) mbCover.style.backgroundImage = `linear-gradient(to top, rgba(0,0,0,.42), transparent 34%), url("${url}")`;       // (darker at the foot, for the track number)
+      mbSleeve.classList.toggle('art', !!url);       // (going without: it fades out, and the picture stays under it until the next)
+    };
+    if (!p) { show(''); return; }
+    if (mbArts.has(p)) { show(mbArts.get(p)); return; }
+    show('');
+    api.songTags(p, true).then((t) => {
+      mbArts.set(p, (t && t.art) || '');
+      if (mbArts.size > 12) mbArts.delete(mbArts.keys().next().value);
+      if (mbArtFor === p) show(mbArts.get(p));
+    }).catch(() => {});
+  }
+  function syncMediaBack() {
+    const surfUp = document.body.classList.contains('web');
+    if (surfUp) screenTab = 'surf'; else if (bcHere()) screenTab = 'broadcast';       // (put up some other way: a link, a friend's broadcast)
+    else if (screenTab === 'surf' || screenTab === 'broadcast') screenTab = tab === 'media' ? 'media' : 'scenes';       // (put away: back to what's under it)
+    if (screenTab !== whereSent) { whereSent = screenTab; api.chat('where', screenTab).catch(() => {}); }       // friends' hub bars jump here when they click you (chat.js drawCall)
+    const on = screenTab === 'media' && !videoOn() && !surfUp && !bcHere();
+    if (on !== mbOn) { mbOn = on; mbEl.classList.toggle('on', on); }
+    if (!on) return;
+    // a video playing on another monitor shares the GPU with this screen: its drifting lights hold still meanwhile (style.css .rest)
+    const vidElsewhere = S.mode === 'mix' && !!S.videoUrl && !S.video.paused && Object.entries(S.perDisplay || {}).some(([k, v]) => k !== me.key && v === 'video');
+    mbEl.classList.toggle('rest', vidElsewhere);
+    const tm = theirMusic(), music = musicOn();
+    const title = tm ? (tm.src === 'files' ? tm.title || 'Music' : (PRESETS.find((x) => x.id === tm.preset) || { name: 'Ambient' }).name) : (S.nowPlaying || {}).title || 'Music';
+    const artist = !music ? '' : tm ? (tm.src === 'files' ? tm.artist || '' : '') : (S.nowPlaying || {}).artist || '';
+    const list = !tm && filesOn() ? S.music.playlist : [], at = (S.nowPlaying || {}).index ?? -1;
+    sleeveArt(music && list.length && at >= 0 ? list[at] || '' : '');
+    const k = JSON.stringify([music, title, artist, musicPlaying(), !!tm, at, list.length, !!S.music.shuffle]);
+    if (k === mbKey) return;
+    mbKey = k;
+    mbEl.classList.toggle('music', music);
+    if (!music) mbSleeve.style.rotate = '';       // (the lean is only while music plays: tickMediaBack)
+    mbEl.querySelector('.mbArtist').textContent = artist;
+    mbEl.classList.toggle('playing', music && musicPlaying());
+    // the sleeve's art: where its two lights sit and which way it's lit, from the title, so each song has its own cover
+    let hh = 7; for (const ch of music ? title : '') hh = (Math.imul(hh, 31) + ch.charCodeAt(0)) >>> 0;
+    const r = (n) => { hh = (Math.imul(hh ^ (hh >>> 15), 2246822507) + n) >>> 0; return (hh % 1000) / 1000; };
+    const sl = mbEl.querySelector('.mbSleeve').style;
+    sl.setProperty('--ax', (12 + r(1) * 40).toFixed(1) + '%'); sl.setProperty('--ay', (8 + r(2) * 40).toFixed(1) + '%');
+    sl.setProperty('--bx', (52 + r(3) * 40).toFixed(1) + '%'); sl.setProperty('--by', (55 + r(4) * 40).toFixed(1) + '%');
+    sl.setProperty('--rot', Math.round(110 + r(5) * 140) + 'deg');
+    const two = (n) => String(n).padStart(2, '0');
+    mbEl.querySelector('.mbNo').textContent = !music ? 'Drift · Media' : list.length && at >= 0 ? `Track ${two(at + 1)} / ${two(list.length)}` : tm ? 'Listening along' : 'Ambient';
+    mbEl.querySelector('.mbKickTxt').textContent = music ? (musicPlaying() ? 'Now playing' : 'Paused') : 'Media';
+    mbEl.querySelector('.mbTitle').textContent = music ? title : 'Nothing playing';
+    const next = mbEl.querySelector('.mbNext');
+    if (!music || !list.length || at < 0 || list.length < 2) next.replaceChildren();
+    else if (S.music.shuffle) next.replaceChildren(Object.assign(document.createElement('h4'), { textContent: 'Up next: shuffled' }));
+    else {
+      const rows = [];
+      for (let j = 1; j <= Math.min(3, list.length - 1); j++) {
+        const n = (at + j) % list.length, row = document.createElement('div');
+        row.append(Object.assign(document.createElement('b'), { textContent: two(n + 1) }), Object.assign(document.createElement('span'), { textContent: base(list[n]) }));
+        rows.push(row);
+      }
+      next.replaceChildren(Object.assign(document.createElement('h4'), { textContent: 'Up next' }), ...rows);
+    }
+    mbEl.querySelector('.mbNote').textContent = music ? (tm ? `${(S.p2p || {}).host || 'Your friend'}'s music, playing along with you` : 'Songs in the same folder play one after another. Pick a video to watch it here.')
+      : 'Pick a video or a song in the panel to play it on this screen.';
+  }
+  // Each frame while it's up, the music moves it the way it moves the scenes: the bass swells the light behind it and the treble
+  // the other light (uAudio), each beat kicks the sleeve, lifts the bars and washes light up from the floor (uBeat), a ring leaves
+  // the record on each of the last four beats (beatRings), and the record turns faster while the music is loud (uATime).
+  const mbOrbs = [...mbEl.querySelectorAll('.mbOrb')], mbWaves = [...mbEl.querySelectorAll('.mbWaves i')], mbFlash = mbEl.querySelector('.mbFlash');
+  const mbGlow = mbEl.querySelector('.mbGlow'), mbRings = mbEl.querySelector('.mbRings'), mbBarsEl = mbEl.querySelector('.mbBars');
+  const mbLabel = mbEl.querySelector('.mbLabel'), stillMotion = matchMedia('(prefers-reduced-motion: reduce)');
+  let mbSpin = 0, mbAT = 0, mbT = 0;
+  // The record and the sleeve each lean toward the pointer: aim is where the pointer is from its middle (-1..1 across the screen), tilt the lean so far
+  const mbDisc = mbEl.querySelector('.mbDisc'), mbLean = [{ el: mbDisc, aim: [0, 0], tilt: [0, 0], deg: 7 }, { el: mbSleeve, aim: [0, 0], tilt: [0, 0], deg: 8 }];
+  addEventListener('mousemove', (e) => {
+    if (!mbOn) return;
+    for (const m of mbLean) {
+      const r = m.el.getBoundingClientRect();
+      m.aim[0] = Math.max(-1, Math.min(1, (e.clientX - (r.left + r.width / 2)) / (innerWidth / 2)));
+      m.aim[1] = Math.max(-1, Math.min(1, (e.clientY - (r.top + r.height / 2)) / (innerHeight / 2)));
+    }
+  });
+  function tickMediaBack() {
+    if (!mbOn || !mbEl.classList.contains('music')) return;
+    for (let i = 0; i < 32; i++) { const t = `scaleY(${(0.02 + 0.98 * Math.min(1, (specNow[i * 2] + specNow[i * 2 + 1]) / 510)).toFixed(3)})`; mbBars[31 - i].style.transform = t; mbBars[32 + i].style.transform = t; }
+    const playing = mbEl.classList.contains('playing'), now = performance.now(), dt = Math.min(0.1, (now - (mbT || now)) / 1000); mbT = now;
+    const ages = beats.map((b) => (b && playing ? (Date.now() - b) / 1000 : 99)), beat = Math.exp(-ages[0] * 4) * Math.min(1, S.reactivity);
+    const lo = Math.min(1.5, audio[0]), mid = Math.min(1.5, audio[1]), hi = Math.min(1.5, audio[2]);
+    // set on the elements that use them, as scale and opacity: a custom property on #mediaBack had every style under it worked out again each frame
+    mbGlow.style.scale = (1 + Math.min(0.12, lo * 0.08) * 0.6).toFixed(3);
+    mbGlow.style.opacity = (0.72 + 0.28 * beat).toFixed(3);
+    mbSleeve.style.scale = (1 + 0.018 * beat).toFixed(4);       // a small kick on each beat
+    mbRings.style.opacity = (0.4 + 0.6 * Math.min(1, mid * 0.7)).toFixed(3);
+    mbBarsEl.style.opacity = (0.42 + 0.12 * beat).toFixed(3);
+    mbOrbs[0].style.transform = `scale(${(1 + lo * 0.1 + beat * 0.05).toFixed(3)})`; mbOrbs[0].style.opacity = (0.5 + lo * 0.18).toFixed(3);
+    mbOrbs[1].style.transform = `scale(${(1 + hi * 0.12).toFixed(3)})`; mbOrbs[1].style.opacity = (0.32 + hi * 0.2).toFixed(3);
+    mbFlash.style.opacity = (beat * 0.18).toFixed(3);
+    // the record and the sleeve lean a little toward the pointer (eased, so they follow rather than snap); the sleeve's sheen goes with it
+    for (const { el, aim, tilt, deg } of mbLean) {
+      tilt[0] += (aim[0] - tilt[0]) * Math.min(1, dt * 5); tilt[1] += (aim[1] - tilt[1]) * Math.min(1, dt * 5);
+      const tl = Math.hypot(tilt[0], tilt[1]), still = tl < 0.002 || stillMotion.matches;
+      el.style.rotate = still ? '' : `${(-tilt[1] / tl).toFixed(3)} ${(tilt[0] / tl).toFixed(3)} 0 ${(Math.min(1, tl) * deg).toFixed(2)}deg`;
+      if (el === mbSleeve) { el.style.setProperty('--gx', still ? '0' : tilt[0].toFixed(3)); el.style.setProperty('--gy', still ? '0' : tilt[1].toFixed(3)); }
+    }
+    for (let i = 0; i < 4; i++) {
+      const a = ages[i], w = mbWaves[i].style;
+      if (a > 3) { if (w.opacity !== '0') w.opacity = '0'; continue; }
+      w.transform = `scale(${(1 + a * 0.75).toFixed(3)})`; w.opacity = (Math.exp(-a * 1.3) * 0.4 * Math.min(1, S.reactivity)).toFixed(3);
+    }
+    // the turn: 33⅓ at rest, gaining a little with every bit the audio clock runs ahead (it only runs while the music is loud)
+    const dA = aTime - mbAT; mbAT = aTime;
+    if (playing && !stillMotion.matches) { mbSpin = (mbSpin + dt * 200 + Math.max(0, Math.min(1, dA)) * 140) % 360; mbLabel.style.setProperty('--spin', mbSpin.toFixed(1) + 'deg'); }
+  }
+  window.appUI = { tab: () => tab, setTab: (t) => { if (panel.classList.contains('open')) setTab(t); else { tab = t; if (!SIDE_TABS.includes(t)) screenTab = t; tellTab(); syncUI(); } }, open: () => panel.classList.contains('open'), key: me.key };       // (a closed panel stays closed)       // (broadcast.js: its tab comes and goes)
   panel.addEventListener('mouseenter', () => { overPanel = true; });
   panel.addEventListener('mouseleave', () => { overPanel = false; armHide(); });
   let lastMove = [0, 0];
@@ -765,12 +916,15 @@
   function placeInk(still) {
     const ink = $('.tabInk'), b = $('.tabGroup button.showing');
     if (!b || !b.offsetWidth) { ink.style.opacity = '0'; inkAt = null; return; }
-    const x = Math.round(b.offsetLeft + (b.offsetWidth - ink.offsetWidth) / 2);
+    const r = document.createRange(); r.selectNodeContents(b);       // the icon and the name (not the padding): the line is as wide as them
+    const bb = b.getBoundingClientRect(), cb = r.getBoundingClientRect(), w = Math.round(cb.width) || 14;
+    const x = Math.round(b.offsetLeft + (cb.left - bb.left) + (cb.width - w) / 2), at = x + ':' + w;
     ink.style.opacity = '1';
-    if (x === inkAt) return;
-    if (still || inkAt === null) { ink.classList.add('still'); ink.style.transform = `translateX(${x}px)`; void ink.offsetWidth; ink.classList.remove('still'); }
-    else ink.style.transform = `translateX(${x}px)`;
-    inkAt = x;
+    if (at === inkAt) return;
+    const put = () => { ink.style.transform = `translateX(${x}px)`; ink.style.width = w + 'px'; };
+    if (still || inkAt === null) { ink.classList.add('still'); put(); void ink.offsetWidth; ink.classList.remove('still'); }
+    else put();
+    inkAt = at;
   }
   new ResizeObserver(() => placeInk(true)).observe($('.tabGroup'));
   function syncUI() {
@@ -849,22 +1003,30 @@
     const c = ctx();
     $('#ctxTag').textContent = { scene: 'Scene', video: 'Video', music: 'Music', surf: 'Surf', spotify: 'Spotify' }[c];
     // in the tabs' pill, the one on this screen now: a broadcast being watched here, else what the bar's controls are for
-    const onScreen = S.bcView && S.bcView.key === me.key ? 'broadcast' : c === 'surf' ? 'surf' : c === 'scene' && cur !== 'video' ? 'scenes' : 'media';
+    syncMediaBack();
+    const onScreen = S.bcView && S.bcView.key === me.key ? 'broadcast' : c === 'surf' ? 'surf' : mbOn ? 'media' : c === 'scene' && cur !== 'video' ? 'scenes' : 'media';
     $$('.tabGroup button').forEach((x) => x.classList.toggle('showing', x.dataset.tab === onScreen));
     placeInk();
     $('#play').style.display = c === 'surf' ? 'none' : '';
+    // Eject: put away your own video or music and go back to Media's "Nothing playing" screen (not a friend's shared video or
+    // music: that's theirs, and stopping their video would leave their session)
+    const ej = c === 'video' ? (videoOn() && (S.p2p || {}).role !== 'guest' ? 'video' : '') : c === 'music' && filesOn() && !theirMusic() ? 'music' : '';
+    $('#eject').style.display = ej ? '' : 'none'; $('#eject').dataset.what = ej;
+    $('#eject').title = ej === 'video' ? 'Eject: close the video' : 'Eject: stop the music';
     $('#prevTrack').title = c === 'surf' ? 'Back (←)' : 'Previous (←)'; $('#nextTrack').title = c === 'surf' ? 'Forward (→)' : 'Next (→)';
+    syncPausedTitle(cur);
     const noStep = c === 'scene' && cur === 'video';       // on Scenes with a video on screen: no scene playing to step from
     const wb = S.web || {};       // (on Surf: Back and Forward, when the page has somewhere to go)
     $('#prevTrack').disabled = noStep || (c === 'surf' && !wb.back); $('#nextTrack').disabled = noStep || (c === 'surf' && !wb.fwd);
     const tm = theirMusic(), tmName = tm ? (tm.src === 'files' ? tm.title || 'Music' : (PRESETS.find((x) => x.id === tm.preset) || { name: 'Ambient' }).name) : '';
     const playing = c === 'scene' ? !S.frozen : c === 'video' ? videoOn() && !S.video.paused : c === 'surf' ? false : spOn ? sp.status === 'playing' : musicPlaying();
     $('#play').textContent = playing ? '⏸' : '▶';
-    $('#nowName').textContent = c === 'scene' ? (cur === 'video' ? 'My Video' : sc ? sc.name : '')
+    // what the controls are on: no longer written on the bar (it's on screen), but in Play's tooltip (and data-now, for the tests)
+    const nowName = c === 'scene' ? (cur === 'video' ? 'My Video' : sc ? sc.name : '')
       : c === 'video' ? (S.videoName ? S.videoName.replace(/\.[^.]+$/, '') : 'No video chosen')
       : c === 'surf' ? ((S.web || {}).has ? (S.web.title || S.web.url || 'New tab') : 'No page open')
       : spOn ? (sp.title || 'Spotify (paused)') : tm ? `${tmName} · from ${S.p2p.host || 'your friend'}` : filesOn() ? (S.nowPlaying.title || 'Music') : 'No music chosen';
-    $('#nowName').title = $('#nowName').textContent;
+    $('#play').dataset.now = nowName; $('#play').title = (playing ? 'Pause' : 'Play') + (nowName ? `: ${nowName}` : '') + ' (Space)';
     const pp2 = S.p2p || {}, mine = S.music.source === 'files' || S.music.source === 'generative';
     $('#mShare').textContent = tm ? `You are listening to ${pp2.host || 'your friend'}'s music${tm.on ? '' : ' (paused)'}: ${tmName}. Your own music waits until you leave${pp2.ctrl ? '. Play, pause and skip work on theirs' : `. Only ${pp2.host || 'your friend'} can change it`}.`
       : pp2.role === 'host' ? (spOn ? 'Spotify can\'t be sent to friends. Ambient sound and music from your library can.' : mine ? `Friends${(pp2.peers || []).length ? '' : ' who join'} hear your ${S.music.source === 'files' ? 'music' : 'ambient sound'} with you.` : '') : S.mediaSolo || '';       // (mediaSolo: why what you play isn't on the hub's stream: main.js mediaRefused)
@@ -948,9 +1110,20 @@
 
   // ---------- other people's pointers over the page: a small arrow in their colour, with their name ----------
   const ptrBox = $('#ptrs'), ptrEls = new Map();
-  const ptrColor = (name) => { let h = 0; for (const ch of String(name)) h = (h * 31 + ch.charCodeAt(0)) % 360; return `hsl(${h} 90% 62%)`; };       // a person's colour comes from their name, so it is the same on every PC
-  // a soft, rounded arrow in the person's colour with a white edge. Its point is 3px in from the box's top left
-  const PTR = '<svg viewBox="0 0 20 24" width="20" height="24"><path d="M3.2 4Q3.2 2.4 4.5 3.4L16.6 13.2Q17.8 14.3 16.2 14.6L10.8 15.2Q9.6 15.3 8.8 16.2L5.2 20.4Q3.2 22.4 3.2 19.8Z"/></svg><b></b>';
+  // A person's colour: their hue from their name (the same on every PC), as light and as strong as this screen's palette (cursors.js)
+  const ptrColor = (name) => window.driftPtrColor(name, accentSent.slice(0, 7) || accentHex());       // (accentSent: the accent as last set)
+  let ptrGrad = 0;
+  // a soft, rounded shape in the person's colour with a white edge (renderer/cursors.js), its hotspot where the element is, and their name
+  function ptrShape(el, kind) {
+    const c = window.driftCursor(kind || 'default');
+    if (el.dataset.k === c.name) return;
+    const name = el.lastChild ? el.lastChild.textContent : '';
+    el.dataset.k = c.name; el.innerHTML = c.svg + '<b></b>'; el.lastChild.textContent = name;
+    const id = 'ptrg' + (++ptrGrad);       // a soft light from above, in the person's colours (style.css --c-hi / --c-lo)
+    el.firstChild.insertAdjacentHTML('afterbegin', `<defs><linearGradient id="${id}" x1="0" y1="0" x2=".35" y2="1"><stop offset="0" style="stop-color:var(--c-hi)"/><stop offset=".55" style="stop-color:var(--c)"/><stop offset="1" style="stop-color:var(--c-lo)"/></linearGradient></defs>`);
+    el.style.setProperty('--fill', `url(#${id})`);
+    el.style.setProperty('--lx', c.lx + 'px'); el.style.setProperty('--ly', c.ly + 'px');
+  }
   // where the page is on this screen: all of it here, or the picture inside a friend's stream (which may have bars beside it)
   function pageBox() {
     if (webEl) { const r = webEl.getBoundingClientRect(); return { l: r.left, t: r.top, w: r.width, h: r.height }; }
@@ -959,16 +1132,17 @@
     const r = el.getBoundingClientRect(), k = Math.min(r.width / vw, r.height / vh), w = vw * k, h = vh * k;
     return { l: r.left + (r.width - w) / 2, t: r.top + (r.height - h) / 2, w, h };
   }
-  function showPtrs(list) {
-    const box = pageBox(), now = Date.now();
+  const showPtrs = (list) => drawPtrs(ptrBox, ptrEls, pageBox(), list);
+  function drawPtrs(holder, els, box, list) {
+    const now = Date.now();
     if (!box) list = [];
-    for (const [id, q] of ptrEls) if (!list.some((x) => x.id === id)) { q.el.remove(); ptrEls.delete(id); }
+    for (const [id, q] of els) if (!list.some((x) => x.id === id)) { q.el.remove(); els.delete(id); }
     for (const x of list) {
-      let q = ptrEls.get(x.id);
+      let q = els.get(x.id);
       if (!q) {
         const el = document.createElement('div'); el.className = 'ptr';
-        el.style.setProperty('--c', ptrColor(x.name)); el.innerHTML = PTR;
-        ptrBox.appendChild(el); ptrEls.set(x.id, q = { el, x: -1, y: -1, at: now });
+        el.style.setProperty('--c', ptrColor(x.name)); ptrShape(el);
+        holder.appendChild(el); els.set(x.id, q = { el, x: -1, y: -1, at: now });
       }
       if (q.x !== x.x || q.y !== x.y) { q.x = x.x; q.y = x.y; q.at = now; }
       q.el.lastChild.textContent = x.name;
@@ -981,6 +1155,96 @@
     if (!pageBox()) { showPtrs([]); return; }
     for (const q of ptrEls.values()) q.el.classList.toggle('idle', Date.now() - q.at > 6000);
   }, 1000);
+
+  // ---------- our own pointer, drawn as the others see it, in place of the real one. Online in a hub (with the hub bar's cursor
+  // toggle on) it's ours everywhere on Drift's screens, from the moment we're online. Over a picture the others see it on it says
+  // so (selfCtx): a paused shared video ('vid'), a broadcast watched full screen ('bc'), a hub's Surf page ('surf', in the shape
+  // the page asks for: 'web-cursor', surfCur). Anywhere else ('ui') it takes the shape Drift's own CSS gives what's under it. ----------
+  const selfBox = document.createElement('div'); selfBox.id = 'selfPtrBox';
+  document.body.appendChild(selfBox);
+  const selfPtr = document.createElement('div');
+  selfPtr.className = 'ptr self'; ptrShape(selfPtr);
+  let surfCur = 'default';       // the pointer the hub's page wants while its hover is ours (web.js takeHover)
+  let selfCtx = '', selfClaimed = false;       // selfClaimed: this mouse move was seen to by a picture's own handler
+  const mouse = { x: 0, y: 0, t: null, in: false };       // where the mouse last was in this window, and over what
+  const hubPtr = () => document.body.classList.contains('inHub') && (S.share || {}).cursor !== false;
+  function showSelf(ctx, x, y, kind) {
+    if (!ctx) { selfCtx = ''; if (selfPtr.isConnected) { selfPtr.remove(); document.documentElement.classList.remove('selfPtr'); } return; }
+    selfCtx = ctx; selfPtr.dataset.ctx = ctx;
+    if (ctx !== 'ui') selfClaimed = true;
+    if (selfPtr.parentNode !== selfBox) selfBox.appendChild(selfPtr);
+    const priv = ctx === 'surf' && (S.share || {}).cursor === false;       // over a hub's page with cursor sharing off: nobody sees it, and it says so
+    selfPtr.classList.toggle('priv', priv);
+    const n = priv ? 'Cursor off · view only' : myPtrName();
+    const col = window.driftSelfColor(accentSent.slice(0, 7) || accentHex());       // yours wears the accent; friends' pointers keep their own colours
+    if (selfPtr.lastChild.textContent !== n || selfPtr.dataset.col !== col) { selfPtr.lastChild.textContent = n; selfPtr.dataset.col = col; selfPtr.style.setProperty('--c', col); }       // (the palette may have changed while it was away)
+    ptrShape(selfPtr, kind === 'none' ? 'default' : kind);
+    selfPtr.style.visibility = kind === 'none' ? 'hidden' : '';       // (a page that hides the pointer, as video players do: none at all)
+    selfPtr.style.left = x + 'px'; selfPtr.style.top = y + 'px';
+    document.documentElement.classList.add('selfPtr');
+  }
+  // the pointer Drift's CSS gives an element (looked up once each, with ours out of the way for a moment) as a cursors.js shape
+  const cssCur = new WeakMap();
+  function uiKind(t) {
+    if (!t || t.nodeType !== 1) return 'default';
+    if (!cssCur.has(t)) {
+      const html = document.documentElement, on = html.classList.contains('selfPtr');
+      if (on) html.classList.remove('selfPtr');
+      let c = getComputedStyle(t).cursor;
+      if (on) html.classList.add('selfPtr');
+      if (c === 'auto') c = t.closest('textarea, [contenteditable]:not([contenteditable="false"])') || (t.tagName === 'INPUT' && /^(text|search|url|email|password|number|tel|)$/.test(t.type)) ? 'text' : 'default';
+      cssCur.set(t, c);
+    }
+    return cssCur.get(t);
+  }
+  // a picture is done with our pointer: online it goes on as the plain one where the mouse is, offline the real one is back
+  function selfOff() {
+    if (hubPtr() && mouse.in && !(mouse.t && mouse.t.tagName === 'WEBVIEW')) showSelf('ui', mouse.x, mouse.y, uiKind(mouse.t));
+    else showSelf('');
+  }
+  addEventListener('mousemove', (e) => { mouse.x = e.clientX; mouse.y = e.clientY; mouse.t = e.target; mouse.in = true; }, true);
+  document.addEventListener('mouseleave', () => { mouse.in = false; showSelf(''); });
+  addEventListener('mouseover', (e) => { if (e.target.tagName === 'WEBVIEW' && selfCtx === 'ui') showSelf(''); });       // (a page of our own browser: the mouse is its, out of our sight)
+  addEventListener('blur', () => { mouse.in = false; showSelf(''); });
+  // going online (or turning the toggle on) puts ours where the mouse is now; going offline gives the real one back
+  const selfSync = () => { if (hubPtr()) { if (!selfCtx && mouse.in) selfOff(); } else if (selfCtx === 'ui') showSelf(''); };
+  new MutationObserver(selfSync).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  const surfSelf = (e) => { if ((S.web || {}).hub) showSelf('surf', e.clientX, e.clientY, surfCur); else if (selfCtx === 'surf') selfOff(); };       // (your own browser, offline: nobody else sees it, so the real pointer)
+  setInterval(() => { if (selfCtx === 'surf' && (!document.body.classList.contains('web') || !(S.web || {}).hub)) selfOff(); }, 1000);       // the page went
+
+  // ---------- pointers over a shared video while it's paused (main.js vptrSet): ours goes out, the others' are drawn ----------
+  const vptrBox = $('#vptrs'), vptrEls = new Map();
+  let vptrList = [];
+  function vidBox() {       // the picture inside the video element, as object-fit places it (cover crops: the box runs off the edges)
+    if (shown !== 'video' || !S.videoUrl || !video.videoWidth || !video.videoHeight) return null;
+    const r = video.getBoundingClientRect(), vw = video.videoWidth, vh = video.videoHeight;
+    const k = (video.style.objectFit === 'cover' ? Math.max : Math.min)(r.width / vw, r.height / vh), w = vw * k, h = vh * k;
+    return { l: r.left + (r.width - w) / 2, t: r.top + (r.height - h) / 2, w, h };
+  }
+  const showVptrs = (list) => { vptrList = list; drawPtrs(vptrBox, vptrEls, vidBox(), list); };
+  const vptrOn = () => { const p = S.p2p || {}; return !!S.video && S.video.paused && (S.share || {}).cursor !== false && (p.role === 'host' ? (p.peers || []).length > 0 : p.role === 'guest' && p.status === 'connected'); };
+  let vptrAt = 0, vptrOut = false;
+  addEventListener('mousemove', (e) => {
+    const box = vptrOn() && stage.contains(e.target) ? vidBox() : null;       // (over the panel, the hub bar or the chat it isn't over the picture)
+    const x = box ? (e.clientX - box.l) / box.w : -1, y = box ? (e.clientY - box.t) / box.h : -1, over = x >= 0 && x <= 1 && y >= 0 && y <= 1;
+    if (!over) { if (selfCtx === 'vid') selfOff(); if (vptrOut) { vptrOut = false; api.cmd({ type: 'vid-ptr', x: -1, y: -1 }); } return; }
+    showSelf('vid', e.clientX, e.clientY);
+    if (Date.now() - vptrAt < 40) return;       // at most 25 a second
+    vptrAt = Date.now(); vptrOut = true;
+    api.cmd({ type: 'vid-ptr', x: +x.toFixed(4), y: +y.toFixed(4) });
+  });
+  document.addEventListener('mouseleave', () => { if (vptrOut) { vptrOut = false; api.cmd({ type: 'vid-ptr', x: -1, y: -1 }); } });
+  addEventListener('resize', () => { if (vptrEls.size) showVptrs(vptrList); });
+  setInterval(() => {
+    for (const q of vptrEls.values()) q.el.classList.toggle('idle', Date.now() - q.at > 6000);
+    if (selfCtx === 'vid' && !vptrOn()) selfOff();       // it played again, or sharing went off: the plain pointer (or the real one) is back
+  }, 1000);
+  // online in a hub, everywhere a picture's own handler didn't see to (they run first: on the element, or on the window above)
+  addEventListener('mousemove', (e) => {
+    if (selfClaimed) { selfClaimed = false; return; }
+    if (hubPtr() && e.target.tagName !== 'WEBVIEW') showSelf('ui', e.clientX, e.clientY, uiKind(e.target));
+    else if (selfCtx) showSelf('');
+  });
 
   // ---------- the browser's bar: tabs, back and forward, home and the address. It floats at the top and keeps out of the way ----------
   const surf = (what, more) => api.cmd({ type: 'surf', do: what, ...more });
@@ -1193,13 +1457,13 @@
   };
   // -- the Broadcast scene (docs/plans/broadcast.md §5, §6; changed 2026-11-23). Picking the Share tab turns this screen
   // into a black grid with a tile for each broadcast in the hub: a still (a picture the broadcaster sends every 10 s, signed
-  // by them) until it's watched. Watch fills the screen with it, with a slim bar along the top (Back, volume, Share my cursor,
+  // by them) until it's watched. Watch fills the screen with it, with a slim bar along the top (Back, volume,
   // Stop watching); Back (or Esc) goes to the grid, where it plays on in its tile without reconnecting. With more than one
   // up, "Preview" plays one in its tile, so several can be watched side by side. Each one watched has its own connection,
   // set up from SDPs main.js passes on once chat.js has checked them; this window's answer goes back to be signed. Relayed
   // through the hub unless "Connect directly" is on. Once connected, the certificate the broadcaster really used goes to
   // chat.js to be checked against the one they signed. Your cursor only ever goes to a broadcaster from the full-screen view,
-  // while "Share my cursor" is on for theirs, and is only a picture there: nothing you do here clicks or types on their PC. --
+  // while the hub bar's cursor toggle is on, and is only a picture there: nothing you do here clicks or types on their PC. --
   const bcEl = $('#bcView'), bcGridEl = $('#bcGrid'), bcTopEl = $('#bcTop'), bcEmptyEl = $('#bcEmpty'), bcBarEl = $('#bcBar'), bcPtrBox = $('#bcPtrs');
   const bcTiles = new Map();       // broadcast id -> { id, el, img, vid, ph, note, foot, still (the stamp of the still shown), key (what its foot was drawn from) }
   const bcRx = new Map();       // broadcast id -> { pc, dc, early, gen, asked, good, vrx, stream }: the connection to each one watched here
@@ -1305,7 +1569,7 @@
       if (rx && 'jitterBufferTarget' in rx) { const want = t && t.audio ? BC_AV_MS : null; if (rx.jitterBufferTarget !== want) { try { rx.jitterBufferTarget = want; } catch { /* closing */ } } }
     }
   }
-  // ---- the full-screen view: pointers, the bar, the "Share my cursor" hint ----
+  // ---- the full-screen view: pointers and the bar (your cursor goes while the hub bar's cursor toggle is on) ----
   const bcSend = (m) => { const r = bcRx.get(bcFull); if (r && r.dc && r.dc.readyState === 'open') { try { r.dc.send(JSON.stringify(m)); } catch { /* closing */ } } };
   // where the picture is on the screen (it's letterboxed), and the mouse as fractions of the video frame
   function bcBox() {
@@ -1318,9 +1582,10 @@
   let bcPtrAt = 0, bcPtrSent = false, bcPingAt = 0;
   const bcSharing = () => !!(bcFull && (bcInfo(bcFull) || {}).share);
   function bcPoint(e) {
-    if (!bcSharing()) return;
+    if (!bcSharing()) { if (selfCtx === 'bc') selfOff(); return; }
     const q = e && bcAt(e);
-    if (!q) { if (bcPtrSent) { bcSend({ t: 'ptr', gone: true }); bcPtrSent = false; } return; }
+    if (!q) { if (selfCtx === 'bc') selfOff(); if (bcPtrSent) { bcSend({ t: 'ptr', gone: true }); bcPtrSent = false; } return; }
+    if (e.target) showSelf('bc', e.clientX, e.clientY);       // (not for the tests' made-up moves)
     if (Date.now() - bcPtrAt < 33) return;       // at most 30 a second
     bcPtrAt = Date.now(); bcPtrSent = true;
     bcSend({ t: 'ptr', x: +q.x.toFixed(4), y: +q.y.toFixed(4) });
@@ -1335,39 +1600,6 @@
   let bcBarTimer = null;
   const bcBarShow = () => { bcBarEl.classList.add('show'); clearTimeout(bcBarTimer); bcBarTimer = setTimeout(() => { if (!bcBarEl.matches(':hover')) bcBarEl.classList.remove('show'); }, 2600); };
   bcBarEl.addEventListener('mouseleave', () => bcBarShow());
-  // "Share my cursor" is off for each broadcast until you turn it on, and the bar hides itself, so once the picture
-  // arrives the bar stays out for a moment with a note under it pointing at the button. Once for each time you start
-  // watching a broadcast full screen; turning it on (here or in the bar) puts it away at once.
-  const bcHintEl = Object.assign(document.createElement('div'), { id: 'bcHint' });
-  bcEl.appendChild(bcHintEl);
-  let bcHintFor = '', bcHintTimer = null;
-  function bcHintOff() {
-    clearTimeout(bcHintTimer);
-    if (!bcHintEl.classList.contains('on')) return;
-    bcHintEl.classList.remove('on'); bcBarEl.classList.remove('hint');
-    for (const el of bcBarEl.querySelectorAll('.nudge')) el.classList.remove('nudge');
-    bcBarShow();       // (then it hides as usual)
-  }
-  function bcHintPlace() {       // under the bar, its arrow on the button (the bar wraps on a narrow screen)
-    const bar = bcBarEl.getBoundingClientRect(), s = bcBarEl.querySelector('.bcShare'), w = bcHintEl.offsetWidth;
-    const sx = s ? (({ left, width }) => left + width / 2)(s.getBoundingClientRect()) : innerWidth / 2;
-    const left = Math.max(16, Math.min(innerWidth - w - 16, sx - w / 2));
-    bcHintEl.style.left = Math.round(left) + 'px';
-    bcHintEl.style.top = Math.round(bar.bottom + 16) + 'px';
-    bcHintEl.style.setProperty('--ax', Math.round(Math.max(14, Math.min(w - 14, sx - left))) + 'px');
-  }
-  function bcHintSync(t) {
-    if (t.share) { bcHintOff(); return; }
-    if (bcHintEl.classList.contains('on')) { const s = bcBarEl.querySelector('.bcShare'); if (s && !s.classList.contains('nudge')) { s.classList.add('nudge'); bcHintPlace(); } return; }       // (the bar may have been rebuilt)
-    if (bcHintFor === t.bc || t.state !== 'connected') return;
-    bcHintFor = t.bc;
-    bcHintEl.textContent = `Press "Share my cursor" to let ${t.who} and everyone watching see where you point`;
-    bcBarEl.classList.add('hint');
-    const s = bcBarEl.querySelector('.bcShare'); if (s) s.classList.add('nudge');
-    bcHintPlace();
-    bcHintEl.classList.add('on');
-    bcHintTimer = setTimeout(bcHintOff, 9000);
-  }
   const myPtrName = () => String((S.share || {}).name || (S.p2p || {}).defaultName || '').replace(/[\x00-\x1f<>]/g, '').trim().slice(0, 24) || 'You';
   // everyone else's pointers over the full-screen picture (the broadcaster passes on those who share theirs; main.js names them)
   const bcPtrEls = new Map();
@@ -1377,7 +1609,7 @@
     for (const [id, q] of bcPtrEls) if (!list.some((x) => x.id === id)) { q.el.remove(); bcPtrEls.delete(id); }
     for (const x of list) {
       let q = bcPtrEls.get(x.id);
-      if (!q) { const el = document.createElement('div'); el.className = 'ptr'; el.innerHTML = PTR; bcPtrBox.appendChild(el); bcPtrEls.set(x.id, q = { el, x: -1, y: -1, at: now }); }
+      if (!q) { const el = document.createElement('div'); el.className = 'ptr'; ptrShape(el); bcPtrBox.appendChild(el); bcPtrEls.set(x.id, q = { el, x: -1, y: -1, at: now }); }
       q.el.style.setProperty('--c', ptrColor(x.name)); q.el.lastChild.textContent = x.name;
       if (q.x !== x.x || q.y !== x.y) { q.x = x.x; q.y = x.y; q.at = now; }
       q.el.style.left = (box.l + x.x * box.w).toFixed(1) + 'px'; q.el.style.top = (box.t + x.y * box.h).toFixed(1) + 'px';
@@ -1406,18 +1638,14 @@
     if (!t) { bcBarKey = ''; bcBarEl.replaceChildren(); return; }
     const slider = bcBarEl.querySelector('.bcVol input');
     if (slider && document.activeElement !== slider) slider.value = Math.round((+t.level || 0) * 100);
-    const k = JSON.stringify([t.bc, t.who, t.title, t.share, t.verdict, t.audio]);
-    if (k === bcBarKey) { bcHintSync(t); return; }
+    const k = JSON.stringify([t.bc, t.who, t.title, t.verdict, t.audio]);
+    if (k === bcBarKey) return;
     bcBarKey = k;
     const back = bcBtn('bcBtn bcBack', '← Back', 'Back to every broadcast (Esc). It goes on playing in its tile', bcBack);
     const where = document.createElement('span'); where.className = 'bcWho';
     const dot = document.createElement('span'); dot.className = 'spdot';
     where.append(dot, bcLock(t), bcName(t));
     where.title = 'The name of what they show is what they called it: the hub passes it on and can\'t vouch for it';
-    const share = bcBtn('bcBtn bcShare' + (t.share ? ' on' : ''), t.share ? 'Sharing my cursor' : 'Share my cursor',
-      t.share ? `${t.who} and everyone watching see your cursor over the picture. Click to stop` : `Let ${t.who} and everyone watching see where your cursor is over the picture. It's only a picture: you can't click or type anything on their PC`,
-      () => bcAct('bcCursor', t.bc, !t.share));
-    share.setAttribute('aria-pressed', t.share ? 'true' : 'false');
     const vol = t.audio ? document.createElement('label') : null;
     if (vol) {
       vol.className = 'bcVol'; vol.title = `The sound of ${t.who}'s broadcast (their voice has its own volume, in the Hub tab)`;
@@ -1426,8 +1654,7 @@
       r.addEventListener('input', () => api.patch({ voice: { volumes: { ['bc:' + t.from]: +r.value / 100 } } }));
       vol.append('🔊', r);
     }
-    bcBarEl.replaceChildren(...[back, where, vol, share, bcBtn('bcBtn stop', 'Stop watching', `Stop watching ${t.who}'s broadcast`, () => bcAct('bcUnwatch', t.bc))].filter(Boolean));
-    bcHintSync(t);
+    bcBarEl.replaceChildren(...[back, where, vol, bcBtn('bcBtn stop', 'Stop watching', `Stop watching ${t.who}'s broadcast`, () => bcAct('bcUnwatch', t.bc))].filter(Boolean));
   }
   addEventListener('keydown', (e) => { if (bcOn && bcFull && e.key === 'Escape' && !panel.classList.contains('open')) { e.preventDefault(); e.stopImmediatePropagation(); bcBack(); } }, true);
   // ---- the grid ----
@@ -1551,7 +1778,7 @@
     bcEl.classList.toggle('full', !!id);
     document.body.classList.toggle('bcfull', !!id);
     for (const [k, tl] of bcTiles) tl.el.classList.toggle('full', k === id);
-    bcDrawPtrs([]); bcBarKey = ''; bcHintOff();
+    bcDrawPtrs([]); bcBarKey = ''; if (selfCtx === 'bc') selfOff();
     if (id) bcBarShow();
   }
   // The scene comes and goes with main.js's word (S.bcView), on the monitor it names.
@@ -1560,7 +1787,7 @@
     if (here !== bcOn) {
       bcOn = here;
       document.body.classList.toggle('bc', here);
-      if (!here) { bcPreviewOff(); for (const id of [...bcRx.keys()]) bcHang(id); for (const tl of bcTiles.values()) tl.el.remove(); bcTiles.clear(); bcList = []; bcSetFull(''); bcCertP = null; bcHintFor = ''; bcBarDraw(); }
+      if (!here) { bcPreviewOff(); for (const id of [...bcRx.keys()]) bcHang(id); for (const tl of bcTiles.values()) tl.el.remove(); bcTiles.clear(); bcList = []; bcSetFull(''); bcCertP = null; bcBarDraw(); }
     }
     if (!here) { bcSoundSync(); return; }
     bcHub = v.hub; bcHost = !!v.host;
@@ -1578,6 +1805,7 @@
     const f = bcInfo(v.full);
     bcSetFull(f && f.live ? v.full : '');
     if (bcPtrSent && !bcSharing()) { bcSend({ t: 'ptr', gone: true }); bcPtrSent = false; }       // sharing turned off
+    if (selfCtx === 'bc' && !bcSharing()) selfOff();       // (and the real pointer is back)
     bcEmptyEl.classList.toggle('on', !bcList.length);
     bcTopEl.classList.toggle('live', bcList.some((t) => t.mine));
     bcLayout();
@@ -1587,8 +1815,7 @@
   window.bcTest = async (want) => {       // (for main.js's checks) one watched here: `want`, else the one full screen, else the first playing
     const id = want || bcFull || (bcList.find((t) => t.live) || {}).bc || '', r = bcRx.get(id) || {}, pc = r.pc || null, tl = bcTiles.get(id), vid = tl ? tl.vid : null;
     const out = { on: bcOn && !!bcRx.get(id), id, full: bcFull, video: vid ? vid.videoWidth + 'x' + vid.videoHeight : '0x0', state: pc ? pc.connectionState : '', dc: r.dc ? r.dc.readyState : '', framesIn: 0, ptrs: [...bcPtrEls.keys()],
-      bar: bcBarEl.innerText.replace(/\n+/g, ' | '), note: tl ? tl.note.textContent : '', hint: bcHintEl.classList.contains('on') ? bcHintEl.textContent : '', nudge: !!bcBarEl.querySelector('.bcShare.nudge'),
-      barOut: bcBarEl.classList.contains('show') || bcBarEl.classList.contains('hint'), empty: bcEmptyEl.classList.contains('on'),
+      bar: bcBarEl.innerText.replace(/\n+/g, ' | '), note: tl ? tl.note.textContent : '',      barOut: bcBarEl.classList.contains('show') || bcBarEl.classList.contains('hint'), empty: bcEmptyEl.classList.contains('on'),
       tiles: bcList.map((t) => { const x = bcTiles.get(t.bc); const b = x ? x.el.getBoundingClientRect() : {}; return { bc: t.bc, who: t.who, live: t.live, full: t.bc === bcFull, still: !!(x && x.img.naturalWidth), stillW: x ? x.img.naturalWidth : 0,
         shown: !!(x && b.width > 0 && getComputedStyle(x.el).visibility !== 'hidden'), rect: [Math.round(b.left), Math.round(b.top), Math.round(b.width), Math.round(b.height)], muted: x ? x.vid.muted : true,
         text: x ? x.foot.innerText.replace(/\n+/g, ' | ') : '', btns: x ? [...x.foot.querySelectorAll('button')].map((y) => y.textContent + (y.disabled ? ' (off)' : '')) : [] }; }) };
@@ -1713,7 +1940,9 @@
     const mods = (e) => [e.shiftKey && 'shift', e.ctrlKey && 'control', e.altKey && 'alt', e.metaKey && 'meta'].filter(Boolean);
     const send = (e, p, more) => { if (p) api.cmd({ type: 'web-input', e: { ...p, ...more, m: mods(e) } }); };
     let move = null;
+    v.addEventListener('mouseleave', () => { if (selfCtx === 'surf') selfOff(); });
     v.addEventListener('mousemove', (e) => {       // at most one a frame
+      if (v.own) surfSelf(e);       // (our own page, the hub's: the others see this pointer too)
       const first = !move; move = e;
       if (first) requestAnimationFrame(() => { const m = move; move = null; if (v.isConnected) send(m, at(m), { k: 'move', bt: m.buttons }); });
     });
@@ -1734,9 +1963,7 @@
     const v = vidEl = document.createElement('video');
     v.id = 'webStream'; v.autoplay = true; v.playsInline = true; v.tabIndex = 0;
     document.body.insertBefore(v, $('#webEdge'));
-    const may = () => true;       // a hub's Surf stream has no owner and no lock: everyone online can steer it
-    const refuse = () => {};
-    // where on the page the mouse is, as fractions of its width and height (the picture may have bars beside it)
+    const may = () => (S.share || {}).cursor !== false;       // a hub's Surf stream has no owner and no lock: everyone online can steer it, unless their cursor sharing is off (view-only; main.js web-input says so)    // where on the page the mouse is, as fractions of its width and height (the picture may have bars beside it)
     const at = (e) => {
       const r = v.getBoundingClientRect(), vw = v.videoWidth, vh = v.videoHeight;
       if (!vw || !vh) return null;
@@ -1745,19 +1972,20 @@
     };
     const mods = (e) => [e.shiftKey && 'shift', e.ctrlKey && 'control', e.altKey && 'alt', e.metaKey && 'meta'].filter(Boolean);
     const send = (e, p, more) => { if (p) api.cmd({ type: 'web-input', e: { ...p, ...more, m: mods(e) } }); };
-    // This PC's own mouse is its real pointer, in the shape the page asks for (a hand over a link) while the page's hover is ours
-    // (web.js takeHover; the host sends it: 'web-cursor'). It used to be drawn as the others see it, an arrow with our own name on
-    // it, which never changed shape, so nothing on the page looked clickable.
+    // This PC's own mouse is drawn as the others see it (showSelf), in the shape the page asks for (a hand over a link) while the
+    // page's hover is ours (web.js takeHover; the host sends it: 'web-cursor'). Its first version was a plain arrow that never
+    // changed shape, so nothing on the page looked clickable: renderer/cursors.js has a shape for each.
     let move = null, ptrAt = 0;
     const point = (e, gone) => { const q = gone ? null : at(e); ptrAt = Date.now(); api.cmd(q ? { type: 'web-ptr', x: q.x, y: q.y } : { type: 'web-ptr', x: -1, y: -1 }); };       // so the others can see where this mouse is
-    v.addEventListener('mouseleave', (e) => point(e, true));
+    v.addEventListener('mouseleave', (e) => { point(e, true); if (selfCtx === 'surf') selfOff(); });
     v.addEventListener('mousemove', (e) => {       // at most one a frame
+      surfSelf(e);
       if (Date.now() - ptrAt > 45) point(e);
       if (!may()) return;
       const first = !move; move = e;
       if (first) requestAnimationFrame(() => { const m = move; move = null; if (vidEl === v) send(m, at(m), { k: 'move', bt: m.buttons }); });
     });
-    v.addEventListener('mousedown', (e) => { e.preventDefault(); v.focus(); if (!may()) { refuse(); return; } send(e, at(e), { k: 'down', b: e.button, n: e.detail }); });
+    v.addEventListener('mousedown', (e) => { e.preventDefault(); v.focus(); send(e, at(e), { k: 'down', b: e.button, n: e.detail }); });
     v.addEventListener('mouseup', (e) => { if (may()) send(e, at(e), { k: 'up', b: e.button, n: e.detail }); });
     v.addEventListener('wheel', (e) => { e.preventDefault(); if (!may()) return; const u = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 800 : 1; send(e, at(e), { k: 'wheel', dx: e.deltaX * u, dy: e.deltaY * u }); }, { passive: false });
     v.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -1786,7 +2014,7 @@
       $('#shHost .spnow').classList.toggle('live', p.status === 'ready');
       $('#shTitle').textContent = p.status !== 'ready' ? 'Starting…' : wait.length ? `Paused while ${wait.join(' and ')} ${wait.length > 1 ? 'load' : 'loads'}…`
         : n ? `Sharing with ${n === 1 ? peers[0].name : n + ' friends'}` : 'Sharing — waiting for friends to join';
-      $('#shSub').textContent = p.settling ? 'Getting ready…' : (p.reach === 'internet' ? 'Everyone in the hub can join from the chat.' : 'Everyone in the hub on your network can join from the chat.')
+      $('#shSub').textContent = p.settling ? 'Getting ready…' : (p.reach === 'internet' ? 'Everyone in the hub can join from the chat.' : p.reach === 'manual' ? 'Everyone in the hub on your network can join from the chat. Friends elsewhere can only if your port is open (below).' : 'Only people in the hub on your network can join from the chat.')
         + (videoOn() ? '' : ' Play a video, open a page in Surf or put music on, and they get it too.');
     } else if (p.role === 'guest') {
       const live = p.status === 'connected';
@@ -1805,16 +2033,6 @@
     if (document.activeElement !== nm) nm.value = sh.name || '';
     $('#shControl').checked = !!sh.control; $('#shWait').checked = !!sh.wait; $('#shInternet').checked = !!sh.internet; $('#shAdblock').checked = !!sh.adblock;
     $('#shAdblock').closest('label').style.display = p.role === 'guest' ? 'none' : '';       // a friend's pages are theirs
-    // a badge on each tab: how many people in the session (you included) are looking at it
-    const counts = (p.role === 'host' && n) || (p.role === 'guest' && p.status === 'connected') ? p.tabs || {} : {};
-    for (const b of $$('.tabs button')) {
-      const k = counts[b.dataset.tab] || 0;
-      let el = b.querySelector('.cnt');
-      if (!k) { if (el) el.remove(); continue; }
-      if (!el) { el = document.createElement('b'); el.className = 'cnt'; b.appendChild(el); }
-      if (el.textContent !== String(k)) el.textContent = k;
-      el.title = `${k} ${k === 1 ? 'person is' : 'people are'} on this tab`;
-    }
     $('#shQuality').value = sh.quality || 'original';
     $('#shOverlay').value = sh.overlay || 'all';
     $('#shQNote').textContent = p.role === 'guest' && sh.quality !== p.quality ? `${p.host || 'Your friend'} is sending ${QNAME[p.quality] || p.quality} at most.` : '';
@@ -2002,7 +2220,12 @@
   }
   function paintThumb(sel, t) {
     const el = $(`#vgrid .vt[${sel}] .th`); if (!el) return;
-    if (t.img) { el.style.backgroundImage = `url(${t.img})`; el.firstChild.textContent = ''; }
+    if (sel.startsWith('data-t')) {       // a song: its cover, whole, over a blurred copy of itself (style.css); its own title, and the artist by the size
+      if (t.img) { el.style.setProperty('--art', `url("${t.img}")`); el.classList.add('art'); el.firstChild.textContent = ''; }
+      const tile = el.parentElement, sz = tile.querySelector('.sz');
+      if (t.title) tile.querySelector('.nm').textContent = t.title;
+      if (t.artist && !sz.dataset.size) { sz.dataset.size = sz.textContent; sz.textContent = `${t.artist} · ${sz.textContent}`; }
+    } else if (t.img) { el.style.backgroundImage = `url(${t.img})`; el.firstChild.textContent = ''; }
     if (t.dur) el.querySelector('i').textContent = clockStr(t.dur);
     if (sel.startsWith('data-i')) paintProgress();
   }
@@ -2026,12 +2249,17 @@
       tv.src = url;
     });
   }
-  async function makeVideoThumbs(job) {       // a picture and the length for each video; the length for each song
+  async function makeVideoThumbs(job) {       // a picture and the length for each video; for each song its length, and its cover, title and artist from its tags
     const all = [...lib.videos.map((v, i) => [v, `data-i="${i}"`]), ...lib.tracks.map((v, i) => [v, `data-t="${i}"`])];
     for (const [v, sel] of all) {
       if (job !== libJob) return;
       let t = thumbs.get(v.path);
-      if (!t) { t = await grab(v.url); thumbs.set(v.path, t); }
+      if (!t) {
+        const song = sel.startsWith('data-t');
+        const [g, tags] = await Promise.all([grab(v.url), song ? api.songTags(v.path).catch(() => null) : null]);
+        t = tags ? { ...g, img: tags.art || '', title: tags.title, artist: tags.artist } : g;
+        thumbs.set(v.path, t);
+      }
       if (job === libJob) paintThumb(sel, t);
     }
   }
@@ -2267,6 +2495,12 @@
   $('#play').addEventListener('click', ctxToggle);
   $('#prevTrack').addEventListener('click', () => ctxStep(-1));
   $('#nextTrack').addEventListener('click', () => ctxStep(1));
+  $('#eject').addEventListener('click', (e) => {
+    const what = e.currentTarget.dataset.what;
+    if (what === 'video') api.cmd({ type: 'stop-video', key: me.key });
+    else if (what === 'music') P({ music: { source: S.music.ambientOff ? 'off' : 'generative', playing: true } });       // (as Stop music does)
+    if (what) { screenTab = 'media'; syncUI(); }
+  });
   $('#exit').addEventListener('click', askQuit);
   $('#confirmYes').addEventListener('click', () => { if (asking) asking.done(true); });
   $('#confirmNo').addEventListener('click', closeAsk);
@@ -2368,7 +2602,7 @@
   // ---------- state sync ----------
   api.on('state', (ns) => {
     const prevPal = S.palette + (S.customColors || []).join('');
-    S = ns; resize(); syncWeb(); syncBcView();
+    S = ns; resize(); syncWeb(); syncBcView(); selfSync();
     if (sceneFor(S) !== shown) setScene(sceneFor(S));
     syncVideo();
     syncSubs();
@@ -2395,10 +2629,15 @@
     else if (c.type === 'bc-ptrs') { if (c.bc === bcFull) bcDrawPtrs(Array.isArray(c.list) ? c.list : []); }       // (pointers show only over the one full screen)
     else if (c.type === 'bc-ping') { if (c.p && c.bc === bcFull) bcRipple(c.p); }
     else if (c.type === 'hub-held') drawHeld(Array.isArray(c.list) ? c.list : []);
-    else if (c.type === 'web-cursor') { const el = gpuEl || vidEl; if (el && /^[a-z-]{1,24}$/.test(c.c)) el.style.cursor = c.c; }       // the pointer the page wants, while its hover is ours (web.js takeHover)
+    else if (c.type === 'web-cursor' && /^[a-z-]{1,24}$/.test(c.c)) {       // the pointer the page wants, while its hover is ours (web.js takeHover)
+      const el = gpuEl || vidEl; if (el) el.style.cursor = c.c;       // (the real one, where ours isn't drawn)
+      surfCur = c.c;
+      if (selfCtx === 'surf') { showSelf('surf', parseFloat(selfPtr.style.left) || 0, parseFloat(selfPtr.style.top) || 0, surfCur); selfClaimed = false; }       // (a new shape, not a mouse move)
+    }
     else if (c.type === 'cats') catAt = Array.isArray(c.at) ? c.at : [];
     else if (c.type === 'music-pos') musicPos = { t: +c.t || 0, d: +c.d || 0, at: performance.now() };
     else if (c.type === 'ptrs') showPtrs(Array.isArray(c.list) ? c.list : []);
+    else if (c.type === 'vptrs') showVptrs(Array.isArray(c.list) ? c.list : []);
     else if (c.type === 'web-url') toBar();       // Ctrl+L in the web page
     else if (c.type === 'chat-quick') { if (webEl) webEl.blur(); quickOverSurf(); }       // Enter in a Surf page that wasn't for the page (web.js "Enter")
     else if (c.type === 'web-esc') { if (webEl) webEl.blur(); window.focus(); tab = 'surf'; showPanel(true); syncUI(); }       // Esc in the web page: our controls, and the keys come back to us

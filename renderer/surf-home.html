@@ -96,7 +96,8 @@
   :root[data-bg="neon"] .clock { text-shadow: 0 0 24px color-mix(in srgb, var(--hi) 55%, transparent), 0 0 60px color-mix(in srgb, var(--accent) 30%, transparent); }
 
   /* ---- layout ---- */
-  .wrap { width: min(1240px, 100%); margin: 0 auto; padding: 22px 28px 40px; }
+  :root { --addr-room: 56px; }       /* an empty strip across the top, kept for Surf's address bar to sit in */
+  .wrap { width: min(1240px, 100%); margin: 0 auto; padding: calc(22px + var(--addr-room)) 28px 40px; }
   header.top { display: flex; align-items: center; gap: 14px; height: 36px; }
   .brand { display: flex; align-items: center; gap: 9px; font-weight: 600; font-size: 11px; line-height: 1; letter-spacing: .3em; text-transform: uppercase; color: var(--dim); }
   .brand .logo { height: 14px; width: auto; overflow: visible; }       /* Drift's logo, cropped to its waves (icon.svg) */
@@ -266,7 +267,7 @@
   .ask button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 
   @media (max-width: 1000px) { .w[data-size="s"], .w[data-size="m"] { grid-column: span 6; } .w[data-size="l"] { grid-column: span 12; } .hero { grid-template-columns: 1fr; align-items: start; } }
-  @media (max-width: 640px) { .wrap { padding: 16px 16px 30px; } .w { grid-column: span 12 !important; } footer.hint { display: none; } }
+  @media (max-width: 640px) { .wrap { padding: calc(16px + var(--addr-room)) 16px 30px; } .w { grid-column: span 12 !important; } footer.hint { display: none; } }
   @media (prefers-reduced-motion: reduce) { .sky i, .skel { animation: none; } }
 </style>
 </head>

@@ -4,6 +4,109 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; color:
   font: 13px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; user-select: none; -webkit-font-smoothing: antialiased; }
 body.idle { cursor: none; }
 #stage { position: fixed; inset: 0; overflow: hidden; background: #000; transition: opacity .7s ease; }
+/* Media's own screen, while it's picked here with no video up (app.js syncMediaBack): the palette's colours, two slow soft lights
+   and a fine grain, with what's playing (or how to start) in the middle and the music's spectrum under it */
+#mediaBack { position: fixed; inset: 0; overflow: hidden; display: none; color: #eef1f6;
+  background: radial-gradient(130% 90% at 50% 115%, color-mix(in srgb, var(--mb1, #0b3a52) 85%, transparent) 0%, transparent 62%), linear-gradient(165deg, var(--mb0, #040816) 0%, #05060a 100%); }
+#mediaBack.on { display: block; }
+/* How much colour it has: muted with nothing playing, halfway while paused, the full palette while playing, eased between them.
+   app.js sets the palette as --mbr0..3; everything here wears --mb0..3, the same colours with their chroma and lightness scaled. */
+@property --vivid { syntax: '<number>'; inherits: true; initial-value: 0; }
+#mediaBack { --vivid: 0; transition: --vivid 1.4s ease;
+  --mb0: oklch(from var(--mbr0, #040816) calc(l * (.8 + .2 * var(--vivid))) calc(c * (.2 + .8 * var(--vivid))) h);
+  --mb1: oklch(from var(--mbr1, #0b3a52) calc(l * (.8 + .2 * var(--vivid))) calc(c * (.2 + .8 * var(--vivid))) h);
+  --mb2: oklch(from var(--mbr2, #22c08a) calc(l * (.8 + .2 * var(--vivid))) calc(c * (.2 + .8 * var(--vivid))) h);
+  --mb3: oklch(from var(--mbr3, #b58cff) calc(l * (.8 + .2 * var(--vivid))) calc(c * (.2 + .8 * var(--vivid))) h); }
+#mediaBack.music { --vivid: .55; }
+#mediaBack.music.playing { --vivid: 1; }
+/* app.js (tickMediaBack) swells them with the music: the bass, and the mids and highs. No blur filter: the gradient's eased stops
+   make them as soft, and as their own layers (will-change) they're drawn once and only moved, not blurred again every frame. */
+#mediaBack .mbOrb { position: absolute; border-radius: 50%; opacity: .5; will-change: transform, opacity; }
+#mediaBack.rest .mbOrb { animation-play-state: paused; }       /* a video playing on another monitor: nothing here moves (app.js) */
+/* a wash of light up from the floor on each beat (the scenes' uBeat), its opacity set by app.js */
+#mediaBack .mbFlash { position: absolute; inset: 0; opacity: 0; pointer-events: none; background: radial-gradient(90% 70% at 50% 110%, color-mix(in srgb, var(--mb2, #22c08a) 55%, transparent), transparent 70%); }
+#mediaBack .mbOrb.a { width: 46vmax; height: 46vmax; left: -10vmax; top: -14vmax; background: radial-gradient(circle, var(--mb2, #22c08a) 0%, color-mix(in srgb, var(--mb2, #22c08a) 70%, transparent) 18%, color-mix(in srgb, var(--mb2, #22c08a) 32%, transparent) 40%, color-mix(in srgb, var(--mb2, #22c08a) 9%, transparent) 58%, transparent 72%); animation: mbDriftA 38s ease-in-out infinite alternate; }
+#mediaBack .mbOrb.b { width: 40vmax; height: 40vmax; right: -12vmax; bottom: -16vmax; background: radial-gradient(circle, var(--mb3, #b58cff) 0%, color-mix(in srgb, var(--mb3, #b58cff) 70%, transparent) 18%, color-mix(in srgb, var(--mb3, #b58cff) 32%, transparent) 40%, color-mix(in srgb, var(--mb3, #b58cff) 9%, transparent) 58%, transparent 72%); opacity: .32; animation: mbDriftB 46s ease-in-out infinite alternate; }
+@keyframes mbDriftA { to { translate: 14vmax 10vmax; } }
+@keyframes mbDriftB { to { translate: -12vmax -8vmax; } }
+#mediaBack .mbGrain { position: absolute; inset: 0; opacity: .035; pointer-events: none;       /* (a plain layer: an overlay blend made the whole screen a second pass every frame) */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+/* a record sleeve (its art made from the palette, laid out by the title: app.js sets --ax..--rot) with the record sliding out of
+   it and turning while the music plays; the title set big beside it, and the spectrum as a skyline along the bottom */
+#mediaBack .mbCard { --s: clamp(180px, 40vh, 400px); position: absolute; left: 50%; top: 46%; transform: translate(-50%, -50%) scale(var(--mbScale, 1)); width: min(1080px, 88vw);
+  display: flex; align-items: center; gap: clamp(36px, 5vw, 80px); transition: top .5s cubic-bezier(.22, 1, .36, 1), transform .5s cubic-bezier(.22, 1, .36, 1); }
+body:has(#panel.open.show) #mediaBack .mbCard { top: 25%; --mbScale: .6; }       /* above the panel while its page is open */
+body:has(#panel.open.show) #mediaBack .mbNext { visibility: hidden; }
+#mediaBack .mbArt { position: relative; flex: none; perspective: 1100px;       /* for the record's lean toward the pointer (app.js sets its rotate) */ width: var(--s); height: var(--s); transition: width .9s cubic-bezier(.22, 1, .36, 1); }
+#mediaBack.music .mbArt { width: calc(var(--s) * 1.5); }
+#mediaBack .mbSleeve { position: absolute; left: 0; top: 0; width: var(--s); height: var(--s); border-radius: 12px; overflow: hidden; display: grid; place-items: center; color: rgba(255,255,255,.82);
+  background: radial-gradient(circle at var(--ax, 30%) var(--ay, 28%), color-mix(in srgb, var(--mb2, #22c08a) 92%, #fff) 0%, transparent 58%),
+    radial-gradient(circle at var(--bx, 78%) var(--by, 80%), var(--mb3, #b58cff) 0%, transparent 52%),
+    linear-gradient(var(--rot, 160deg), var(--mb1, #0b3a52), var(--mb0, #040816));
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.1), 0 34px 80px -10px rgba(0,0,0,.7); will-change: transform; }       /* app.js gives it a small kick on each beat (scale) */
+/* the sleeve's coloured glow, its own layer under it: painted once, then app.js swells it with the bass and brightens it on the
+   beat by scale and opacity alone (a box-shadow that changed size had the sleeve painted again every frame) */
+#mediaBack .mbGlow { position: absolute; left: 0; top: 0; width: var(--s); height: var(--s); border-radius: 12px; pointer-events: none; opacity: .72; will-change: transform, opacity;
+  box-shadow: 0 0 110px color-mix(in srgb, var(--mb2, #22c08a) 36%, transparent); }
+#mediaBack .mbSleeve::after { content: ''; position: absolute; inset: 0; pointer-events: none;       /* a glint that follows its lean toward the pointer (app.js --gx, --gy), a sheen across the card, a crease at the spine, and grain */
+  background: radial-gradient(circle at calc(50% + var(--gx, 0) * 55%) calc(50% + var(--gy, 0) * 55%), rgba(255,255,255,.13), transparent 50%), linear-gradient(to right, rgba(0,0,0,.28), transparent 3.5%, rgba(255,255,255,.06) 4.2%, transparent 7%), linear-gradient(135deg, rgba(255,255,255,.2), transparent 42%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.22'/%3E%3C/svg%3E"); }
+#mediaBack .mbRings { position: absolute; inset: 0; opacity: .4; mix-blend-mode: overlay;       /* they light with the mids (app.js sets the opacity) */
+  background: repeating-radial-gradient(circle at var(--bx, 78%) var(--by, 80%), rgba(255,255,255,.5) 0 1px, transparent 1.5px 13px);
+  -webkit-mask: radial-gradient(circle at var(--bx, 78%) var(--by, 80%), #000 0%, transparent 75%); }
+#mediaBack .mbCover { position: absolute; inset: 0; background: center/cover no-repeat; opacity: 0; transition: opacity .6s ease; }       /* the song's own cover (app.js sleeveArt) */
+#mediaBack .mbSleeve.art .mbCover { opacity: 1; }
+#mediaBack .mbSleeve.art .mbRings { opacity: 0; }
+#mediaBack .mbNo { position: absolute; left: 18px; bottom: 15px; z-index: 1; font: 600 10.5px/1 "Segoe UI Variable Text", "Segoe UI", system-ui; letter-spacing: .22em; text-transform: uppercase; color: rgba(255,255,255,.85); text-shadow: 0 1px 8px rgba(0,0,0,.35); font-variant-numeric: tabular-nums; }
+#mediaBack .mbSleeve svg { position: relative; width: 30%; height: 30%; filter: drop-shadow(0 4px 18px rgba(0,0,0,.35)); }
+#mediaBack.music .mbSleeve svg { display: none; }
+#mediaBack .mbDisc { position: absolute; left: 0; top: 3%; width: calc(var(--s) * .94); height: calc(var(--s) * .94); border-radius: 50%; opacity: 0;
+  background: conic-gradient(from 20deg, transparent 0 4%, rgba(255,255,255,.13) 9%, transparent 15% 50%, rgba(255,255,255,.1) 58%, transparent 64%),
+    repeating-radial-gradient(circle, #121216 0 1.2px, #1b1b21 1.6px 3px), #111;
+  box-shadow: 0 20px 50px rgba(0,0,0,.6), inset 0 0 0 1px rgba(255,255,255,.06);
+  transition: transform .9s cubic-bezier(.22, 1, .36, 1), opacity .4s; }
+#mediaBack.music .mbDisc { opacity: 1; transform: translateX(22%); }
+#mediaBack.music.playing .mbDisc { transform: translateX(56%); }       /* out of the sleeve while it plays, tucked back in when paused */
+#mediaBack .mbLabel { position: absolute; inset: 33%; border-radius: 50%; box-shadow: 0 0 0 2px rgba(0,0,0,.3);
+  background: radial-gradient(circle, #0a0a0c 0 5%, transparent 5.5%), radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--mb2, #22c08a) 80%, #fff), var(--mb2, #22c08a) 55%, color-mix(in srgb, var(--mb2, #22c08a) 60%, var(--mb0, #040816)));
+  transform: rotate(var(--spin, 0deg)); }       /* app.js turns it: faster while the music is loud (the scenes' audio clock) */
+/* rings that leave the record on each of the last four beats, as the scenes' beatRings do (app.js sets each one's --a: its age) */
+#mediaBack .mbWaves { position: absolute; inset: 0; pointer-events: none; }
+#mediaBack .mbWaves i { position: absolute; inset: 0; border-radius: 50%; opacity: 0; border: 2px solid color-mix(in srgb, var(--mb2, #22c08a) 70%, #fff);
+  box-shadow: 0 0 24px color-mix(in srgb, var(--mb2, #22c08a) 50%, transparent), inset 0 0 18px color-mix(in srgb, var(--mb2, #22c08a) 30%, transparent); }
+#mediaBack .mbLabel i { position: absolute; left: calc(50% - 1.5px); top: 12%; width: 3px; height: 24%; border-radius: 2px; background: rgba(255,255,255,.7); }
+#mediaBack .mbInfo { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+#mediaBack .mbKicker { display: flex; align-items: center; gap: 10px; font: 600 11.5px/1 "Segoe UI Variable Text", "Segoe UI", system-ui; letter-spacing: .22em; text-transform: uppercase; color: color-mix(in srgb, var(--mb2, #22c08a) 75%, #fff); }
+#mediaBack .mbEq { display: none; align-items: flex-end; gap: 2px; height: 12px; }
+#mediaBack.music .mbEq { display: inline-flex; }
+#mediaBack .mbEq i { width: 3px; height: 100%; border-radius: 1px; background: currentColor; transform-origin: bottom; transform: scaleY(.3); }
+#mediaBack.playing .mbEq i { animation: mbEq .8s ease-in-out infinite alternate; }
+#mediaBack.playing .mbEq i:nth-child(2) { animation-duration: .55s; animation-delay: -.3s; }
+#mediaBack.playing .mbEq i:nth-child(3) { animation-duration: .7s; animation-delay: -.5s; }
+@keyframes mbEq { from { transform: scaleY(.25); } to { transform: scaleY(1); } }
+#mediaBack .mbTitle { font: 700 clamp(34px, 5.2vw, 76px)/1.02 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: -.035em; overflow-wrap: anywhere; text-wrap: balance;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; padding-bottom: .06em; text-shadow: 0 4px 40px rgba(0,0,0,.35); }
+#mediaBack .mbArtist { margin-top: -4px; font: 600 clamp(16px, 1.7vw, 24px)/1.25 "Segoe UI Variable Display", "Segoe UI", system-ui; color: rgba(238,241,246,.8); overflow-wrap: anywhere; }
+#mediaBack .mbArtist:empty { display: none; }
+#mediaBack .mbNote { font: 15px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui; color: rgba(238,241,246,.6); max-width: 46ch; }
+#mediaBack .mbNext { display: flex; flex-direction: column; gap: 2px; margin-top: 14px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,.1); max-width: 460px; }
+#mediaBack .mbNext:empty { display: none; }
+#mediaBack .mbNext h4 { margin: 0 0 6px; font: 600 10.5px/1 "Segoe UI Variable Text", "Segoe UI", system-ui; letter-spacing: .22em; text-transform: uppercase; color: rgba(238,241,246,.42); }
+#mediaBack .mbNext div { display: flex; gap: 14px; align-items: baseline; padding: 5px 0; font: 14px/1.3 "Segoe UI Variable Text", "Segoe UI", system-ui; color: rgba(238,241,246,.78); }
+#mediaBack .mbNext div b { flex: none; width: 2ch; font-weight: 600; font-variant-numeric: tabular-nums; color: color-mix(in srgb, var(--mb2, #22c08a) 75%, #fff); opacity: .8; }
+#mediaBack .mbNext div span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#mediaBack .mbNext div + div span { opacity: .75; }
+#mediaBack .mbNext div + div + div span { opacity: .55; }
+#mediaBack .mbBars { position: absolute; left: 0; right: 0; bottom: 0; height: 24vh; display: none; align-items: flex-end; gap: 3px; padding: 0 1.5vw; opacity: .42;       /* (app.js lifts it on the beat) */
+  -webkit-mask: linear-gradient(to top, #000 10%, transparent); }
+#mediaBack.music .mbBars { display: flex; }
+#mediaBack .mbBars i { flex: 1; height: 100%; border-radius: 3px 3px 0 0; background: linear-gradient(to top, var(--mb2, #22c08a), color-mix(in srgb, var(--mb3, #b58cff) 80%, #fff)); transform-origin: bottom; transform: scaleY(.02); }
+@media (max-width: 760px), (max-aspect-ratio: 1/1) {       /* narrow or portrait screens: stacked and centred */
+  #mediaBack .mbCard { flex-direction: column; text-align: center; --s: clamp(160px, 30vh, 280px); }
+  #mediaBack .mbInfo { align-items: center; }
+  #mediaBack .mbNext { width: 100%; text-align: left; }
+}
+@media (prefers-reduced-motion: reduce) { #mediaBack .mbOrb, #mediaBack .mbLabel, #mediaBack .mbEq i { animation: none !important; } }
 canvas#c { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 video#v { position: absolute; display: none; }
 canvas#vbg { position: absolute; display: none; transform: scale(1.12); }       /* blurred and dimmed as it is drawn: see app.js */
@@ -42,8 +145,18 @@ canvas#webGpu { position: fixed; inset: 0; width: 100%; height: 100%; background
 #webEdge { position: fixed; left: 0; right: 0; bottom: 0; height: 5px; display: none; }
 body.web #webEdge { display: block; }
 /* other people's pointers over the page */
-#ptrs { position: fixed; inset: 0; pointer-events: none; z-index: 3; overflow: hidden; display: none; }
+#ptrs { position: fixed; inset: 0; pointer-events: none; z-index: 6; overflow: hidden; display: none; }       /* over the Surf bar (5), so a pointer on the tabs or address bar shows; under the panel (22) and chat */
 body.web #ptrs { display: block; }
+/* and over a shared video while it's paused (app.js showVptrs) */
+#vptrs { position: fixed; inset: 0; pointer-events: none; z-index: 3; overflow: hidden; }
+/* our own pointer, as the others see it, standing in for the real one over those pictures (app.js showSelf) */
+html.selfPtr, html.selfPtr * { cursor: none !important; }
+#selfPtrBox { position: fixed; inset: 0; pointer-events: none; z-index: 10000; overflow: hidden; }       /* over everything, the picture viewer (.chLight) too */
+.ptr.self { transition: opacity .15s; }       /* (it follows the mouse exactly: no easing like the others') */
+body.idle .ptr.self[data-ctx="ui"] { opacity: 0; }
+.ptr.self.priv { --c: #8a8f98 !important; }       /* cursor sharing off over a hub's page: a grey pointer saying "Cursor off · view only": nobody else sees it, and the page takes no input from it */
+.ptr.self.priv svg { opacity: .8; }
+.ptr.self.priv b { font-style: italic; font-weight: 600; }       /* resting over the scene it fades with the panel, as the real one did */
 /* the Broadcast scene (docs/plans/broadcast.md §5, §6): a black grid of the hub's broadcasts, over the scene and Surf, under the
    chat overlay, hub bar and panel. Tiles are placed by app.js bcLayout; one watched full screen covers the rest. */
 #bcView { position: fixed; inset: 0; z-index: 20; display: none; background: #000; }
@@ -99,15 +212,15 @@ body.idle .bcTile.live:not(:hover) .bcTFoot { opacity: 0; }
 #bcEmpty p { margin: 0; }
 #bcEmpty .bcBtn { padding: 8px 18px; font-size: 13px; }
 #bcPtrs { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 2; }
-#bcBar, #bcHint { z-index: 3; }
+#bcBar { z-index: 3; }
 .bcPing { position: absolute; width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%; border: 3px solid var(--c); pointer-events: none; animation: bcPing 1.1s ease-out forwards; }
 @keyframes bcPing { from { transform: scale(.4); opacity: 1; } to { transform: scale(4); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .bcTile { transition: none; } }
-/* the full-screen view's bar: Back, who, volume, Share my cursor, Stop watching (only while one fills the screen) */
-#bcView:not(.full) #bcBar, #bcView:not(.full) #bcHint { display: none; }
+/* the full-screen view's bar: Back, who, volume, Stop watching (only while one fills the screen) */
+#bcView:not(.full) #bcBar { display: none; }
 #bcBar { position: absolute; left: 50%; top: 14px; transform: translate(-50%, -8px); display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 14px; border-radius: 999px; max-width: calc(100vw - 32px); flex-wrap: wrap; justify-content: center;
   background: rgba(10,12,18,.66); backdrop-filter: blur(24px) saturate(150%); border: 1px solid var(--line); opacity: 0; pointer-events: none; transition: opacity .3s ease, transform .3s ease; }
-#bcBar.show, #bcBar.hint, #bcBar:hover, #bcBar:focus-within { opacity: 1; pointer-events: auto; transform: translate(-50%, 0); }
+#bcBar.show, #bcBar:hover, #bcBar:focus-within { opacity: 1; pointer-events: auto; transform: translate(-50%, 0); }
 #bcBar .bcWho { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; }
 #bcBar .bcVol { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dim); }
 #bcBar .bcVol input { width: 90px; accent-color: var(--accent); }
@@ -117,21 +230,24 @@ body.idle .bcTile.live:not(:hover) .bcTFoot { opacity: 0; }
 .bcBtn.ico svg { width: 14px; height: 14px; flex: none; }
 .bcBtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .bcBtn.on { background: color-mix(in srgb, var(--accent) 30%, transparent); border-color: var(--accent); }
-.bcBtn.nudge { border-color: var(--accent); animation: bcNudge 1.6s ease-in-out infinite; }
-@keyframes bcNudge { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); } 50% { box-shadow: 0 0 0 6px transparent; } }
-/* under the bar, pointing up at "Share my cursor" (app.js bcHintSync) */
-#bcHint { position: absolute; left: 16px; top: 66px; transform: translateY(-6px); padding: 8px 16px; border-radius: 12px; background: rgba(10,12,18,.78); backdrop-filter: blur(20px); border: 1px solid var(--accent);
-  color: var(--ink); font-size: 13px; max-width: calc(100vw - 64px); text-align: center; pointer-events: none; opacity: 0; transition: opacity .3s ease, transform .3s ease; }
-#bcHint::before { content: ''; position: absolute; left: var(--ax, 50%); top: -6px; width: 10px; height: 10px; margin-left: -5px; background: inherit; border: 1px solid var(--accent); border-right: 0; border-bottom: 0; transform: rotate(45deg); }
-#bcHint.on { opacity: 1; transform: none; }
-@media (prefers-reduced-motion: reduce) { .bcBtn.nudge { animation: none; } #bcHint { transition: none; } }
 .bcBtn.stop { background: rgba(255,77,77,.18); border-color: rgba(255,77,77,.45); }
-.ptr { position: absolute; left: 0; top: 0; display: flex; align-items: flex-start; transition: left .09s linear, top .09s linear, opacity .15s; }
+/* a pointer sits on its hotspot; the shape (renderer/cursors.js) is placed around it, the name tag below and to the right */
+.ptr { position: absolute; left: 0; top: 0; width: 0; height: 0; transition: left .09s linear, top .09s linear, opacity .15s;
+  --c-hi: oklch(from var(--c) calc(l + .1) calc(c * .75) calc(h - 12)); --c-lo: oklch(from var(--c) calc(l - .07) calc(c * 1.05) calc(h + 10)); --ink: oklch(from var(--c) .22 calc(c * .45) h); }       /* (--c, the person's colour: app.js ptrColor; lighter and deeper shades of it, and a dark ink of the same hue) */
 .ptr.idle { opacity: 0; transition: left .09s linear, top .09s linear, opacity .8s; }       /* a pointer that has stopped fades away, and comes straight back when it moves */
-.ptr svg { flex: none; margin: -3px 0 0 -3px; overflow: visible; filter: drop-shadow(0 0 .6px rgba(0,0,0,.55)) drop-shadow(0 1px 3px rgba(0,0,0,.45)); }       /* the point sits 3px in from the box; a faint dark edge and a soft shadow keep it clear on white pages */
-.ptr path { fill: var(--c); stroke: #fff; stroke-width: 2.6; stroke-linejoin: round; paint-order: stroke; }       /* the person's colour, with a white edge */
-.ptr b { margin: 17px 0 0 -6px; padding: 2px 9px 3px; border-radius: 999px; background: var(--c); color: #0b0d13; font: 600 11.5px/1.3 "Segoe UI Variable Text", "Segoe UI", system-ui; white-space: nowrap;
-  box-shadow: 0 0 0 1.3px #fff, 0 0 0 1.9px rgba(0,0,0,.3), 0 1px 3px rgba(0,0,0,.45); }       /* dressed like the arrow: a white edge, a faint dark one and a soft shadow */
+.ptr svg { position: absolute; overflow: visible; filter: drop-shadow(0 0 .5px rgba(0,0,0,.5)) drop-shadow(0 2px 4px rgba(0,0,0,.28)) drop-shadow(0 4px 10px oklch(from var(--c) .45 c h / .35)); }       /* a faint dark edge, a soft shadow and a glow of its own colour: clear on white pages and busy pictures */
+.ptr path { fill: var(--fill, var(--c)); stroke: #fff; stroke-width: 2.4; stroke-linejoin: round; paint-order: stroke; }       /* the person's colour, lit from above (app.js ptrShape), with a white edge */
+.ptr path.cut { fill: none; stroke-width: 1.2; stroke-linecap: round; }       /* the cracks between fingers */
+.ptr path.line { fill: none; stroke-width: 2.2; stroke-linecap: round; }       /* white marks on the shape: the + of zoom, the spinner */
+.ptr path.thin { stroke-width: 1.6; }
+.ptr path.dot { fill: #fff; stroke: none; }
+.ptr .spin { transform-origin: 12px 12px; animation: ptrSpin 1s linear infinite; }
+@keyframes ptrSpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .ptr .spin { animation: none; } }
+/* the name tag: tucked under the point (its corner nearest the pointer is the sharp one), lit like the shape, its name in a dark ink of the same colour */
+.ptr b { position: absolute; left: calc(var(--lx, 11px) + 1px); top: calc(var(--ly, 17px) + 1px); padding: 2.5px 8px 3.5px; border-radius: 4px 11px 11px 11px; white-space: nowrap;
+  background: linear-gradient(170deg, var(--c-hi), var(--c) 55%, var(--c-lo)); color: var(--ink); font: 650 11px/1.25 "Segoe UI Variable Text", "Segoe UI", system-ui; letter-spacing: .015em;
+  box-shadow: 0 0 0 1.4px #fff, 0 0 0 2px rgba(0,0,0,.18), 0 2px 5px rgba(0,0,0,.25), 0 5px 14px oklch(from var(--c) .45 c h / .3); }
 /* the browser's own controls: tabs and the address, floating at the top. Out of sight until the mouse reaches the top edge */
 #surfEdge { position: fixed; left: 0; right: 0; top: 0; height: 6px; display: none; z-index: 4; }
 #surfBar { position: fixed; left: 50%; top: 14px; width: min(1040px, 94vw); z-index: 5; display: none; flex-direction: column; gap: 8px; box-sizing: border-box;
@@ -356,13 +472,27 @@ input[type=range]::-webkit-slider-thumb { appearance: none; width: 14px; height:
 #bar { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 8px 10px 8px 8px; }
 .tabs { display: flex; align-items: center; gap: 2px; }
 /* what can be on screen: Scenes, Media, Surf and Share; the one on screen now is lit */
-.tabs .tabGroup { position: relative; display: flex; gap: 2px; }
+.tabs .tabGroup { position: relative; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2px; }       /* each as wide as the widest, so they sit evenly */
+.tabs .tabGroup button { justify-content: center; }
 .tabs .tabGroup button.showing { color: var(--accent); }
 /* the underline under the one on screen: one mark that slides along to it (placed by app.js placeInk) */
-.tabs .tabInk { position: absolute; left: 0; bottom: 2px; width: 14px; height: 2px; border-radius: 1px; background: var(--accent); pointer-events: none;
-  transition: transform .38s cubic-bezier(.22, 1, .36, 1), opacity .2s; }
+.tabs .tabInk { position: absolute; left: 0; bottom: 3px; width: 14px; height: 2px; border-radius: 2px; background: var(--accent); pointer-events: none;
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 55%, transparent);
+  transition: transform .38s cubic-bezier(.22, 1, .36, 1), width .38s cubic-bezier(.22, 1, .36, 1), opacity .2s; }       /* (as wide as the icon and name above it: app.js placeInk) */
 .tabs .tabInk.still { transition: none; }
 .tabs button.active { background: rgba(255,255,255,.12); color: var(--ink); }
+/* each tab: an icon and its name. The ones that change what this screen shows (Scenes, Media, Surf, Share) sit together in a
+   sunken tray; Hub and Settings, which only open a page in the panel and leave the screen as it is, stand apart past a rule */
+.tabs button { display: inline-flex; align-items: center; gap: 6px; }
+.tabs .tabIco { width: 15px; height: 15px; flex: none; opacity: .85; }
+.tabs button.active .tabIco, .tabs button:hover .tabIco { opacity: 1; }
+.tabs .tabGroup { padding: 2px; border-radius: 11px; background: rgba(0,0,0,.22); box-shadow: inset 0 0 0 1px var(--line), inset 0 1px 2px rgba(0,0,0,.35); }
+.tabs .tabGroup button { padding: 6px 12px; }
+.tabs .tabGroup button.showing .tabIco { filter: drop-shadow(0 0 5px color-mix(in srgb, var(--accent) 60%, transparent)); }
+.tabs .tabSep { width: 1px; height: 18px; margin: 0 6px 0 8px; background: var(--line); }
+.tabs .tabSide { display: flex; gap: 2px; }
+.tabs .tabSide button { padding: 6px 11px 6px 9px; }
+@media (max-width: 1000px) { .tabs .tabSide button > span { display: none; } .tabs .tabSide button { padding: 6px 8px; } }       /* narrow: Hub and Settings by their icons (their names in the tooltip) */
 .quick { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .quick .sep { width: 1px; height: 18px; background: var(--line); margin: 0 6px; }
 .icon { all: unset; cursor: pointer; width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; color: var(--ink); font-size: 15px; transition: background .2s; }
@@ -370,10 +500,13 @@ input[type=range]::-webkit-slider-thumb { appearance: none; width: 14px; height:
 .icon:disabled { opacity: .3; cursor: default; background: none; }
 .icon.exit { color: var(--dim); font-size: 13px; }
 .icon.exit:hover { background: rgba(255,90,90,.3); color: #fff; }
-#ctxTag { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); padding: 0 6px 0 2px; min-width: 44px; text-align: right; }
-#nowName { width: 210px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); font-size: 12.5px; padding: 0 4px; }
+/* the playback controls sit in a sunken tray like the tabs' (what they act on named at its left), then the sound, then Exit.
+   What's playing isn't named on the bar: the Media screen shows it, and so does the paused video (#vTitle); Play's tooltip has it. */
+.quick .transport { display: flex; align-items: center; gap: 2px; padding: 2px; border-radius: 11px; background: rgba(0,0,0,.22); box-shadow: inset 0 0 0 1px var(--line), inset 0 1px 2px rgba(0,0,0,.35); margin-right: 6px; }
+.quick .transport .icon { width: 32px; height: 30px; }
+#ctxTag { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); padding: 0 8px 0 10px; min-width: 44px; text-align: left; }
 
-@media (max-width: 760px) { .cols, .grid3 { grid-template-columns: 1fr; gap: 6px; } #nowName { display: none; } }
+@media (max-width: 760px) { .cols, .grid3 { grid-template-columns: 1fr; gap: 6px; } #ctxTag { display: none; } }
 
 /* video library */
 .vlib { display: grid; grid-template-columns: 190px 1fr; gap: 22px; min-height: 300px; }
@@ -396,6 +529,10 @@ input[type=range]::-webkit-slider-thumb { appearance: none; width: 14px; height:
 .vt.active .th { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
 .vt.dir .th { background: rgba(255,255,255,.05); font-size: 34px; color: var(--accent); }
 .vt.song .th { background: radial-gradient(120% 120% at 20% 10%, color-mix(in srgb, var(--accent) 30%, #0c0f16), #0c0f16 70%); font-size: 30px; color: rgba(255,255,255,.6); }
+.vt.song .th.art { isolation: isolate; }       /* a song's cover (app.js paintThumb --art): whole in the middle, over a blurred, darker copy that fills the tile */
+.vt.song .th.art::before, .vt.song .th.art::after { content: ''; position: absolute; z-index: -1; pointer-events: none; }
+.vt.song .th.art::before { inset: -18px; background: var(--art) center/cover; filter: blur(14px) brightness(.5) saturate(1.2); }
+.vt.song .th.art::after { inset: 0; background: var(--art) center/contain no-repeat; }
 .vt .th i { position: absolute; right: 6px; bottom: 6px; font: 600 10.5px/1 system-ui; font-style: normal; background: rgba(0,0,0,.7); color: #fff; padding: 3px 5px; border-radius: 4px; font-variant-numeric: tabular-nums; }
 .vt .th i:empty { display: none; }
 .vt .th .pg { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: rgba(255,255,255,.25); display: none; }       /* how far it was watched */
@@ -443,6 +580,17 @@ body:has(#panel.show) #algo { opacity: 0; }
 /* ---------- subtitles ---------- */
 #subs { position: fixed; left: 0; right: 0; bottom: max(calc(5vh + var(--sub-lift, 0) * 1vh), var(--raise, 0px)); display: none; justify-content: center; padding: 0 6vw; pointer-events: none; transition: bottom .25s ease; }
 #subs.on { display: flex; }
+/* a paused video: its name over the frame, top left, on a soft shade (app.js syncPausedTitle). It comes in after a moment, so a
+   quick pause and play doesn't flash it */
+#vTitle { position: fixed; left: 0; top: 0; width: min(900px, 70vw); padding: 7vh 0 12vh 6vw; pointer-events: none; opacity: 0; translate: 0 -8px;
+  background: radial-gradient(120% 100% at 0 0, rgba(0,0,0,.62), rgba(0,0,0,.3) 45%, transparent 75%); transition: opacity .35s, translate .35s; color: #f1f3f7; }
+#vTitle.on { opacity: 1; translate: 0 0; transition: opacity .6s .45s, translate .6s .45s cubic-bezier(.22, 1, .36, 1); }
+#vTitle .vtKick { display: flex; align-items: center; gap: 8px; font: 600 11.5px/1 "Segoe UI Variable Text", "Segoe UI", system-ui; letter-spacing: .22em; text-transform: uppercase; color: color-mix(in srgb, var(--accent) 75%, #fff); }
+#vTitle .vtKick svg { width: 12px; height: 12px; }
+#vTitle .vtName { margin-top: 14px; font: 700 clamp(30px, 4.4vw, 64px)/1.04 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: -.03em; text-wrap: balance; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; padding-bottom: .06em; text-shadow: 0 2px 30px rgba(0,0,0,.5); }
+#vTitle .vtMeta { margin-top: 10px; font: 14.5px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui; color: rgba(241,243,247,.7); font-variant-numeric: tabular-nums; text-shadow: 0 1px 12px rgba(0,0,0,.6); }
+#vTitle .vtMeta:empty { display: none; }
 #subs.top { bottom: auto; top: 6vh; }
 #subText { max-width: 82vw; text-align: center; color: var(--sub-color, #fff); font: 600 calc(var(--sub-size, 1) * clamp(16px, 4.2vh, 72px))/1.28 "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif; letter-spacing: .01em; }
 #subs.bg-outline #subText { -webkit-text-stroke: .16em rgba(0,0,0,.9); paint-order: stroke fill; text-shadow: 0 .04em .2em rgba(0,0,0,.7); }
@@ -483,16 +631,13 @@ input.num { width: 46px; text-align: center; padding: 6px 4px; }
 #subLook #subPref { margin-top: 6px; }
 #subOff { min-width: 70px; text-align: center; font-variant-numeric: tabular-nums; color: var(--ink); }
 #subTiming .btn { padding: 6px 10px; }
+#eject svg { width: 15px; height: 15px; display: block; margin: auto; }
 #vcc { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; color: var(--dim); }
 #vcc.on { color: #0b0d13; background: var(--ink); }
 @media (max-width: 760px) { .grid4 { grid-template-columns: 1fr 1fr; gap: 8px; } }
 
 /* ---------- watch together + video conversion ---------- */
-/* how many people in a watch-together session are on each tab */
 .tabs button { position: relative; white-space: nowrap; }
-.tabs button .cnt { display: inline-grid; place-items: center; min-width: 17px; height: 17px; margin: 0 -4px 0 7px; padding: 0 5px; border-radius: 999px; box-sizing: border-box;
-  background: color-mix(in srgb, var(--accent) 32%, rgba(255,255,255,.08)); color: var(--ink); font: 700 10.5px/1 "Segoe UI Variable Text", "Segoe UI", system-ui; font-variant-numeric: tabular-nums; vertical-align: 1px; }
-.tabs button.active .cnt { background: var(--accent); color: #0b0d13; }
 .updIcon { display: none; width: 14px; height: 14px; vertical-align: -2px; }
 .tabs button .updIcon { margin-left: 6px; color: var(--accent); filter: drop-shadow(0 0 6px var(--accent)); }
 .updIcon.on { display: inline-block; }
@@ -566,7 +711,7 @@ input.num { width: 46px; text-align: center; padding: 6px 4px; }
 .chWho.on { color: var(--ink); }
 .chWho .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chWho .mini { margin-left: auto; opacity: 0; }
-.chWho .mini + .mini { margin-left: 0; }
+.chWho .mini + .mini, .chWho .vcVol + .mini { margin-left: 0; }
 .chWho:hover .mini { opacity: 1; }
 .chActs { margin: 10px 8px 4px; gap: 6px; }
 .chActs .btn { padding: 5px 9px; font-size: 12px; white-space: nowrap; }
@@ -728,6 +873,15 @@ input.num { width: 46px; text-align: center; padding: 6px 4px; }
 .optText em { font-style: normal; font-size: 11.5px; line-height: 1.45; color: var(--dim); }
 .optText em:empty { display: none; }
 .optRow select { flex: none; width: 230px; margin: 0; }
+/* Options' microphone test (chat.js): the faint bar is what the microphone picks up, the green one what the others hear */
+.micTest { flex: none; width: 230px; display: flex; align-items: center; gap: 10px; }
+.micMeter { position: relative; flex: 1; height: 8px; border-radius: 4px; background: rgba(255,255,255,.07); overflow: hidden; }
+.micMeter i { position: absolute; inset: 0; border-radius: inherit; transform-origin: left; transform: scaleX(0); }
+.micMeter .raw { background: rgba(255,255,255,.22); }
+.micMeter .out { background: var(--accent); }
+.micMeter:not(.on) i { transform: scaleX(0) !important; }
+.micTest .btn { flex: none; min-width: 38px; text-align: center; }
+@media (max-width: 760px) { .micTest { width: 100%; } .optRow:has(> .micTest) .optText { flex-basis: 100%; } }
 #shOpts .chk.optRow { display: flex; white-space: normal; margin: 0; font-size: inherit; }
 .optFoot { margin: 0; padding: 10px 0 12px; border-top: 1px solid var(--line); font-size: 11.5px; line-height: 1.45; }
 #chSide #shStart, .btn.wide { box-sizing: border-box; width: 100%; text-align: center; }
@@ -774,7 +928,8 @@ input.num { width: 46px; text-align: center; padding: 6px 4px; }
 /* voice: the call in the side, locks, safety numbers, and the bar over the scenes */
 .vcWho { display: flex; align-items: center; gap: 7px; padding: 3px 8px; font-size: 12px; color: var(--ink); }
 .vcWho .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.vcWho .vcVol { margin-left: auto; width: 64px; }
+.vcWho .vcVol, .chWho .vcVol { margin: 0 0 0 auto; width: 64px; flex: none; }
+.chWho .nm { min-width: 0; }
 .vcTag { font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); white-space: nowrap; }
 .lock { font-size: 11px; cursor: default; }
 .lock.ok { color: var(--accent); }
@@ -790,25 +945,54 @@ input.num { width: 46px; text-align: center; padding: 6px 4px; }
 .chProfile { margin: 2px 8px 8px 35px; padding: 8px 10px; border-radius: 8px; background: rgba(255,255,255,.05); font-size: 11.5px; color: var(--dim); }
 .chProfile .safety { display: block; margin: 3px 0 4px; color: var(--ink); font: 600 16px/1.2 Consolas, monospace; letter-spacing: .08em; }
 .chProfile .note { margin: 4px 0 6px; }
-#callBar { position: fixed; left: 18px; top: 18px; z-index: 31; display: none; align-items: center; gap: 10px; padding: 6px 8px 6px 12px; border-radius: 999px;
-  background: rgba(10,12,18,.62); backdrop-filter: blur(16px); border: 1px solid var(--line); color: var(--ink); font-size: 12px; }
+/* the hub rail (chat.js drawCall): down the left edge, so the top stays the page's and Surf's. The hub's monogram, who's in voice
+   (the speaker glows), the buttons as icons, then what's being shared; hovering it opens a card beside it that says it in words */
+#callBar { position: fixed; left: 18px; top: 18px; z-index: 31; display: none; flex-direction: column; align-items: center; gap: 6px; width: 46px; box-sizing: border-box; padding: 6px 0;
+  border-radius: 16px; background: rgba(10,12,18,.72); backdrop-filter: blur(16px); border: 1px solid var(--line); color: var(--ink); font-size: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.35); }
 #callBar.on { display: flex; }
+.cbHead { width: 32px; height: 32px; flex: none; border-radius: 10px; display: grid; place-items: center; cursor: default; font: 800 14px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; color: #06110d;
+  background: linear-gradient(140deg, var(--accent), color-mix(in srgb, var(--accent) 45%, #b58cff)); box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 32%, transparent); }
+.cbHeadIco .ico svg { width: 16px; height: 16px; }
+#callBar .cbSep { width: 22px; height: 1px; flex: none; margin: 2px 0; background: var(--line); }
+.cbFaces { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 3px 0 1px; }
+.cbFace .face.small { width: 26px; height: 26px; font-size: 11px; }
+.cbMore { font: 600 10.5px/1 "Segoe UI", system-ui; color: var(--dim); padding: 2px 0; cursor: default; }
+#callBar .cbBtn { position: relative; flex: none; width: 32px; height: 32px; box-sizing: border-box; padding: 0; gap: 0; justify-content: center; border-radius: 10px; font-size: 0;       /* (the label stays as text, for titles and tests: icons only) */
+  background: rgba(255,255,255,.06); color: rgba(238,241,246,.78); transition: background-color .15s, color .15s, box-shadow .15s; }
+#callBar .cbBtn .ico { opacity: 1; }
+#callBar .cbBtn .ico svg { width: 16px; height: 16px; }
+#callBar .cbBtn:hover { background: rgba(255,255,255,.14); color: var(--ink); }
+#callBar .cbBtn.join { background: rgba(46,204,113,.22); color: #8ff0b4; }
+#callBar .cbBtn.join:hover { background: rgba(46,204,113,.4); }
+#callBar .cbBtn.vcMute.open { background: color-mix(in srgb, var(--accent) 24%, transparent); color: var(--accent); box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 28%, transparent); }       /* your mic is open: lit */
+#callBar .cbBtn.muted { background: rgba(255,90,90,.2); color: #ff9b9b; }
+#callBar .cbBtn.muted:hover { background: rgba(255,90,90,.34); }
+#callBar .cbBtn.leave:hover, #callBar .cbBtn.hang:hover { background: rgba(255,90,90,.42); color: #fff; }
+#callBar .cbBtn.cbRec { background: rgba(229,72,77,.26); color: #ff9b9b; animation: cbRec 2.4s ease-in-out infinite; }       /* you're sending: Stop, gently pulsing */
+@keyframes cbRec { 50% { box-shadow: 0 0 0 3px rgba(229,72,77,.18), 0 0 14px rgba(229,72,77,.35); } }
+#callBar .cbBtn[data-n]::after, #callBar .cbWatchBc::after { position: absolute; right: -4px; top: -4px; box-sizing: border-box; border-radius: 8px; border: 2px solid #12141b; background: #e5484d; }
+#callBar .cbBtn[data-n]::after { content: attr(data-n); min-width: 16px; height: 16px; padding: 0 3px; color: #fff; font: 700 9px/12px "Segoe UI", system-ui; text-align: center; }
+#callBar .cbWatchBc::after { content: ''; width: 11px; height: 11px; box-shadow: 0 0 8px #ff5a5f; }       /* someone's live: a red dot on Watch */
+.cbFly { position: absolute; left: calc(100% + 10px); top: -1px; min-width: 170px; max-width: 280px; box-sizing: border-box; padding: 10px 12px; border-radius: 14px; display: flex; flex-direction: column; gap: 5px;
+  background: rgba(14,16,23,.94); border: 1px solid var(--line); box-shadow: 0 16px 40px rgba(0,0,0,.5); backdrop-filter: blur(16px);
+  opacity: 0; transform: translateX(-6px); pointer-events: none; transition: opacity .15s, transform .15s; }       /* (opacity, not display: its words stay in the page) */
+#callBar:hover .cbFly, #callBar:focus-within .cbFly { opacity: 1; transform: none; }
+.cbName { display: flex; align-items: center; gap: 6px; font: 600 13px/1.25 "Segoe UI Variable Text", "Segoe UI", system-ui; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cbName .lock { font-size: 11px; }
+.cbLine { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cbLine em { font-style: normal; opacity: .75; }
+.cbLine.cbMic { color: var(--accent); }
+.cbLine.cbLive { color: #ffb0b0; }
+.cbPip { width: 7px; height: 7px; flex: none; border-radius: 50%; background: #ff5a5f; box-shadow: 0 0 7px #ff5a5f; }
+.cbPip.green { background: #1ed760; box-shadow: 0 0 6px #1ed760; }
 #callBar { transition: opacity .8s ease, background-color .8s ease, border-color .8s ease, backdrop-filter .8s ease; }
 #callBar .cbBtn { transition: background-color .8s ease; }
 /* no input for a while (the panel has hidden): the bar blends into the scene, still there to see and click; any input brings it back */
 body.idle #callBar:not(.hot):not(:hover):not(:focus-within) { opacity: .32; background-color: transparent; border-color: transparent; backdrop-filter: none; text-shadow: 0 1px 3px rgba(0,0,0,.7); }
 body.idle #callBar:not(.hot):not(:hover):not(:focus-within) .cbBtn:not(.off) { background-color: transparent; }
 #callBar:hover, #callBar:focus-within { transition-duration: .15s; }
-.cbSep { width: 1px; align-self: stretch; margin: 2px 0; background: var(--line); }
-.cbWatch .spdot { width: 7px; height: 7px; background: #1ed760; box-shadow: 0 0 6px #1ed760; }
-.cbWhere { display: flex; align-items: center; gap: 6px; white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
-.cbWhere .lock { font-size: 12px; }
-.cbFaces { display: flex; gap: 8px; padding: 0 2px; }
-.cbFace .face.small { width: 22px; height: 22px; }
 .cbFace { position: relative; display: inline-flex; }
 .cbFace i { position: absolute; right: -3px; top: -3px; width: 11px; height: 11px; border-radius: 50%; background: #ff6b4a; color: #fff; font: 700 8px/11px "Segoe UI", system-ui; text-align: center; font-style: normal; }
-.cbMic { font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--dim); white-space: nowrap; }
-.cbMic.live { color: #ff6b6b; }
 .cbBtn { all: unset; cursor: pointer; padding: 4px 10px; border-radius: 999px; background: rgba(255,255,255,.08); font-size: 11.5px; }
 .cbBtn:hover { background: rgba(255,255,255,.16); }
 .cbBtn.off { background: rgba(255,90,90,.35); }
@@ -832,6 +1016,27 @@ body.idle #callBar:not(.hot):not(:hover):not(:focus-within) .cbBtn:not(.off) { b
 .cbFace.muted .face { box-shadow: 0 0 0 2px #e5484d; }
 .cbMuted { position: absolute; right: -4px; bottom: -4px; width: 12px; height: 12px; border-radius: 50%; background: #e5484d; color: #fff; display: grid; place-items: center; }
 .cbMuted .ico svg { width: 8px; height: 8px; stroke-width: 3; }
+/* everyone online shows (chat.js personFace), as a button that jumps to what they share or see. In voice: a headset badge at the
+   bottom left. Not in voice: dimmed. Sharing: an outer ring (red for a broadcast, green for watch together) and a screen badge */
+#callBar .cbFace { all: unset; position: relative; display: inline-flex; border-radius: 50%; cursor: pointer; transition: opacity .15s, transform .15s; }
+#callBar .cbFace.me { cursor: default; }
+#callBar .cbFace:not(.me):hover { transform: scale(1.08); }
+#callBar .cbFace:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; }
+#callBar .cbFace.away .face { opacity: .5; filter: saturate(.4); }
+#callBar .cbFace.away:hover .face { opacity: .85; }
+#callBar .cbFace::before { content: ''; position: absolute; inset: -4px; border-radius: 50%; border: 2px solid transparent; pointer-events: none; }
+#callBar .cbFace.sharing.bc::before { border-color: #ff5a5f; box-shadow: 0 0 8px rgba(255,90,95,.6); animation: cbShare 2.4s ease-in-out infinite; }
+#callBar .cbFace.sharing.lv::before { border-color: #1ed760; box-shadow: 0 0 8px rgba(30,215,96,.5); animation: cbShare 2.4s ease-in-out infinite; }
+@keyframes cbShare { 50% { opacity: .55; } }
+.cbCall, .cbShare { position: absolute; width: 12px; height: 12px; border-radius: 50%; display: grid; place-items: center; color: #fff; box-shadow: 0 0 0 1.5px #12141b; }
+.cbCall { left: -4px; bottom: -4px; background: #2fb36b; }
+.cbShare { right: -5px; top: -5px; background: #ff5a5f; }
+.cbFace.lv .cbShare { background: #1ed760; color: #06110d; }
+.cbCall .ico svg, .cbShare .ico svg { width: 8px; height: 8px; stroke-width: 3; }
+.cbMuted { box-shadow: 0 0 0 1.5px #12141b; }
+.cbWhere { position: absolute; right: -4px; bottom: -4px; width: 12px; height: 12px; border-radius: 50%; background: #3a3f4d; color: #fff; display: grid; place-items: center; box-shadow: 0 0 0 1.5px #12141b; }       /* the tab they're on, where Muted goes */
+.cbWhere .ico svg { width: 8px; height: 8px; stroke-width: 2.6; }
+.cbFace.sharing i { right: auto; left: -3px; }       /* (the "!" of a bad connection moves aside for the screen badge) */
 .cbBtn.leave .ico { opacity: .8; }
 /* chat over the video */
 #chatOverlay { position: fixed; left: 28px; bottom: 18px; width: min(440px, 40vw); z-index: 30; pointer-events: none; display: flex; flex-direction: column; gap: 6px; transition: opacity .22s ease; }
@@ -871,7 +1076,12 @@ body.idle #callBar:not(.hot):not(:hover):not(:focus-within) .cbBtn:not(.off) { b
 /* it fades a few seconds after the mouse stops (body.coAwake, chat.js), on its own (not with Drift's bars), never while the box is open */
 body.surfing.inHub #coBtn { display: grid; opacity: 0; pointer-events: none; transition: opacity .5s; }
 body.surfing.inHub.coAwake #coBtn, body.surfing.inHub #chatOverlay.typing #coBtn { opacity: 1; pointer-events: auto; transition-duration: .15s; }
-body.surfing.inHub #coList, body.surfing.inHub #coVote { margin-left: 40px; }       /* the messages line up with the box, right of the button */
+/* the messages sit right of the button, their last one level with it; opening the box lifts them up above it */
+body.surfing.inHub #coList, body.surfing.inHub #coVote { margin-left: 40px; }
+body.surfing.inHub #coRow { position: relative; padding-left: 40px; height: auto; interpolate-size: allow-keywords; transition: height .25s cubic-bezier(.22, 1, .36, 1), margin-top .25s cubic-bezier(.22, 1, .36, 1); }
+body.surfing.inHub #chatOverlay:not(.typing) #coRow { height: 0; margin-top: -6px; }       /* (-6: the overlay's gap, so the last message's bottom meets the button's) */
+body.surfing.inHub #coBtn { position: absolute; left: 0; bottom: 0; }
+body.surfing.inHub #chatOverlay.typing #coBtn { bottom: calc(50% - 17px); }       /* beside the box, centred on it */
 #coWhere { color: var(--dim); font-size: 12px; white-space: nowrap; }
 #coInput { flex: 1; width: auto; border: 0; background: transparent; padding: 4px 2px; }
 #coInput::-webkit-search-cancel-button { display: none; }
@@ -1039,15 +1249,15 @@ body.surfing.inHub #coList, body.surfing.inHub #coVote { margin-left: 40px; }   
 /* over a page in Surf, or a broadcast: out of the way (it sat on sites' logos), back only with that view's own bar when the
    mouse reaches the top edge, in its usual place at the left, level with it. Hovered or focused, it stays. Surf's bar, centred,
    narrows to leave it room on both sides (--cbw, its width: drawCall in chat.js) */
-body.surfing #callBar, body.bc #callBar { top: 14px; min-height: 36px; box-sizing: border-box; transition: opacity .3s ease, transform .3s ease; }
+body.surfing #callBar, body.bc #callBar { top: 14px; transition: opacity .3s ease, transform .3s ease; }
 body.surfing:has(#callBar.on) #surfBar { width: min(1040px, calc(100vw - 2 * (var(--cbw, 0px) + 36px))); }       /* (36: its 18px from the edge, and as much again between them) */
-body.surfing:not(:has(#surfBar.show)) #callBar:not(:hover):not(:focus-within) { opacity: 0; transform: translateY(-14px); pointer-events: none; }
-body.bcfull:not(.surfing):not(:has(#bcBar.show, #bcBar.hint, #bcBar:hover, #bcBar:focus-within)) #callBar:not(:hover):not(:focus-within) { opacity: 0; transform: translateY(-14px); pointer-events: none; }       /* (over the grid it stays: there's room for it) */
+body.surfing:not(:has(#surfBar.show)) #callBar:not(:hover):not(:focus-within) { opacity: 0; transform: translateX(-16px); pointer-events: none; }       /* (the rail slides off to the left) */
+body.bcfull:not(.surfing):not(:has(#bcBar.show, #bcBar:hover, #bcBar:focus-within)) #callBar:not(:hover):not(:focus-within) { opacity: 0; transform: translateX(-16px); pointer-events: none; }       /* (over the grid it stays: there's room for it) */
 /* the Share tab: who's watching you */
 #bcMineWho { display: flex; flex-direction: column; gap: 6px; margin-top: -4px; }
 #bcMineWho .bcEmpty { margin: 0; }
 .bcViewer { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
-.bcViewer > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bcViewer > span:not(.face) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bcViewer em { font-style: normal; color: var(--dim); }
 .bcViewer .btn { padding: 4px 10px; font-size: 12px; flex: none; }
 #bcMineStats { display: block; font-size: 12px; line-height: 1.5; color: var(--dim); margin-top: 4px; }

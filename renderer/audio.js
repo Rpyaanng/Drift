@@ -176,11 +176,16 @@
   ctx.createMediaElementSource(player).connect(fileBus);
   let cur = -1, curPath = '', url = '', loadSeq = 0, errors = 0;
   const title = (p) => p.split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
+  // what's playing, for the panel, the Media screen and friends listening: the song's own title and artist from its tags
+  // (main.js song-tags), the file's name until they're read or when it has none
+  let curTags = null;
+  const sayNow = () => api.now({ title: (curTags && curTags.title) || title(curPath), artist: (curTags && curTags.artist) || '', index: cur });
   async function playIndex(i) {
     const pl = S.music.playlist; if (!pl.length) return;
     i = ((i % pl.length) + pl.length) % pl.length;
     const seq = ++loadSeq, p = pl[i];
-    cur = i; curPath = p; api.now({ title: title(p), index: i });
+    cur = i; curPath = p; curTags = null; sayNow();
+    api.songTags(p).then((t) => { if (seq === loadSeq && t && (t.title || t.artist)) { curTags = t; sayNow(); } }).catch(() => {});
     try {
       const { data, mime } = await api.readFile(p);
       if (seq !== loadSeq) return;
@@ -355,7 +360,7 @@
     // files
     const wantFiles = m.source === 'files' && m.playing && m.playlist.length > 0 && !theirs();
     if (curPath && !m.playlist.includes(curPath)) { player.pause(); player.removeAttribute('src'); player.load(); cur = -1; curPath = ''; api.now({ title: '', index: -1 }); }
-    else if (curPath) { const i = m.playlist.indexOf(curPath); if (i !== cur) { cur = i; api.now({ title: title(curPath), index: i }); } }
+    else if (curPath) { const i = m.playlist.indexOf(curPath); if (i !== cur) { cur = i; sayNow(); } }
     if (wantFiles) { if (!curPath) playIndex(0); else if (player.paused && player.src) player.play().catch(() => {}); }
     else if (!player.paused) player.pause();
     listenToPC(hearPC());

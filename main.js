@@ -13,6 +13,7 @@ const createP2P = require('./p2p');
 const createChat = require('./chat');
 const createWeb = require('./web');
 const createUpdater = require('./updater');
+const { readTags } = require('./tags');
 
 if (process.env.DRIFT_USERDATA) app.setPath('userData', path.resolve(process.env.DRIFT_USERDATA));   // dev: a second copy with its own settings (e.g. to try sharing on one PC)
 
@@ -20,6 +21,7 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-features', 'HardwareMediaKeyHandling,WebRtcHideLocalIpsWithMdns');   // media keys must reach Spotify, not Drift; a shared web page's stream is offered on this PC's real local address
 app.commandLine.appendSwitch('disable-background-timer-throttling');
+if (process.env.DRIFT_TESTMIC) app.commandLine.appendSwitch('use-fake-device-for-media-stream');       // the microphone test's checks: Chromium's beeping stand-in
 protocol.registerSchemesAsPrivileged([{ scheme: 'drift', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);       // drift://home/, the Surf tab's own start page: see web.js
 // Surf's extensions (surf-net, uBlock Origin) are Manifest V2 on purpose: they need blocking webRequest, which V3 lacks.
 // Electron warns about that every time one loads, and the warning's link gets printed (and, from some terminals, opened in
@@ -78,12 +80,14 @@ const DEFAULTS = {
     hdr: 'auto', tone: 'hable', enc: 'auto', xq: 'auto', progress: {} },
   // watch together: internet = ask the router to let friends outside the home in; control = friends may play / pause / seek;
   // wait = pause for everyone while someone is loading; quality = picture size sent to (and asked from) friends
-  share: { name: '', internet: true, control: true, wait: true, quality: 'original', port: 47800, adblock: true, overlay: 'all' },       // overlay: whose chat messages go over what you're watching (all / unheard / off)
+  share: { name: '', internet: true, control: true, wait: true, quality: 'original', port: 47800, adblock: true, overlay: 'all', cursor: true },       // overlay: whose chat messages go over what you're watching (all / unheard / off); cursor: others see your pointer over broadcasts and a paused shared video (the hub bar's toggle)
   // voice: direct = connect straight to the others (lower delay, but they see this PC's address) instead of through the
   // hub's relay; ptt = hold a key to talk (pttKey, see VOICE_KEYS); talk = your microphone is open (closed at every start
   // unless keepMic); deaf = out of the voice room (set at every start; Join voice clears it); pin = the hub whose voice room you stay in ('' = whichever is open in
-  // the Hub tab); volumes = each person's volume, by member id
-  voice: { direct: false, ptt: false, pttKey: 'backquote', talk: false, keepMic: false, deaf: false, pin: '', volumes: {} },
+  // the Hub tab); volumes = each person's volume, by member id; mic / out = the microphone and the speakers the voice room uses
+  // ({ id, label }; id '' = Windows' default; the label finds it again if its id changes); ns = noise suppression:
+  // strong (RNNoise, renderer/noise-worklet.js) | standard (Chromium's own) | off
+  voice: { direct: false, ptt: false, pttKey: 'backquote', talk: false, keepMic: false, deaf: false, pin: '', volumes: {}, mic: { id: '', label: '' }, out: { id: '', label: '' }, ns: 'strong' },
   // broadcast (docs/plans/broadcast.md §5): quality = auto | detail (text and detail) | motion (smooth); pointers = show
   // viewers' pointers on this screen while live
   broadcast: { quality: 'auto', pointers: true, sound: false },
@@ -180,7 +184,7 @@ function loadSettings() {
 }
 const QUALITY = { original: { h: 0, kbps: 0 }, 1080: { h: 1080, kbps: 6000 }, 720: { h: 720, kbps: 3000 }, 480: { h: 480, kbps: 1200 } };
 function cleanShare(q) {
-  return { name: String(q.name || '').replace(/[\x00-\x1f<>]/g, '').slice(0, 24), internet: !!q.internet, control: !!q.control, wait: !!q.wait, adblock: !!q.adblock,
+  return { name: String(q.name || '').replace(/[\x00-\x1f<>]/g, '').slice(0, 24), internet: !!q.internet, control: !!q.control, wait: !!q.wait, adblock: !!q.adblock, cursor: q.cursor !== false,
     quality: QUALITY[q.quality] ? String(q.quality) : 'original', overlay: ['unheard', 'all', 'off'].includes(q.overlay) ? q.overlay : 'all', port: q.port >= 1024 && q.port <= 65535 ? Math.round(q.port) : DEFAULTS.share.port };
 }
 const VOICE_KEYS = { backquote: 0xc0, rctrl: 0xa3, mouse4: 0x05, mouse5: 0x06 };       // hold-to-talk keys, as Windows virtual-key codes
@@ -188,8 +192,11 @@ function cleanVoice(q) {
   const vols = Object.entries(q.volumes && typeof q.volumes === 'object' ? q.volumes : {}).filter(([id, v]) => /^(bc:)?[A-Za-z0-9_-]{6,20}$/.test(id) && isFinite(v)).slice(-200);
   return { direct: !!q.direct, ptt: !!q.ptt, pttKey: Object.hasOwn(VOICE_KEYS, q.pttKey) ? q.pttKey : 'backquote', talk: !!q.talk, keepMic: !!q.keepMic, deaf: !!q.deaf,
     pin: /^[A-Za-z0-9_-]{20,64}$/.test(String(q.pin || '')) ? String(q.pin) : '',
-    volumes: Object.fromEntries(vols.map(([id, v]) => [id, Math.max(0, Math.min(1, +v))])) };
+    volumes: Object.fromEntries(vols.map(([id, v]) => [id, Math.max(0, Math.min(1, +v))])),
+    mic: cleanDevice(q.mic), out: cleanDevice(q.out), ns: ['strong', 'standard', 'off'].includes(q.ns) ? q.ns : 'strong' };
 }
+const cleanDevice = (d) => ({ id: String((d && d.id) || '').replace(/[^\w+/=-]/g, '').slice(0, 128), label: String((d && d.label) || '').replace(/[\x00-\x1f]/g, '').slice(0, 120) });
+const voiceDevices = () => ({ mic: state.voice.mic, out: state.voice.out, ns: state.voice.ns });
 const cleanSfx = (q) => ({ on: q.on !== false, volume: unitVol(q.volume, 0.7) });
 const cleanGif = (q) => ({ key: String((q && q.key) || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 64) });
 const unitVol = (v, d) => (isFinite(v) && v !== null && v !== '' ? Math.max(0, Math.min(1, +v)) : d);
@@ -837,7 +844,7 @@ function setPaused(v) {
 function sharedMusic(video) {
   const m = state.music;
   if (m.source !== 'files' && m.source !== 'generative') return null;
-  return { on: !!m.playing && !(video && state.video.sound), src: m.source, title: m.source === 'files' ? String(nowPlaying.title || '') : '', preset: m.preset };
+  return { on: !!m.playing && !(video && state.video.sound), src: m.source, title: m.source === 'files' ? String(nowPlaying.title || '') : '', artist: m.source === 'files' ? String(nowPlaying.artist || '') : '', preset: m.preset };
 }
 function shareSnapshot() {
   const on = !remote && visWins.some((v) => showsVideo(v.key)), c = on ? cur() : null;
@@ -913,7 +920,7 @@ function onRemote(s, why) {
     return;
   }
   const was = remote, wasKey = (cur() || {}).key;
-  const mu = s.music && typeof s.music === 'object' ? { on: !!s.music.on, src: s.music.src === 'files' ? 'files' : 'generative', title: String(s.music.title || '').slice(0, 200), preset: String(s.music.preset || '').slice(0, 40) } : null;
+  const mu = s.music && typeof s.music === 'object' ? { on: !!s.music.on, src: s.music.src === 'files' ? 'files' : 'generative', title: String(s.music.title || '').slice(0, 200), artist: String(s.music.artist || '').slice(0, 200), preset: String(s.music.preset || '').slice(0, 40) } : null;
   remote = { ...s, web: null, music: mu, files: (Array.isArray(s.files) ? s.files : []).slice(0, 5000).map((f) => ({ name: path.basename(String(f.name || 'video')).slice(0, 200), size: +f.size || 0 })),
     index: Math.max(0, s.index | 0), pos: +s.pos || 0, seq: s.seq | 0 };
   vclock = { startedAt: +s.startedAt || Date.now(), pos: remote.pos, seq: remote.seq };
@@ -1297,12 +1304,39 @@ function ptrSet(id, name, m) {
   }, 40);
 }
 setInterval(() => {       // the host's own mouse over the hub's browser: the page swallows it, so ask Windows where it is
-  const me = chat ? chat.myId() : '', x = me && surfMode() === 'hub' && surfShown && ssWin ? visWins.find((y) => y.key === screenFor(surfKey)) : null;
+  const me = chat ? chat.myId() : '', x = me && state.share.cursor && surfMode() === 'hub' && surfShown && ssWin ? visWins.find((y) => y.key === screenFor(surfKey)) : null;
   if (!x || x.win.isDestroyed()) { if (me && pointers.has(me)) ptrSet(me, '', null); return; }
   if (SHOT_DIR) return;       // dev runs place it by hand
   const c = screen.getCursorScreenPoint(), b = x.win.getContentBounds();
   ptrSet(me, shareName(), { x: (c.x - b.x) / b.width, y: (c.y - b.y) / b.height });
 }, 60);
+// Where everyone's mouse is over a shared video while it's paused, as fractions of the picture, so each PC can draw the
+// others' pointers (renderer 'vptrs'). The sharing PC gathers them (its own as 'host') and passes each friend everyone's but
+// their own. Playing again, or the session ending, takes them all away.
+const vptrs = new Map();
+let vptrTimer = null, vptrShown = false;
+const vptrLive = () => vpaused() && (p2p.role() === 'host' ? p2p.count() > 0 : p2p.connected());
+function vptrShow(list) {
+  vptrShown = list.length > 0;
+  for (const v of visWins) if (!v.win.isDestroyed()) v.win.webContents.send('cmd', { type: 'vptrs', list: showsVideo(v.key) ? list : [] });
+}
+function vptrSet(id, name, m) {
+  const ok = m && typeof m === 'object' && m.x >= 0 && m.x <= 1 && m.y >= 0 && m.y <= 1 && p2p.role() === 'host' && vptrLive();
+  if (!ok && !vptrs.has(id)) return;
+  if (ok) vptrs.set(id, { id, name, x: +m.x, y: +m.y }); else vptrs.delete(id);
+  if (vptrTimer) return;
+  vptrTimer = setTimeout(() => {       // at most 25 times a second
+    vptrTimer = null;
+    const all = ptrClean([...vptrs.values()]);
+    vptrShow(all.filter((q) => q.id !== 'host'));
+    for (const peer of p2p.ids()) p2p.sendTo(peer, { t: 'ptrs', list: all.filter((q) => q.id !== peer) });
+  }, 40);
+}
+setInterval(() => {
+  if (vptrLive()) return;
+  if (vptrs.size) for (const id of [...vptrs.keys()]) vptrSet(id, '', null);       // (the host's next send is empty: friends' go too)
+  else if (vptrShown) vptrShow([]);
+}, 400);
 // The mouse moving over one of Drift's screens, told to that screen (at most 5 times a second, only while it moves): over a
 // web page the window can't see it, and the chat button over Surf (renderer/chat.js coWake) shows while it moves.
 let lastCursor = '';
@@ -1327,7 +1361,8 @@ const p2p = createP2P({
     xcoder.serve(req, res, xcSpec('share|' + req.url, c.src, q.t, QUALITY[q.q] ? q.q : 'original'));
   },
   guestCmd,
-  ptr: () => {}, ptrs: () => {},       // (pointers are the Surf stream's now)
+  ptr: (id, name, m) => vptrSet(id, name, m),       // a friend's pointer over the paused video (the Surf stream's go over the hub)
+  ptrs: (list) => { if (remote && vptrLive()) vptrShow(ptrClean(list)); },
   rtc: (id, d) => {       // setting up the stream of the music friends hear: the audio window's
     if (!d || typeof d !== 'object' || (id ? p2p.role() !== 'host' : !remote) || d.ch !== 'music') return;
     if (audioWin && !audioWin.isDestroyed()) audioWin.webContents.send('cmd', { type: 'rtc', from: id, d });
@@ -1761,6 +1796,7 @@ const CHAT_OPS = {
   setAvatar: (data) => chat.setAvatar(String(data || '').slice(0, 20000)),
   avatar: (hub, member, av) => chat.avatar(String(hub), String(member || ''), String(av || '')),
   mic: (on) => chat.setMic(!!on),
+  where: (at) => chat.setWhere(String(at || '')),       // the screen this window shows, for friends' hub bars (each window says so when it changes; the last one wins)
   // the hub open in the Hub tab: your active hub, unless one is pinned. A different active hub starts out of its voice room
   voiceHub: (hub) => { const was = activeHub(); voiceSel = String(hub || ''); if (activeHub() !== was) leaveVoice(); syncVoice(); return {}; },
   disconnect: (hub) => chat.disconnect(String(hub || '')),
@@ -1787,7 +1823,6 @@ const CHAT_OPS = {
   // Preview: your own broadcast, live and silent, in your tile: the screen window on monitor `key` may capture exactly the
   // source you're sending (the picture, no sound), once, in the next 10 s. It never leaves this PC.
   bcPreview: (key) => { const v = visWins.find((x) => x.key === key && !x.win.isDestroyed()); if (!v || !bcSource || !chat.info().bc.mine) return { ok: false }; bcPreviewFor = { wc: v.win.webContents, until: Date.now() + 10000 }; return { ok: true, src: bcSource.id }; },
-  bcCursor: (id, on) => bcCursor(String(id || ''), !!on),       // share my cursor with this broadcast (opt-in, per broadcast)
   bcHostStop: (hub, id) => chat.bcHostStop(String(hub || ''), String(id || '')),
 };
 
@@ -2041,7 +2076,7 @@ function bcOvSync(ping) {
   if (bcOvUp) {
     const pics = {};       // only the pictures it doesn't have yet: a GIF can be megabytes, and this is sent whenever a pointer moves
     for (const [id, d] of bcPics) if (d && !bcPicsSent.has(id)) { pics[id] = d; bcPicsSent.add(id); }
-    bcOv.webContents.send('bc-overlay', { list, ping: pin, msgs, pics });
+    bcOv.webContents.send('bc-overlay', { list, ping: pin, msgs, pics, accent: appAccent.a });       // (accent: pointers take the palette's colours)
   }
   if (!bcOv.isVisible() && !process.env.DRIFT_HIDDEN) bcOv.showInactive();
 }
@@ -2050,13 +2085,12 @@ function bcOvSync(ping) {
 // into a black grid of everyone broadcasting in the hub, each a still (a signed picture the broadcaster sends every 10 s) until
 // it's watched. Watch fills the screen with one; Back goes to the grid, where it plays on in its tile; with more than one up,
 // any of them can play in its tile at once. Each one watched is its own connection, set up in that screen's window
-// (renderer/app.js #bcView) from SDPs chat.js has checked. Nothing plays by itself. Your cursor is shared only with broadcasts
-// you turned "Share my cursor" on for (opt-in, per broadcast), and only from the full-screen view. ----
+// (renderer/app.js #bcView) from SDPs chat.js has checked. Nothing plays by itself. Your cursor is shared only while the hub
+// bar's cursor toggle is on (state.share.cursor, on by default), and only from the full-screen view. ----
 let bcScene = null;       // { hub, key, full (the broadcast filling the screen, or '') } while the scene is on a monitor
 const bcStreams = new Map();       // broadcast id -> { hub, bc, from, ice, policy, at, state (the connection), remote: { paused, stalled } }: each one watched
 const bcThumbs = new Map();       // broadcast id -> { img, at }: the latest still of each (others' checked by chat.js; ours from the broadcast window)
 let bcPreviewFor = null;       // { wc, until }: the screen window allowed to capture your broadcast's source for Preview (bcPreview)
-const bcShareOn = new Set();       // broadcast ids you chose to share your cursor with (forgotten when they end)
 const BC_VIEWERS = require('./hub').LIMITS.viewers;
 const bcSceneKey = () => (bcScene ? screenFor(bcScene.key) : '');
 function toBcScene(c) { if (!bcScene) return; const x = visWins.find((y) => y.key === bcSceneKey()); if (x && !x.win.isDestroyed()) x.win.webContents.send('cmd', c); }
@@ -2133,7 +2167,6 @@ function bcUnwatchOp(id) {
   return chat.bcUnwatch(id);
 }
 const bcLevel = (from) => { const v = state.voice.volumes['bc:' + from]; return isFinite(v) ? v : 1; };       // a broadcast's sound, apart from that person's voice
-function bcCursor(id, on) { if (on) bcShareOn.add(id); else bcShareOn.delete(id); pushState(); return {}; }
 // The hub's list changed: stills of broadcasts that ended go, and the scene goes when you're no longer in its hub's room
 function bcSceneCheck() {
   if (!chat) return;
@@ -2152,7 +2185,7 @@ function bcViewInfo() {
     const s = bcStreams.get(b.id), w = (I.bc.watching || []).find((x) => x.id === b.id) || {}, t = bcThumbs.get(b.id), mine = b.from === me;
     return { bc: b.id, from: b.from, mine, who: mine ? 'You' : memberName(h.id, b.from), title: b.title, kind: b.kind, audio: !!b.audio, viewers: b.viewers.length,
       crowded: !s && !mine && b.viewers.length >= BC_VIEWERS, live: !!s, state: s ? s.state : '', paused: mine ? bcPaused : !!(s && s.remote.paused), stalled: !!(s && s.remote.stalled),
-      share: bcShareOn.has(b.id), verdict: w.verdict || '', bad: !!(w.refused || w.told || w.verdict === 'mismatch'), level: bcLevel(b.from), vol: bcLevel(b.from) * mixGain().master, still: t ? t.at : 0, src: mine && bcSource ? bcSource.id : '' };
+      share: state.share.cursor, verdict: w.verdict || '', bad: !!(w.refused || w.told || w.verdict === 'mismatch'), level: bcLevel(b.from), vol: bcLevel(b.from) * mixGain().master, still: t ? t.at : 0, src: mine && bcSource ? bcSource.id : '' };
   });
   return { key: bcSceneKey(), hub: bcScene.hub, host: !!(h && h.host), full: bcScene.full, tiles };
 }
@@ -2174,7 +2207,7 @@ function onBcEvent(hub, m) {
     case 'bc-viewer': if (isMine) toBc({ t: 'viewer', id: m.id, iceServers: bcIce }); break;
     case 'bc-viewer-left': if (bcWin) toBc({ t: 'left', id: m.id }); bcHidden.delete(m.id); break;
     case 'bc-off': bcSource = null; bcClose(); break;
-    case 'bc-watch-off': bcShareOn.delete(m.bc); if (s) bcStreamEnd(m.bc, m.why === 'ended' ? `${memberName(hub, s.from)} stopped broadcasting` : ''); break;
+    case 'bc-watch-off': if (s) bcStreamEnd(m.bc, m.why === 'ended' ? `${memberName(hub, s.from)} stopped broadcasting` : ''); break;
     case 'bc-thumb': bcThumbs.set(m.bc, { img: m.img, at: Date.now() }); if (bcScene && bcScene.hub === hub) pushState(); break;
     case 'bc-sdp':
       if (isMine) toBc({ t: 'sdp', from: m.from, sdp: m.sdp });
@@ -2232,7 +2265,7 @@ function openRoom(hub, r) {
   voiceNote = '';
   voiceLive = { hub, mic: 'closed', micOk: false, speaking: [], peers: {} }; voiceUp = false;
   voiceQueue.unshift({ t: 'start', me: r.me, iceServers: r.iceServers, policy: state.voice.direct ? 'all' : 'relay', tone: !!process.env.DRIFT_TESTVOICE,
-    talk: state.voice.talk, ptt: state.voice.ptt, volumes: state.voice.volumes, master: mixGain().master });
+    talk: state.voice.talk, ptt: state.voice.ptt, volumes: state.voice.volumes, master: mixGain().master, ...voiceDevices() });
   const w = voiceWin = new BrowserWindow({ show: false, width: 240, height: 120, skipTaskbar: true, title: 'Drift voice',
     webPreferences: { preload: path.join(__dirname, 'voice-preload.js'), sandbox: true, contextIsolation: true, backgroundThrottling: false, autoplayPolicy: 'no-user-gesture-required' } });
   if (process.env.DRIFT_MUTE) w.webContents.setAudioMuted(true);
@@ -2289,6 +2322,7 @@ function applyVoice(q) {
   if (v.deaf) v.talk = false;       // not listening: not talking either
   if (v.talk !== was.talk) toVoice({ t: 'talk', on: v.talk });
   if (v.ptt !== was.ptt) toVoice({ t: 'ptt', on: v.ptt });
+  if (JSON.stringify([v.mic, v.out, v.ns]) !== JSON.stringify([was.mic, was.out, was.ns])) toVoice({ t: 'devices', ...voiceDevices() });       // an open microphone reopens with them
   for (const id of Object.keys(q.volumes || {})) if (id in v.volumes) toVoice({ t: 'volume', id, v: v.volumes[id] });
   if (v.ptt !== was.ptt || v.pttKey !== was.pttKey) pttWatch();
   if (v.talk !== was.talk || v.deaf !== was.deaf || v.pin !== was.pin) syncVoice();
@@ -2378,6 +2412,7 @@ function startTab(key) {
 // Turning a monitor on or off rebuilds every window. Each screen comes back on the panel tab it was on (Surf if the browser is
 // there), and the window that had focus gets it back, with its panel open where it was.
 const tabOf = {};       // display key -> panel tab
+const tabSeen = new WeakSet();       // windows that have said which tab they opened on
 let refocusKey = '';
 let lastSig = '';
 const displaySig = () => JSON.stringify(allDisplays().map((d) => d.bounds));
@@ -2530,12 +2565,21 @@ function patch(p) {
     else if (k === 'gif') state.gif = cleanGif(p.gif);
     else if (k === 'sfx') state.sfx = cleanSfx({ ...state.sfx, ...(p.sfx && typeof p.sfx === 'object' ? p.sfx : {}) });
     else if (k === 'mixer') state.mixer = cleanMixer({ ...state.mixer, ...(p.mixer && typeof p.mixer === 'object' ? p.mixer : {}) });
-    else if (k === 'share') { state.share = cleanShare({ ...state.share, ...(p.share || {}) }); p2p.setOptions({ wait: state.share.wait, name: shareName() }); if (chat && p.share && p.share.name !== undefined) chat.setName(shareName()); web.blockChanged(); }
+    else if (k === 'share') { state.share = cleanShare({ ...state.share, ...(p.share || {}) }); p2p.setOptions({ wait: state.share.wait, name: shareName() }); if (chat && p.share && p.share.name !== undefined) chat.setName(shareName()); web.blockChanged();
+      if (!state.share.cursor) {       // cursor sharing off: ours comes off the paused video and the Surf page now
+        vptrSet('host', '', null); if (remote && vptrLive()) p2p.send({ t: 'ptr', x: -1, y: -1 });
+        if (surfMode() === 'stream') ssOut({ t: 'ptr', x: -1, y: -1 });
+        const me = chat ? chat.myId() : ''; if (me && pointers.has(me)) ptrSet(me, '', null);
+      } }
     else if (k === 'music') {
       state.music = { ...state.music, ...p.music };
       if (p.music.nature) state.music.nature = { ...prev.music.nature, ...p.music.nature };
       if (!['generative', 'files', 'off'].includes(state.music.source)) state.music.source = prev.music.source;
-    } else if (k === 'perDisplay') state.perDisplay = { ...state.perDisplay, ...p.perDisplay };
+    } else if (k === 'perDisplay') {
+      state.perDisplay = { ...state.perDisplay, ...p.perDisplay };
+      // Mix: a video put up on one monitor goes up on every other monitor whose panel is on Media too
+      if (Object.values(p.perDisplay || {}).includes('video')) for (const v of visWins) if (tabOf[v.key] === 'media') state.perDisplay[v.key] = 'video';
+    }
     else if (k === 'subs') {       // look only; which track is showing goes through the sub-* commands
       const q = p.subs || {}, t = state.subs;
       if (isFinite(q.size)) t.size = Math.max(0.5, Math.min(2.5, +q.size));
@@ -2678,6 +2722,43 @@ ipcMain.handle('read-file', async (_e, p) => {
   if (!state.music.playlist.includes(p)) throw new Error('not in playlist');
   const buf = await fs.promises.readFile(p);
   return { data: buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength), mime: MIME[path.extname(p).toLowerCase()] || 'audio/mpeg' };
+});
+// A song's own title, artist, album and cover (tags.js), for the Media tab's tiles and the record sleeve. With no picture in the
+// file, a cover.jpg / folder.jpg (or the only picture) in its folder stands in. The picture comes back small for a tile, big for
+// the sleeve, as a data: URL. Only songs in the library or the playlist.
+const songCache = new Map();       // `${path}|${px}` -> { mtime, r }: the most recent 600
+const COVER_FILES = ['cover', 'folder', 'front', 'album', 'albumartsmall'];
+async function folderCover(file) {
+  let names = [];
+  try { names = await fs.promises.readdir(path.dirname(file)); } catch { return null; }
+  const imgs = names.filter((n) => /\.(jpe?g|png|webp)$/i.test(n)), stem = (n) => n.replace(/\.[^.]+$/, '').toLowerCase();
+  const pick = COVER_FILES.map((c) => imgs.find((n) => stem(n) === c)).find(Boolean)
+    || imgs.find((n) => /^albumart_\{.*\}_large$/.test(stem(n))) || (imgs.length === 1 ? imgs[0] : '');
+  if (!pick) return null;
+  try {
+    const full = path.join(path.dirname(file), pick);
+    if ((await fs.promises.stat(full)).size > 20e6) return null;
+    return { mime: /\.png$/i.test(pick) ? 'image/png' : /\.webp$/i.test(pick) ? 'image/webp' : 'image/jpeg', data: await fs.promises.readFile(full) };
+  } catch { return null; }
+}
+function coverUrl(pic, px) {
+  let img = nativeImage.createFromBuffer(pic.data);
+  if (img.isEmpty()) return pic.data.length < 3e6 ? `data:${pic.mime};base64,${pic.data.toString('base64')}` : '';       // a format nativeImage can't read (WebP, GIF): as it is, if it isn't huge
+  const { width, height } = img.getSize();
+  if (Math.max(width, height) > px) img = img.resize(width >= height ? { width: px, quality: 'best' } : { height: px, quality: 'best' });
+  return 'data:image/jpeg;base64,' + img.toJPEG(88).toString('base64');
+}
+ipcMain.handle('song-tags', async (_e, p, big) => {
+  p = String(p || '');
+  if (!isAudio(p) || !(state.music.playlist.includes(p) || inLib('media', p))) return null;
+  let st; try { st = await fs.promises.stat(p); } catch { return null; }
+  const px = big ? 900 : 240, key = p + '|' + px, hit = songCache.get(key);
+  if (hit && hit.mtime === st.mtimeMs) { songCache.delete(key); songCache.set(key, hit); return hit.r; }
+  const t = await readTags(p), pic = t.pic || await folderCover(p);
+  const r = { title: t.title, artist: t.artist, album: t.album, art: pic ? coverUrl(pic, px) : '' };
+  songCache.set(key, { mtime: st.mtimeMs, r });
+  if (songCache.size > 600) songCache.delete(songCache.keys().next().value);
+  return r;
 });
 ipcMain.handle('sub-cues', () => ({ seq: subInfo.seq, cues: subCues }));
 // Looks a video up online. Nothing is sent anywhere until the user presses Search: then only the title typed in the box goes out.
@@ -2838,9 +2919,19 @@ ipcMain.on('cmd', async (e, c) => {
       if (!remote || !remote.music || !['toggle', 'next', 'prev'].includes(c.do)) break;
       if (remote.ctrl) p2p.send({ t: 'cmd', a: 'music', do: c.do }); else say(`Only ${p2p.info().host || 'the host'} can control the music`);
       break;
-    case 'web-ptr': if (surfMode() === 'stream') ssOut({ t: 'ptr', x: +c.x, y: +c.y }); break;       // where this PC's mouse is over the Surf stream
+    case 'web-ptr': if (surfMode() === 'stream') ssOut(state.share.cursor ? { t: 'ptr', x: +c.x, y: +c.y } : { t: 'ptr', x: -1, y: -1 }); break;       // where this PC's mouse is over the Surf stream (-1: off it, or cursor sharing is off)
+    case 'vid-ptr': {       // where this PC's mouse is over the shared video, while it's paused (-1: off it, or cursor sharing is off)
+      const at = c.x >= 0 && state.share.cursor ? { x: +c.x, y: +c.y } : null;
+      if (p2p.role() === 'host') vptrSet('host', shareName(), at);
+      else if (remote && vptrLive()) p2p.send({ t: 'ptr', x: at ? at.x : -1, y: at ? at.y : -1 });
+      break;
+    }
     case 'web-input':       // mouse and keyboard over a friend's web page, or over our own page mirrored on another monitor
       if (!c.e || typeof c.e !== 'object') break;
+      if (!state.share.cursor && (surfMode() === 'stream' || surfMode() === 'hub')) {       // cursor sharing off: a hub's page is view-only for us
+        if (c.e.k === 'down') say('Cursor sharing is off: turn it on in the hub bar to use the page');
+        break;
+      }
       if (surfMode() === 'stream') ssOut({ t: 'in', e: c.e });       // over another hub's Surf stream: to its host
       else if (surfMode() === 'hub') { if (hubWeb && visWins.some((x) => x.win.webContents === e.sender)) hubWeb.input(c.e, true, chat.myId(), e.sender); }       // over the hub's own, on this PC
       else if (visWins.some((x) => x.win.webContents === e.sender && (x.key !== web.info().key ? state.surfMirror : web.info().gpu))) web.input(c.e, true);       // (the Surf monitor's own, when the page is drawn offscreen)
@@ -2999,6 +3090,16 @@ ipcMain.on('cmd', async (e, c) => {
       const v = visWins.find((x) => x.win.webContents === e.sender);
       if (v) tabOf[v.key] = String(c.tab || '').slice(0, 20);
       p2p.setTab(String(c.tab || ''));
+      // Mix: a window that opens on Media shows what Media is playing on the other monitors, as picking it there would have.
+      // A video: it goes up here too. Songs: Media's music screen is what's there, so a video left over from before comes down.
+      if (v && !tabSeen.has(e.sender)) {
+        tabSeen.add(e.sender);
+        const songs = !remote && state.music.source === 'files' && state.music.playlist.length > 0;
+        if (state.mode === 'mix' && tabOf[v.key] === 'media') {
+          if (songs) { if (showsVideo(v.key)) patch({ perDisplay: { [v.key]: state.prevScene && state.prevScene !== 'video' ? state.prevScene : 'aurora' } }); }
+          else if (cur() && !showsVideo(v.key) && visWins.some((w) => showsVideo(w.key))) patch({ perDisplay: { [v.key]: 'video' } });
+        }
+      }
       break;
     }       // the panel tab this PC is looking at: friends see how many are on each
     case 'next': case 'prev': case 'play-index': case 'music-seek':
@@ -3177,6 +3278,128 @@ async function runShots() {
     patch({ scene: 'aurora', overlay: 'wave', palette: 'cycle', cycleSecs: 10 }); await wait(2600); await snap('ov-wave');
     patch({ scene: 'nebula', overlay: 'halo', palette: 'aurora' }); await wait(2600); await snap('ov-halo');
     patch({ overlay: 'none', palette: 'aurora' });
+  }
+  if (process.env.DRIFT_README) {     // the README's pictures of the panel, Media's screen and the Hub (scripts/readme-shots.js), from a library in DRIFT_README
+    const dir = process.env.DRIFT_README;
+    let wc = visWins[0].win.webContents, all = [];       // (the windows are made again when the monitors or the layout change: fresh() picks them up)
+    const fresh = () => { wc = visWins[0].win.webContents; all = visWins.map((v) => v.win.webContents); };
+    const until = async (f, ms = 15000) => { for (let t = 0; t < ms; t += 250) { if (await f()) return true; await wait(250); } return !!(await f()); };
+    const hidePanel = () => fresh() || Promise.all(all.map((w) => pageRun(w, () => document.querySelector('#panel').classList.remove('show', 'open')).catch(() => {})));
+    const panelOn = async (tab) => { fresh(); wc.send('cmd', { type: 'show-panel', tab }); await wait(400); await pageRun(wc, (t) => window.appUI.setTab(t), tab); };
+    const keep = async (tab) => { fresh(); wc.send('cmd', { type: 'show-panel', tab }); await wait(900); };       // (the panel hides itself after 3.5 s without the mouse)
+    const noSelf = () => fresh() || Promise.all(all.map((w) => pageRun(w, () => { const s = document.createElement('style'); s.textContent = '.ptr.self{display:none!important}'; document.head.append(s); }).catch(() => {})));       // (this PC's real mouse, wherever it happens to be)
+    try {
+      patch({ mode: 'span', palette: 'aurora', music: { source: 'generative', preset: 'pads', playing: true }, share: { internet: false, name: 'River' }, video: { folders: [dir] } });
+      // every screen back on Scenes, with no browser open (a mouse that wandered onto Drift may have opened things)
+      fresh(); for (const w of all) await pageRun(w, () => window.appUI.setTab('scenes')).catch(() => {});
+      for (let i = 0; i < 12; i++) web.act({ do: 'close' });
+      await hidePanel(); await noSelf();
+      // Span, Mix
+      patch({ scene: 'seaside' }); await wait(4000); await snap('rd-span');
+      patch({ mode: 'mix', perDisplay: { d0: 'pines', d1: 'hyperbolic', d2: 'lake' } }); await wait(4000); await snap('rd-mix');
+      patch({ mode: 'span', scene: 'aurora' }); await wait(4000); fresh();
+      // the panel: Scenes
+      await noSelf();
+      await panelOn('scenes');
+      for (let t = 0; t < 60000; t += 2500) {       // (each tile's picture waits for its scene's shader to be built)
+        await wait(2500); await keep('scenes');
+        if (await pageRun(wc, () => [...document.querySelectorAll('.tile[data-id]')].every((e) => e.style.backgroundImage))) break;
+      }
+      await wait(800); await snap('rd-panel-scenes');
+      // Media: the library, then a song playing on Media's own screen
+      await panelOn('media'); await until(() => pageRun(wc, () => document.querySelectorAll('#vgrid .vt .th.art, #vgrid .vt img').length > 2), 20000); await wait(2000); await keep('media'); await snap('rd-panel-media');
+      const songs = listDir(dir, 'audio').videos.map((v) => v.path);
+      log.push('readme songs: ' + songs.join(', '));
+      ipcMain.emit('cmd', { sender: wc }, { type: 'play-tracks', files: songs, index: 0 });
+      await until(() => pageRun(wc, () => document.querySelector('#mediaBack').classList.contains('on') && document.querySelector('#mediaBack .mbSleeve').classList.contains('art')), 15000);
+      await wait(2500); await keep('media'); await snap('rd-media-panel');
+      await hidePanel(); await wait(2500); await snap('rd-media');
+      // a paused video, with its name over it
+      const vids = listDir(path.join(dir, 'Films'), 'video').videos.map((v) => v.path);
+      log.push('readme videos: ' + vids.join(', '));
+      if (vids.length) {
+        ipcMain.emit('cmd', { sender: wc }, { type: 'play-videos', files: vids, index: Math.max(0, vids.findIndex((v) => /Northern/.test(v))) });
+        await wait(5000); patch({ video: { paused: true } }); await wait(2500); await hidePanel(); await wait(1000); await snap('rd-video-paused');
+        ipcMain.emit('cmd', { sender: wc }, { type: 'stop-video' }); await wait(1000);
+      }
+      // Surf, on its start page
+      ipcMain.emit('cmd', { sender: wc }, { type: 'surf', do: 'new' }); await wait(10000); await hidePanel(); await wait(800); await snap('rd-surf');
+      patch({ music: { source: 'generative', preset: 'pads', playing: true } }); patch({ scene: 'nebula' });
+      await panelOn('scenes'); await wait(1500);       // (the Hub opens over whatever this screen shows: a scene)
+      // the Hub: host one, chat a little
+      await panelOn('hub'); await wait(800);
+      await pageRun(wc, () => document.querySelector('#chHost').click());
+      log.push('readme hub up: ' + await until(() => pageRun(wc, () => !document.querySelector('#chInput').disabled)));
+      for (const t of ['Movie night at 9? I found the director\'s cut', 'Put some rain on while we wait **so cosy**', 'Surf has the trailer up, come look']) { await pageRun(wc, (t) => window.chatUI.send(t), t); await wait(500); }
+      await wait(2000); await keep('hub'); await snap('rd-hub');
+      await hidePanel(); await wait(2000); await snap('rd-hubbar');
+    } catch (e) { log.push('readme error: ' + String(e && e.stack || e)); }
+    fs.writeFileSync(path.join(SHOT_DIR, 'log.txt'), log.join('\n')); quitting = true; app.quit(); return;
+  }
+  if (process.env.DRIFT_TESTCOVERS) {     // songs' own covers, titles and artists (tags.js, song-tags): in the Media tab's tiles, on the record sleeve, which leans toward the pointer (scripts/test-covers.js)
+    const dir = process.env.DRIFT_TESTCOVERS, res = {}, wc = visWins[0].win.webContents;
+    const tl = (k, v) => { res[k] = v; log.push(`covers: ${k} ${JSON.stringify(v).slice(0, 400)}`); };
+    const until = async (f, ms = 15000) => { for (let t = 0; t < ms; t += 250) { if (await f()) return true; await wait(250); } return !!(await f()); };
+    try {
+      state.video.folders = [dir]; patch({ video: { folders: [dir] } });
+      const tags = (p, big) => pageRun(wc, (p, big) => window.drift.songTags(p, big).then((t) => t && { title: t.title, artist: t.artist, album: t.album, art: t.art.slice(0, 23), artLen: t.art.length }), p, big);
+      tl('mp3', await tags(path.join(dir, 'v23.mp3'), true));
+      tl('flacSmall', await tags(path.join(dir, 's.flac'), false));
+      tl('folder', await tags(path.join(dir, 'folder', 'plain.mp3'), true));
+      tl('outside', await tags(path.join(app.getPath('temp'), 'nope.mp3'), true));
+      wc.send('cmd', { type: 'show-panel', tab: 'media' }); await wait(500);
+      await pageRun(wc, () => window.appUI.setTab('media'));       // (as clicking the tab: Media's screen too, not just its page)
+      const songs = listDir(dir, 'audio').videos.filter((v) => !/\.wav$/.test(v.path)).length;       // (the WAV has no cover, and there's no picture in its folder)
+      tl('tilesArt', await until(() => pageRun(wc, (n) => document.querySelectorAll('#vgrid .vt.song .th.art').length === n, songs), 20000));
+      tl('tiles', await pageRun(wc, () => [...document.querySelectorAll('#vgrid .vt.song')].map((t) => {
+        const th = t.querySelector('.th'), a = getComputedStyle(th, '::after');
+        return { nm: t.querySelector('.nm').textContent, sz: t.querySelector('.sz').textContent, art: th.classList.contains('art'), after: a.backgroundImage.slice(0, 20), fit: a.backgroundSize };
+      })));
+      ipcMain.emit('cmd', { sender: wc }, { type: 'play-tracks', files: [path.join(dir, 'v24.mp3'), path.join(dir, 'folder', 'plain.mp3')], index: 0 });
+      tl('nowTagged', await until(() => nowPlaying.title === 'Tëst Sóng' && nowPlaying.artist === 'The Ärtist'));
+      await pageRun(wc, () => document.querySelector('#panel').classList.remove('show', 'open'));
+      const back = () => pageRun(wc, () => {
+        const s = document.querySelector('#mediaBack .mbSleeve');
+        return { on: document.querySelector('#mediaBack').classList.contains('on'), art: s.classList.contains('art'), cover: document.querySelector('#mediaBack .mbCover').style.backgroundImage.includes('data:image/jpeg'),
+          title: document.querySelector('#mediaBack .mbTitle').textContent, artist: document.querySelector('#mediaBack .mbArtist').textContent, rotate: s.style.rotate, disc: document.querySelector('#mediaBack .mbDisc').style.rotate, gx: s.style.getPropertyValue('--gx') };
+      });
+      tl('sleeveArt', await until(async () => { const b = await back(); return b.on && b.art && b.cover; }));
+      await pageRun(wc, () => document.body.dispatchEvent(new MouseEvent('mousemove', { clientX: innerWidth - 2, clientY: 2, bubbles: true })));
+      await wait(1500);
+      tl('sleeve', await back());
+      ipcMain.emit('cmd', { sender: wc }, { type: 'play-tracks', files: [path.join(dir, 'v24.mp3'), path.join(dir, 'folder', 'plain.mp3')], index: 1 });
+      tl('nowUntagged', await until(() => nowPlaying.title === 'plain' && !nowPlaying.artist));
+      tl('folderSleeve', await until(async () => { const b = await back(); return b.art && b.cover && b.title === 'plain' && !b.artist; }));
+      tl('sleeveAfter', await back());
+    } catch (e) { tl('error', String(e && e.stack || e)); }
+    fs.writeFileSync(path.join(SHOT_DIR, 'covers.json'), JSON.stringify(res, null, 1)); fs.writeFileSync(path.join(SHOT_DIR, 'log.txt'), log.join('\n')); quitting = true; app.quit(); return;
+  }
+  if (process.env.DRIFT_TESTMIC) {     // Options' microphone test (renderer/chat.js, mic.js; scripts/test-mic.js), with Chromium's stand-in microphone: Test opens it with the chosen noise suppression and shows a level, a new suppression reopens it, Stop closes it
+    const res = {}, tl = (k, v) => { res[k] = v; log.push(`mic: ${k} ${JSON.stringify(v).slice(0, 400)}`); };
+    const need = (k, v) => { tl(k, v); if (!v) throw new Error('stopped early: ' + k); };
+    const until = async (f, ms = 10000) => { for (let t = 0; t < ms; t += 200) { if (await f()) return true; await wait(200); } return !!(await f()); };
+    const wc = visWins[0].win.webContents;
+    const info = () => pageRun(wc, () => window.chatUI.micTest());
+    const ns = async () => ((await info()) || {}).ns;
+    const loudest = async (ms) => {       // the fake microphone beeps now and then: the loudest each bar got over a while
+      const m = { raw: 0, out: 0 };
+      for (let t = 0; t < ms; t += 50) { const r = (await info()) || {}; m.raw = Math.max(m.raw, r.raw || 0); m.out = Math.max(m.out, r.out || 0); await wait(50); }
+      return { raw: +m.raw.toFixed(3), out: +m.out.toFixed(3) };
+    };
+    const click = () => pageRun(wc, () => document.querySelector('#vcTest').click());
+    try {
+      patch({ voice: { ns: 'strong' } }); await wait(300);
+      tl('idle', await info());
+      await click();
+      need('opens', await until(async () => (await ns()) === 'strong'));
+      tl('strong', { ...(await info()), max: await loudest(3000) });
+      patch({ voice: { ns: 'standard' } });
+      tl('reopened', await until(async () => (await ns()) === 'standard'));
+      tl('standard', { ...(await info()), max: await loudest(3000) });
+      await click();
+      tl('stopped', await pageRun(wc, () => ({ info: window.chatUI.micTest(), btn: document.querySelector('#vcTest').textContent, note: document.querySelector('#vcTestNote').textContent })));
+    } catch (e) { tl('error', String(e && e.stack || e)); }
+    fs.writeFileSync(path.join(SHOT_DIR, 'mic.json'), JSON.stringify(res, null, 1)); fs.writeFileSync(path.join(SHOT_DIR, 'log.txt'), log.join('\n')); quitting = true; app.quit(); return;
   }
   if (process.env.DRIFT_TESTCATS) {     // the cats as images drawn once (renderer/cats.js, scripts/test-cats.js): drawn, stacked to look as the one drawing did, asleep, and drawn again for a new palette
     const res = {}, tl = (k, v) => { res[k] = v; log.push(`cats: ${k} ${JSON.stringify(v).slice(0, 600)}`); };
@@ -3735,6 +3958,8 @@ async function runShots() {
     vlog('everyone is in the hub ' + await until(() => everyone() >= 3, 60000));
     await wait(2000);
     res0.notInVoiceAtFirst = !chat.info().call && !voiceLive && state.voice.deaf;
+    const barFaces = () => pageRun(wc, () => [...document.querySelectorAll('#callBar .cbFace')].map((f) => ({ cls: f.className, title: f.title })));       // the hub bar's people (chat.js personFace)
+    res0.facesBefore = await barFaces();
     vlog('not in voice before Join voice ' + res0.notInVoiceAtFirst);
     vlog('press Join voice ' + await barBtn('Join voice'));
     vlog('in the voice room ' + await until(() => !!chat.info().call && !!voiceLive, 30000));
@@ -3753,7 +3978,7 @@ async function runShots() {
     await wait(4000);       // sound flowing for a while, and the panel drawn
     const h = hubNow(), names = Object.fromEntries([...h.members, ...h.suspect].map((m) => [m.id, m.name]));
     Object.assign(res, {
-      names, call: chat.info().call, live: voiceLive, suspect: h.suspect, voice: h.voice, test: await vtest(),
+      names, call: chat.info().call, live: voiceLive, suspect: h.suspect, voice: h.voice, test: await vtest(), facesTalking: await barFaces(),
       panel: JSON.parse(await js(`JSON.stringify({ warns: [...document.querySelectorAll('#chHubs .warn')].map((e) => e.textContent),
         locks: Object.fromEntries([...document.querySelectorAll('#chHubs .chWho')].map((r) => [r.querySelector('.nm').textContent, (r.querySelector('.lock') || {}).title || ''])),
         note: (document.querySelector('#chHubs .vcNote') || {}).textContent || '', bar: document.querySelector('#callBar').classList.contains('on') ? document.querySelector('#callBar').innerText.replace(/\\n+/g, ' | ') : '',
@@ -4272,7 +4497,7 @@ async function runShots() {
       await tileClick('Hosty', 'Watch');
       keep('viewOn', await until(() => live(), 45000));
       await wait(3500);       // (longer than the bar stays out by itself)
-      { const v = await view(); keep('hint', { hint: v.hint, nudge: v.nudge, barOut: v.barOut }); }
+      keep('bcBarNoCursor', !/cursor/i.test(await js("document.querySelector('#bcBar').textContent")));       // (the toggle is the hub bar's now)
       const a = await view(); await wait(2000); const b = await view();
       keep('frames', { first: a.framesIn, later: b.framesIn, video: b.video, path: b.path, dtls: b.dtls, signed: b.signed, bar: b.bar, note: b.note });
       await until(() => tileOf('Hosty').verdict === 'verified', 10000);
@@ -4303,19 +4528,21 @@ async function runShots() {
       }
     }
     await step('watching');
-    // Cursors: off until you turn it on, for each broadcast
+    // Cursors: on by default; Guesty turns it off with the hub bar's toggle first, to check nothing goes while it's off
     if (role === 'guest') {
+      keep('shareDefault', tileOf('Hosty').share);
+      keep('cursorOffPressed', await btnIn('#callBar button', 'Hide cursor'));
+      await until(() => !tileOf('Hosty').share, 5000);
       for (let i = 0; i < 6; i++) { await js('window.bcTestPoint(0.25, 0.4)'); await wait(150); }
     }
     await step('pointed-off');
     if (role === 'host') keep('ptrsBeforeOptIn', (bcOvLast && bcOvLast.list.map((p) => p.id)) || []);
     await step('checked-off');
     if (role === 'guest') {
-      await btnIn('#bcBar button', 'Share my cursor');
+      keep('cursorOnPressed', await btnIn('#callBar button', 'Show cursor'));
       await until(() => tileOf('Hosty').share, 5000);
       for (let i = 0; i < 20; i++) { await js('window.bcTestPoint(0.25, 0.4)'); await wait(100); }
       keep('shareOn', tileOf('Hosty').share);
-      { const v = await view(); keep('hintGone', !v.hint && !v.nudge); }
       const h = chat.info().hubs.find((x) => x.status === 'connected');       // chat over what's being broadcast (games too): it reaches Hosty's overlay
       await chat.send(h.id, h.channels[0].id, 'hi over the game');
       const over = () => Promise.all(visWins.map((v) => pageJs(v.win.webContents, 'window.chatUI.overlay()'))).then((a) => a.flat());
@@ -4433,7 +4660,7 @@ async function runShots() {
   if (process.env.DRIFT_TESTTUNE) {     // exercise listening to music together, the same way: =host or =guest, DRIFT_TESTCODE as above. The guest's own music is off, so any sound it reports came from the host
     const role = process.env.DRIFT_TESTTUNE, codeFile = process.env.DRIFT_TESTCODE, wc = visWins[0].win.webContents, cmd = (c) => ipcMain.emit('cmd', { sender: wc }, c);
     const heard = () => { const l = lastLevels || {}; lastLevels = null; return 'loudest band=' + Math.max(0, ...(l.s || [0])); };
-    const ui = () => pageJs(wc, "JSON.stringify({ now: document.querySelector('#nowName').textContent, play: document.querySelector('#play').textContent, note: document.querySelector('#mShare').textContent.slice(0, 90) })").catch((e) => 'failed: ' + e.message);
+    const ui = () => pageJs(wc, "JSON.stringify({ now: document.querySelector('#play').dataset.now, play: document.querySelector('#play').textContent, note: document.querySelector('#mShare').textContent.slice(0, 90) })").catch((e) => 'failed: ' + e.message);
     patch({ share: { internet: false, wait: true, control: true, quality: 'original', name: role === 'host' ? 'Hosty' : 'Guesty' } });
     wc.send('cmd', { type: 'show-panel', tab: 'music' });
     if (role === 'host') {
@@ -4706,7 +4933,7 @@ async function runShots() {
     patch({ displaysOff: [] }); await wait(5000);
   }
   if (process.env.DRIFT_PANEL) {
-    log.push('spotify: ' + JSON.stringify(publicState().spotify) + ' toolbar: ' + await pageJs(visWins[0].win.webContents, "document.querySelector('#ctxTag').textContent + ' | ' + document.querySelector('#nowName').textContent"));
+    log.push('spotify: ' + JSON.stringify(publicState().spotify) + ' toolbar: ' + await pageJs(visWins[0].win.webContents, "document.querySelector('#ctxTag').textContent + ' | ' + document.querySelector('#play').dataset.now"));
     for (const tab of ['scenes', 'media', 'settings']) { visWins[0].win.webContents.send('cmd', { type: 'show-panel', tab }); await wait(tab === 'scenes' || tab === 'media' ? 6000 : 1500); await snap('panel-' + tab);
       if (tab === 'settings') log.push('updates: ' + await pageJs(visWins[0].win.webContents, "JSON.stringify({ shown: getComputedStyle(document.querySelector('#updRow')).display, button: document.querySelector('#updBtn').textContent, note: document.querySelector('#updNote').textContent, auto: document.querySelector('#autoUpdate').checked })"));
       if (tab === 'scenes') { await pageJs(visWins[0].win.webContents, "document.querySelector('#presets').scrollIntoView({ block: 'center' })"); await wait(1500); log.push('ambient: ' + await pageJs(visWins[0].win.webContents, "JSON.stringify({ top: document.querySelector('#content').scrollTop, presets: [...document.querySelectorAll('.preset')].map((b) => b.textContent + (b.classList.contains('active') ? '*' : '')) })")); await snap('panel-scenes-ambient'); } }

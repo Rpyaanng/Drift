@@ -298,6 +298,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
       const mine = c.members.find((x) => x.id === myId), want = avatarId(me.avatar || '');
       if (mine && (mine.av || '') !== want) c.wire.send({ t: 'avatar', re: 'av', data: me.avatar || '' });       // a picture chosen (or removed) while away
       if (myMic !== null) c.wire.send({ t: 'mic', on: myMic });
+      if (myWhere) c.wire.send({ t: 'where', at: myWhere });
       Object.assign(c.h, { joined: true, token: undefined, name: String(m.hub || c.h.name || 'Hub').slice(0, 40) });
       if (Array.isArray(m.addrs) && m.addrs.length && !c.h.mine) c.h.addrs = [...new Set([...m.addrs, ...c.h.addrs])].slice(0, 8);
       save(); changed();
@@ -1119,6 +1120,14 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
     myMic = on;
     for (const c of conns.values()) if (c.status === 'connected' && c.wire) c.wire.send({ t: 'mic', on });
   }
+  // Which screen this PC shows (Scenes, Media, Surf or Share; the panel says), so friends can jump to it from the hub bar.
+  let myWhere = '';
+  function setWhere(at) {
+    at = ['scenes', 'media', 'surf', 'broadcast'].includes(at) ? at : '';
+    if (myWhere === at) return;
+    myWhere = at;
+    for (const c of conns.values()) if (c.status === 'connected' && c.wire) c.wire.send({ t: 'where', at });
+  }
   function block(member, on) {
     if (on) blocked.add(member); else blocked.delete(member);
     writeJson('blocked.json', [...blocked]); changed();
@@ -1171,7 +1180,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
   }
 
   return {
-    start, stop, info, join, leave, host, unhost, setName, block, announce, setAvatar, avatar, setMic,
+    start, stop, info, join, leave, host, unhost, setName, block, announce, setAvatar, avatar, setMic, setWhere,
     setVoice, voiceSignal, voiceCert, safety, setVerified, inRoom: () => (call ? call.hub : ''), disconnect, reconnect,
     bcStart, bcUpdate, bcStop, bcHostStop, bcWatch, bcUnwatch, bcSignal, bcCert, bcThumb,
     ssSet, ssRelay, ssWatch, ssUnwatch, ssSignal, ssCert, hostedHub: hostedId,

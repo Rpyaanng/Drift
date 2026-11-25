@@ -2,17 +2,34 @@
 <html>
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; media-src 'self' file: http://127.0.0.1:*; img-src 'self' data: https://*.giphy.com; style-src 'self' 'unsafe-inline'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; media-src 'self' file: http://127.0.0.1:*; img-src 'self' data: https://*.giphy.com; style-src 'self' 'unsafe-inline'">
 <title>Drift</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div id="stage"><canvas id="c"></canvas><canvas id="vbg"></canvas><video id="v" playsinline muted></video></div>
+<div id="mediaBack" aria-hidden="true"><div class="mbOrb a"></div><div class="mbOrb b"></div><div class="mbFlash"></div><div class="mbGrain"></div>
+  <div class="mbBars"></div>
+  <div class="mbCard">
+    <div class="mbArt">
+      <div class="mbDisc"><div class="mbWaves"><i></i><i></i><i></i><i></i></div><div class="mbLabel"><i></i></div></div>
+      <div class="mbGlow"></div>
+      <div class="mbSleeve"><div class="mbRings"></div><div class="mbCover"></div><div class="mbNo"></div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M10 9.2v5.6l4.8-2.8z" fill="currentColor"/></svg></div>
+    </div>
+    <div class="mbInfo">
+      <div class="mbKicker"><span class="mbEq"><i></i><i></i><i></i></span><span class="mbKickTxt"></span></div>
+      <div class="mbTitle"></div><div class="mbArtist"></div><div class="mbNote"></div>
+      <div class="mbNext"></div>
+    </div>
+  </div>
+</div>
 <div id="subs"><div id="subText"></div></div>
+<div id="vTitle" aria-live="polite"><div class="vtKick"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1.2"/><rect x="14" y="5" width="4" height="14" rx="1.2"/></svg><span>Paused</span></div><div class="vtName"></div><div class="vtMeta"></div></div>
 <audio id="va"></audio>
 <div id="clockFace"><div class="time"><span class="hm"></span><span class="ap"></span></div><div class="rule"><i></i></div><div class="date"></div></div>
 <div id="breath"><div class="ring"></div><span></span></div>
 <div id="ptrs"></div>
+<div id="vptrs"></div>
 <div id="bcView"><div id="bcGrid"></div><div id="bcEmpty"></div><div id="bcTop"></div><div id="bcPtrs"></div><div id="bcBar" class="glass"></div></div>
 <div id="webEdge"></div>
 <div id="surfEdge"></div>
@@ -293,6 +310,29 @@
           </div>
           <div class="optCard">
             <h3>Voice</h3>
+            <div class="optRow">
+              <div class="optText"><b>Microphone</b></div>
+              <select id="vcMic" aria-label="Microphone"></select>
+            </div>
+            <div class="optRow">
+              <div class="optText"><b>Hear voices on</b><em>Where the voice room plays. Drift's other sound follows Windows.</em></div>
+              <select id="vcOut" aria-label="Speakers for voice"></select>
+            </div>
+            <div class="optRow">
+              <div class="optText"><b>Noise suppression</b><em>Strong takes out keyboards, fans, traffic and other background noise. It runs on your PC and adds about 10 ms of delay. Standard only takes out steady hum.</em></div>
+              <select id="vcNs" aria-label="Noise suppression">
+                <option value="strong">Strong</option>
+                <option value="standard">Standard</option>
+                <option value="off">Off</option>
+              </select>
+            </div>
+            <div class="optRow">
+              <div class="optText"><b>Test your microphone</b><em id="vcTestNote">See what the others would hear. Nothing is sent.</em></div>
+              <div class="micTest">
+                <div class="micMeter" id="vcMeter" aria-hidden="true"><i class="raw"></i><i class="out"></i></div>
+                <button class="btn ghost" id="vcTest">Test</button>
+              </div>
+            </div>
             <label class="chk optRow"><span class="optText"><b>Keep my microphone on between sessions</b><em>Off: your microphone is closed every time Drift starts, until you press Talk.</em></span><input type="checkbox" id="vcKeep"><i></i></label>
             <label class="chk optRow"><span class="optText"><b>Connect directly</b><em>Lower delay, but others in the voice room can see your IP address. Off: voice goes through the hub's PC so nobody learns anyone's address.</em></span><input type="checkbox" id="vcDirect"><i></i></label>
             <label class="chk optRow"><span class="optText"><b>Push to talk</b><em>After you press Talk, your mic only sends while you hold a key.</em></span><input type="checkbox" id="vcPtt"><i></i></label>
@@ -305,7 +345,7 @@
                 <option value="mouse5">Mouse forward button</option>
               </select>
             </div>
-            <p class="note optFoot">🔒 Sound is always encrypted from your PC to theirs. Drift checks every connection and shows a lock on each one it verified (end-to-end: the hub can't hear it). Connect directly applies the next time you enter a voice room.</p>
+            <p class="note optFoot">🔒 Sound is always encrypted from your PC to theirs. Drift checks every connection and shows a lock on each one it verified (end-to-end: the hub can't hear it). Connect directly applies the next time you enter a voice room. A new microphone or suppression applies at once.</p>
           </div>
           <div class="optCard">
             <h3>Sharing</h3>
@@ -501,23 +541,27 @@
   </div>
   <div id="bar">
     <div class="tabs">
-      <span class="tabGroup">
-        <button data-tab="scenes">Scenes</button>
-        <button data-tab="media" title="Your videos and music">Media</button>
-        <button data-tab="surf" title="Browse the web on this screen, in tabs">Surf</button>
-        <button data-tab="broadcast" title="Share a screen or an application with friends in your hub" hidden>Share</button>
+      <span class="tabGroup" role="group" aria-label="What this screen shows">
+        <button data-tab="scenes" title="Show a scene on this screen"><svg class="tabIco" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3.5l1.6 4.6 4.6 1.6-4.6 1.6L10 15.9l-1.6-4.6L3.8 9.7l4.6-1.6z"/><path d="M17.5 13.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></svg><span>Scenes</span></button>
+        <button data-tab="media" title="Your videos and music, on this screen"><svg class="tabIco" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M10 9.2v5.6l4.8-2.8z" fill="currentColor"/></svg><span>Media</span></button>
+        <button data-tab="surf" title="Browse the web on this screen, in tabs"><svg class="tabIco" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.6 3.8 5.6 3.8 9s-1.2 6.4-3.8 9c-2.6-2.6-3.8-5.6-3.8-9s1.2-6.4 3.8-9z"/></svg><span>Surf</span></button>
+        <button data-tab="broadcast" title="Share a screen or an application with friends in your hub, and watch theirs on this screen" hidden><svg class="tabIco" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="12.5" rx="2.2"/><path d="M8.5 20.5h7M12 17v3.5"/><path d="M9.2 12.2a4 4 0 0 1 5.6 0M7.4 10a6.5 6.5 0 0 1 9.2 0"/></svg><span>Share</span></button>
         <i class="tabInk" aria-hidden="true"></i>
       </span>
-      <button data-tab="hub" title="Your hub: chat with friends, and watch a video with them in step">Hub</button>
-      <button data-tab="settings">Settings<svg class="updIcon" id="updTabIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5"/><path d="M5 20h14"/></svg></button>
+      <i class="tabSep" aria-hidden="true"></i>
+      <span class="tabSide" role="group" aria-label="Panels">
+        <button data-tab="hub" title="Your hub: chat with friends, and watch a video with them in step (what's on screen stays)"><svg class="tabIco" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8.5" r="3.2"/><path d="M3.2 19.5a5.8 5.8 0 0 1 11.6 0"/><circle cx="17" cy="9.5" r="2.5"/><path d="M16.4 14.1a4.6 4.6 0 0 1 4.6 4.6"/></svg><span>Hub</span></button>
+        <button data-tab="settings" title="Settings (what's on screen stays)"><svg class="tabIco" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2.2"/><circle cx="9" cy="17" r="2.2"/></svg><span>Settings</span><svg class="updIcon" id="updTabIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5"/><path d="M5 20h14"/></svg></button>
+      </span>
     </div>
     <div class="quick">
+      <span class="transport" role="group" aria-label="Playback">
       <span id="ctxTag"></span>
       <button class="icon" id="prevTrack" title="Previous (←)">⏮</button>
       <button class="icon" id="play" title="Play / pause (Space)"></button>
       <button class="icon" id="nextTrack" title="Next (→)">⏭</button>
-      <span id="nowName"></span>
-      <i class="sep"></i>
+      <button class="icon" id="eject" title="Eject"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 5.5l6.5 7.5h-13z"/><rect x="5.5" y="15.5" width="13" height="2.6" rx="1"/></svg></button>
+      </span>
       <button class="icon" id="vcc" title="Subtitles on / off (S)">CC</button>
       <button class="icon" id="mixBtn" title="Volume mixer" aria-haspopup="true" aria-expanded="false"></button>
       <input type="range" id="qvol" min="0" max="1" step="0.01">
@@ -537,8 +581,10 @@
 <script src="sims.js"></script>
 <script src="surf-keys.js"></script>
 <script src="cats.js"></script>
+<script src="cursors.js"></script>
 <script src="app.js"></script>
 <script src="emoji.js"></script>
+<script src="mic.js"></script>
 <script src="chat.js"></script>
 <script src="broadcast.js"></script>
 </body>

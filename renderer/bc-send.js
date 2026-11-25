@@ -206,7 +206,7 @@
   const sendTo = (p, m) => { if (p.dc && p.dc.readyState === 'open') { try { p.dc.send(JSON.stringify(m)); } catch { /* closing */ } } };
   const tellAll = (m) => { for (const p of peers.values()) sendTo(p, m); };
 
-  // ---- pointers (§9): only from viewers who turned "Share my cursor" on. Fractions of the video frame. ----
+  // ---- pointers (§9): only from viewers whose hub bar cursor toggle is on. Fractions of the video frame. ----
   const rate = new Map();       // viewer -> { at, n, pingAt }
   function onData(p, raw) {
     if (typeof raw !== 'string' || raw.length > 512) return;

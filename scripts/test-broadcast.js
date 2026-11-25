@@ -2,8 +2,8 @@
 // (docs/plans/broadcast.md §10, Phase 8). Hosty hosts a hub and goes live from the Share tab (DRIFT_TESTBROADCAST:
 // a moving test pattern stands in for the screen picked); Guesty and Third pick the Share tab, their screen turns into the
 // grid with Hosty's still on a tile, and Watch fills the screen with it. Guesty presses Back (the grid again, still playing
-// on the same connection) and Watch again. Guesty's cursor goes nowhere until Guesty turns "Share my cursor" on for that
-// broadcast; then it reaches Hosty's pointer overlay and Third's view. Hosty switches source (nobody drops), pauses and
+// on the same connection) and Watch again. With the hub bar's cursor toggle off, Guesty's cursor goes nowhere; turned
+// back on, it reaches Hosty's pointer overlay and Third's view. Hosty switches source (nobody drops), pauses and
 // resumes; Third presses Stop watching in the view's bar (back to the grid). Guesty goes live too, and Third plays both in
 // the grid side by side, fills the screen with one and goes Back. Hosty stops, and Guesty's tile goes. Sound (§8): Hosty goes live with Sound on while a
 // quiet 1 kHz tone plays from another program (about -50 dBFS, so barely audible), and the viewers get that tone, in
@@ -101,11 +101,10 @@ function check(mode, R) {
   const so = H.soundOff || {};
   ok(so.helper === false && so.hub === false && so.live === 'off' && so.sending === false, `${mode}: Hosty turns Sound off while live: the helper stops, and the hub hears of it (${JSON.stringify(so)})`);
   ok(so.sameConn, `${mode}: ...without anyone watching reconnecting`);
-  ok(Array.isArray(H.ptrsBeforeOptIn) && H.ptrsBeforeOptIn.length === 0, `${mode}: before Guesty turns "Share my cursor" on, no pointer reaches Hosty`);
-  const hi = G.hint || {};
-  ok(/Share my cursor/.test(hi.hint || '') && /Hosty/.test(hi.hint) && hi.nudge && hi.barOut, `${mode}: once the picture arrives, Guesty's bar stays out with a note pointing at "Share my cursor" (${JSON.stringify(hi)})`);
-  ok(G.hintGone, `${mode}: ...and it goes as soon as Guesty turns sharing on`);
-  ok(G.shareOn && H.overlayGot, `${mode}: Guesty turns it on, and Guesty's pointer reaches Hosty's overlay`);
+  ok(G.bcBarNoCursor, `${mode}: the full-screen view's bar has no cursor button (it's the hub bar's)`);
+  ok(G.shareDefault === true, `${mode}: cursor sharing is on from the start`);
+  ok(G.cursorOffPressed && Array.isArray(H.ptrsBeforeOptIn) && H.ptrsBeforeOptIn.length === 0, `${mode}: Guesty turns it off in the hub bar, and no pointer reaches Hosty`);
+  ok(G.cursorOnPressed && G.shareOn && H.overlayGot, `${mode}: Guesty turns it on again, and Guesty's pointer reaches Hosty's overlay`);
   const at = H.overlayAt || {};
   ok(Math.abs(at.x - 0.25) < 0.02 && Math.abs(at.y - 0.4) < 0.02, `${mode}: ...at the right spot (${at.x}, ${at.y})`);
   ok(!!H.overlayRect && H.overlayRect.width > 0 && H.overlayProtected, `${mode}: the overlay sits over the screen being shown (${JSON.stringify(H.overlayRect)})`);

@@ -129,32 +129,24 @@ vec3 overlay(vec3 col, vec2 uv, vec2 p){
   float px = uView.w / uRes.y;                           // one pixel, in scene units
   float W = uAspect * 0.5, glowB = 1.0 + 0.6 * uBeat;
   if (uOverlay < 1.5){
-    // Spectrum: rounded glass bars mirrored out from the middle (bass in the centre), peak caps that hang then fall,
-    // a rippled reflection beneath, and their light spilling up into the scene
-    float N = 40.0, base = 0.06, H = 0.27;
-    float m = abs(p.x) / W, bi = floor(m * N), fc = (bi + 0.5) / N;
-    float cellW = W / N, lx = (fract(m * N) - 0.5) * cellW, hw = cellW * 0.3;
-    float f = fc * 0.8, v = ovSpec(f), pk = ovPeak(f);
-    float h = 0.006 + v * H, ly = uv.y - base;
-    float e = ovEnergy(0.0, 0.3);
-    col *= 1.0 - 0.3 * smoothstep(0.32, 0.0, uv.y);    // a soft shade behind the bars so they read on bright scenes
-    col += pal(0.55) * exp(-uv.y * 7.0) * e * 0.35 * glowB;                       // light spill
-    vec3 bc = pal(0.35 + 0.6 * clamp(ly / H, 0.0, 1.0)) * (0.9 + 0.8 * v);
-    float d = ovBox(vec2(lx, ly), hw, h), a = smoothstep(px, -px, d);
-    col = mix(col, bc * 0.8, a * 0.55);                                              // a see-through fill
-    vec3 oc = pal(0.4 + 0.6 * clamp(ly / H, 0.0, 1.0)) * (1.3 + 0.8 * v);            // and a glowing outline round each bar
-    col = mix(col, oc, smoothstep(px * 1.6, px * 0.4, abs(d)) * 0.95);
-    col += oc * exp(-abs(d) * 220.0) * 0.35 * (0.5 + v) * glowB;
-    col += bc * exp(-max(d, 0.0) * 70.0) * 0.12 * (0.3 + v) * glowB;
-    float cy = 0.006 + pk * H + 0.007, dc = ovBox(vec2(lx, uv.y - base - cy), hw, max(px * 2.4, 0.003));
-    vec3 capC = pal(0.95) * 1.2;
-    col = mix(col, capC, smoothstep(px, -px, dc) * smoothstep(0.03, 0.1, pk) * 0.9);
-    col += capC * exp(-max(dc, 0.0) * 160.0) * 0.18 * smoothstep(0.03, 0.1, pk);
-    float ry = base - uv.y - 0.004;                      // reflection, rippling as if on water
-    if (ry > 0.0){
-      float rl = lx + sin(ry * 260.0 - uTime * 2.4) * 0.0018 * (ry / 0.06);
-      float dr = ovBox(vec2(rl, ry), hw, h * 0.55);
-      col = mix(col, bc * 0.55, smoothstep(px * 3.0, -px, dr) * exp(-ry * 28.0) * 0.5);
+    // Spectrum: the same skyline as Media's own screen (style.css #mediaBack .mbBars): 64 bars rising from the bottom edge,
+    // mirrored out from the middle (bass in the centre), each a gradient from the palette's third colour to a lightened
+    // fourth, see-through and fading out upward, a little brighter on the beat
+    float N = 32.0, H = 0.24, padW = W * 0.97;          // 32 bars a side, 24% of the height, a 1.5% margin at each edge
+    float m = abs(p.x) / padW;
+    if (m < 1.0){
+      float bi = floor(m * N), cellW = padW / N;
+      float lx = (fract(m * N) - 0.5) * cellW, hw = max(cellW * 0.5 - px * 1.5, px * 0.5);       // a 3px gap between bars
+      float v = clamp((ovSpec(2.0 * bi / 63.0) + ovSpec((2.0 * bi + 1.0) / 63.0)) * 0.5, 0.0, 1.0);   // two bands to a bar
+      float h = (0.02 + 0.98 * v) * H, ly = uv.y;
+      float r = min(px * 3.0, hw);                                                   // rounded top corners
+      vec2 q = vec2(abs(lx), abs(ly - (h - r) * 0.5)) - vec2(hw, (h + r) * 0.5) + r;  // a box from y=-r to h
+      float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+      float am = max(max(uC2.r, uC2.g), max(uC2.b, 0.001));
+      vec3 acc = am < 0.6 ? min(uC2 * 0.6 / am, 1.0) : uC2;                         // Drift's accent (app.js accentHex)
+      vec3 bc = mix(acc, mix(uC3, vec3(1.0), 0.2), clamp(ly / h, 0.0, 1.0));
+      float fadeUp = 1.0 - clamp((ly - 0.1 * H) / (0.9 * H), 0.0, 1.0);
+      col = mix(col, bc, smoothstep(px * 0.5, -px * 0.5, d) * fadeUp * (0.42 + 0.12 * uBeat));
     }
   } else if (uOverlay < 2.5){
     // Waveform: a silk ribbon of three strands across the middle, tapering into the scene at both ends,
