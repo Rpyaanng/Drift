@@ -1591,16 +1591,49 @@ function mediaRefused(hub, m) {
 }
 // Playing something of your own while watching someone else's: leave theirs (it isn't joined again), then share yours.
 async function mediaOwn() { if (remote) { mediaTried = joinedCode; await p2p.stop(); } }
-// Something picked to play (`go` plays it here). With nothing else on in the hub, or no hub, it plays and is shared now.
-// While someone else's is on, the hub asks everyone first; the pick waits (mediaPending) and plays only if the vote passes.
+// Something picked to play (`go` plays it here). With no hub it just plays. Online in a hub, the window it was picked in asks
+// first (mediaChoose): play it just here, share it to the hub, or never mind. Shared with nothing else on (or this PC's own on),
+// it plays and is shared now; while someone else's is on, the hub asks everyone first: the pick waits (mediaPending) and plays
+// only if the vote passes. Played just here, it isn't shared, and nothing put on in the hub pulls this PC away from it
+// (mediaPrivate) until it shares something, joins a share itself, or stops the video.
 let mediaPending = null, mediaBusy = false;       // mediaPending: { hub, go }, this PC's pick, waiting on its vote; mediaBusy: putting a pick on now
-async function mediaPlay(title, go) {
-  const now = async () => { mediaBusy = true; try { await mediaOwn(); await go(); await mediaShare(); } finally { mediaBusy = false; } };
+let mediaPrivate = '';       // the hub whose stream this PC is keeping out of, playing something of its own just here
+const mediaAsks = new Map();       // id → resolve, for the questions out in a window (answered by its 'media-choice')
+function mediaChoose(wc, o) {
+  if (!wc || wc.isDestroyed()) return Promise.resolve('share');       // (nowhere to ask: as before the question, it's shared)
+  const id = crypto.randomBytes(6).toString('hex');
+  return new Promise((resolve) => {
+    mediaAsks.set(id, resolve);
+    wc.send('cmd', { type: 'media-ask', id, ...o });
+    wc.once('destroyed', () => { if (mediaAsks.delete(id)) resolve('cancel'); });
+  });
+}
+async function mediaPlay(title, go, from) {
+  const now = async () => { mediaBusy = true; try { mediaPrivate = ''; await mediaOwn(); await go(); await mediaShare(); } finally { mediaBusy = false; } };
   const h = mediaHub(), t = mediaTop(h);
-  if (!h || !t || t.from === chat.myId() || (p2p.role() === 'host' && liveHub === h.id)) return now();
+  if (!h) return now();
+  const me = chat.myId(), hosting = p2p.role() === 'host' && liveHub === h.id, theirs = t && t.from !== me && !hosting;
+  const who = theirs ? (h.members.find((m) => m.id === t.from) || {}).name || 'Someone' : '';
+  const choice = await mediaChoose(from, {
+    title, hub: h.name || 'the hub', vote: !!theirs, hosting,
+    on: theirs ? `${who}'s ${t.title || 'pick'}` : '',
+  });
+  if (choice === 'private') {
+    mediaBusy = true;
+    try {
+      mediaPrivate = h.id;
+      const top = mediaTop(h); if (top) mediaTried = top.code;       // (what's on now isn't joined again by itself)
+      if (p2p.role() === 'host') { liveHub = ''; await p2p.stop(); }       // ours was on the stream: it comes off
+      await mediaOwn(); await go();
+    } finally { mediaBusy = false; }
+    return;
+  }
+  if (choice !== 'share') return;
+  const hs = mediaHub(), ts = mediaTop(hs);       // (looked at again: the question may have been up a while)
+  if (!hs || !ts || ts.from === me || (p2p.role() === 'host' && liveHub === hs.id)) return now();
   if (mediaPending) { say('Your vote is still going'); return; }
-  mediaPending = { hub: h.id, go: now };       // (set before asking: the result can arrive right behind the answer)
-  const r = await chat.mediaAsk(h.id, title);
+  mediaPending = { hub: hs.id, go: now };       // (set before asking: the result can arrive right behind the answer)
+  const r = await chat.mediaAsk(hs.id, title);
   if (r.error || r.free) { mediaPending = null; if (r.error) say(r.error); else await now(); }
 }
 const mediaName = (f) => path.basename(String(f || '')).replace(/\.[^.]+$/, '');
@@ -1645,6 +1678,7 @@ function mediaCheck() {
     return;
   }
   const h = mediaHub(), t = mediaTop(h);
+  if (h && mediaPrivate === h.id) return;       // playing something just here: the hub's stream waits until this PC comes back to it
   if (!t || t.from === me || t.code === mediaTried || (role === 'guest' && t.code === joinedCode)) return;
   mediaTried = t.code; joinedCode = t.code; mediaIn = h.id;
   const go = () => p2p.join(t.code, shareName()).then((r) => { if (!r.ok) say(r.error); });
@@ -2689,12 +2723,12 @@ ipcMain.on('cmd', async (e, c) => {
     case 'add-files': {
       const r = await dialog.showOpenDialog(parent, { title: 'Add music', properties: ['openFile', 'multiSelections'],
         defaultPath: app.getPath('music'), filters: [{ name: 'Audio', extensions: AUDIO_EXT.map((x) => x.slice(1)) }] });
-      if (!r.canceled && r.filePaths.length) await mediaPlay(mediaName(r.filePaths[0]), () => addTracks(r.filePaths));
+      if (!r.canceled && r.filePaths.length) await mediaPlay(mediaName(r.filePaths[0]), () => addTracks(r.filePaths), e.sender);
       break;
     }
     case 'add-folder': {
       const r = await dialog.showOpenDialog(parent, { title: 'Add a music folder', properties: ['openDirectory'], defaultPath: app.getPath('music') });
-      if (!r.canceled) { const out = []; scanFolder(r.filePaths[0], out); if (out.length) await mediaPlay(path.basename(r.filePaths[0]), () => addTracks(out)); }
+      if (!r.canceled) { const out = []; scanFolder(r.filePaths[0], out); if (out.length) await mediaPlay(path.basename(r.filePaths[0]), () => addTracks(out), e.sender); }
       break;
     }
     case 'pick-video': {
@@ -2702,16 +2736,17 @@ ipcMain.on('cmd', async (e, c) => {
         defaultPath: app.getPath('videos'), filters: [{ name: 'Video and music', extensions: [...new Set([...VIDEO_EXT, ...AUDIO_EXT])].map((x) => x.slice(1)) }, { name: 'Video', extensions: VIDEO_EXT.map((x) => x.slice(1)) }, { name: 'Music', extensions: AUDIO_EXT.map((x) => x.slice(1)) }] });
       if (r.canceled || !r.filePaths.length) break;
       const vids = r.filePaths.filter(isVideo), songs = r.filePaths.filter((f) => !isVideo(f) && isAudio(f));
-      if (vids.length) await mediaPlay(mediaName(vids[0]), () => setVideos(vids, c.key));      // playing your own video leaves a friend's session, and shares it into your hub
+      if (vids.length) await mediaPlay(mediaName(vids[0]), () => setVideos(vids, c.key), e.sender);      // playing your own video leaves a friend's session, and shares it into your hub
       else if (songs.length) await mediaPlay(mediaName(songs[0]), () => {
         showVisualizer();
         patch({ music: { playlist: songs, source: 'files', playing: true } });
         if (audioWin && !audioWin.isDestroyed()) audioWin.webContents.send('cmd', { type: 'play-index', index: 0 });
-      });
+      }, e.sender);
       break;
     }
     // ---- watch together ----
     case 'share-start': {
+      mediaPrivate = '';
       const want = chat ? await shareHub(String(c.hub || '')) : '', h = want && chat.info().hubs.find((x) => x.id === want), t = mediaTop(h);
       if (t && t.from !== chat.myId()) {       // someone else's is on there: ask everyone, as picking something does
         if (mediaPending) { say('Your vote is still going'); break; }
@@ -2810,7 +2845,7 @@ ipcMain.on('cmd', async (e, c) => {
       else if (surfMode() === 'hub') { if (hubWeb && visWins.some((x) => x.win.webContents === e.sender)) hubWeb.input(c.e, true, chat.myId(), e.sender); }       // over the hub's own, on this PC
       else if (visWins.some((x) => x.win.webContents === e.sender && (x.key !== web.info().key ? state.surfMirror : web.info().gpu))) web.input(c.e, true);       // (the Surf monitor's own, when the page is drawn offscreen)
       break;
-    case 'share-join': { joinedCode = mediaTried = String(c.code || ''); const r = await p2p.join(c.code, shareName()); if (!r.ok) say(r.error); break; }
+    case 'share-join': { mediaPrivate = ''; joinedCode = mediaTried = String(c.code || ''); const r = await p2p.join(c.code, shareName()); if (!r.ok) say(r.error); break; }
     case 'share-copy': if (p2p.info().code && !p2p.info().settling) { clipboard.writeText(p2p.info().code); say('Invite code copied — send it to your friend'); } break;
     case 'share-paste': e.sender.send('cmd', { type: 'share-code', code: clipboard.readText().trim().slice(0, 300) }); break;
     case 'xc-started': if (c.ms > 0) xcLead = Math.round(Math.max(1500, Math.min(7000, Math.max(c.ms * 1.25 + 300, xcLead * 0.8)))); break;      // how long a stream took to show its first picture
@@ -2855,7 +2890,7 @@ ipcMain.on('cmd', async (e, c) => {
         showVisualizer();
         patch({ music: { playlist: files, source: 'files', playing: true } });
         if (audioWin && !audioWin.isDestroyed()) audioWin.webContents.send('cmd', { type: 'play-index', index: Math.max(0, Math.min(files.length - 1, c.index | 0)) });
-      });
+      }, e.sender);
       break;
     }
     case 'show-viz': showVisualizer(); break;       // an Ambient preset or another music source was chosen
@@ -2897,10 +2932,11 @@ ipcMain.on('cmd', async (e, c) => {
     case 'play-videos': {
       const files = (c.files || []).filter((f) => typeof f === 'string' && isVideo(f) && inLibrary(f));
       if (!files.length) break;
-      await mediaPlay(mediaName(files[c.index | 0] || files[0]), () => setVideos(files, c.key, Math.max(0, Math.min(files.length - 1, c.index | 0))));
+      await mediaPlay(mediaName(files[c.index | 0] || files[0]), () => setVideos(files, c.key, Math.max(0, Math.min(files.length - 1, c.index | 0))), e.sender);
       break;
     }
     case 'stop-video':
+      mediaPrivate = '';       // (back on the hub's stream: the next thing put on there pulls this PC in)
       if (remote) { p2p.stop(); break; }       // stopping a friend's video means leaving their session
       noteProgress();
       if (state.mode === 'mix') { const pd = { ...state.perDisplay }; pd[c.key] = state.prevScene || 'aurora'; state.perDisplay = pd; if (state.scene === 'video') state.scene = state.prevScene || 'aurora'; pushState(); saveSoon(); }
@@ -2952,6 +2988,11 @@ ipcMain.on('cmd', async (e, c) => {
     case 'accent': {       // the windows' accent (the palette's main colour, renderer/app.js setAccent): Surf's start page takes it
       const hex = (x) => (/^#[0-9a-f]{6}$/i.test(String(x)) ? String(x).toLowerCase() : '');
       if (hex(c.a) && hex(c.b)) appAccent = { a: hex(c.a), b: hex(c.b) };
+      break;
+    }
+    case 'media-choice': {       // the answer to a pick's question (mediaChoose): 'private', 'share' or 'cancel'
+      const done = mediaAsks.get(String(c.id || ''));
+      if (done) { mediaAsks.delete(String(c.id)); done(['private', 'share'].includes(c.choice) ? c.choice : 'cancel'); }
       break;
     }
     case 'tab-focus': {       // the panel tab a window is on: kept for a rebuild, and friends see how many are on each
@@ -3545,7 +3586,7 @@ async function runShots() {
     chat._fromHub(hubId, { t: 'live-no', why: 'reach', who: ['Ben'] });
     const stopped = await until(() => p2p.info().role === 'off' && !!publicState().mediaSolo);
     wc.send('cmd', { type: 'show-panel', tab: 'media' }); await wait(600);
-    tl('mediaRefused', { stopped, note: await pageRun(wc, () => document.querySelector('#mShare').textContent), toast: await pageRun(wc, () => document.querySelector('#toast').textContent) });
+    tl('mediaRefused', { stopped, note: await pageRun(wc, () => document.querySelector('#mShare').textContent), toast: lastToast });       // (what say() sent: a window shows it only if it's the middle one or its panel is open)
     // Enter over the hub's Surf page, pressed on this PC (web.js "Enter"): the page's while a text box in it is selected, the quick
     // box once nothing is. (A member's goes the same way, over the stream: scripts/test-surf-stream.js.)
     {
@@ -3752,6 +3793,15 @@ async function runShots() {
     const card = () => js('window.chatUI.vote()'), click = (label) => js(`window.chatUI.voteClick(${JSON.stringify(label)})`);
     const untilA = async (f, ms = 30000) => { for (let t = 0; t < ms; t += 250) { if (await f()) return true; await wait(250); } return false; };
     const asked = () => untilA(async () => { const c = await card(); return !!c && c.btns.includes('Switch'); }, 30000);
+    // the question a pick in a hub asks first (askMedia in app.js): what it says, then the button labelled `label` pressed
+    const pickBox = () => pageRun(wc, () => { const c = document.querySelector('#confirm'); return c.classList.contains('on') ? { title: document.querySelector('#confirmTitle').textContent, note: document.querySelector('#confirmNote').textContent, btns: [...c.querySelectorAll('.btn')].filter((b) => b.offsetParent).map((b) => b.textContent) } : null; });
+    const answer = async (label) => {
+      let box = null;
+      if (!(await untilA(async () => !!(box = await pickBox()), 10000))) return null;
+      box.role = p2p.role();       // (before answering: nothing is shared yet)
+      await pageRun(wc, (l) => { const b = [...document.querySelectorAll('#confirm .btn')].find((x) => x.offsetParent && x.textContent === l); if (b) b.click(); }, label);
+      return box;
+    };
     const surf = (d) => ipcMain.emit('cmd', { sender: wc }, { type: 'surf', do: d });       // as the Surf tab does
     tl('picking a video with no hub plays it here only', (play('a.mp4'), await wait(1500), p2p.role() === 'off'));
     if (role === 'host') {
@@ -3759,7 +3809,9 @@ async function runShots() {
       tl('hub up', await until(() => !!hubNow()));
       fs.writeFileSync(codeFile, (await chat.invite(hubNow().id)).code || '');
       play('a.mp4');
-      tl('with nothing on, picking a video shares it straight away', await until(mineOn));
+      const first = await answer('Share to hub');
+      tl('picking in a hub asks first: just me, share, or cancel', !!first && /a/.test(first.title) && JSON.stringify(first.btns) === JSON.stringify(['Cancel', 'Just for me', 'Share to hub']) && first.role === 'off');
+      tl('with nothing on, sharing it puts it on straight away', await until(mineOn));
       tl('a friend coming online is pulled in', await until(() => p2p.count() === 1, 60000));
       step(1);
       tl('the friend picks something: a vote card comes over the video', await asked());
@@ -3774,7 +3826,9 @@ async function runShots() {
       tl('the card goes', !(await card()));
       step(3);
       song();
-      tl('picking music asks them', await untilA(async () => { const c = await card(); return !!c && c.btns.includes('Cancel'); }, 15000));
+      const ask = await answer('Ask to share');
+      tl('with theirs on, the question offers a vote', !!ask && ask.btns.includes('Ask to share') && /Guesty's b/.test(ask.note));
+      tl('picking music asks them',await untilA(async () => { const c = await card(); return !!c && c.btns.includes('Cancel'); }, 15000));
       tl('...and I keep watching meanwhile', theirsOn());
       step(3.5);
       tl('they agree: my music goes on', await until(mineOn, 40000));
@@ -3786,6 +3840,11 @@ async function runShots() {
       tl('...and they stay off', p2p.count() === 0);
       ipcMain.emit('cmd', { sender: wc }, { type: 'share-stop' });
       await until(() => p2p.role() === 'off' && !lives().length, 10000);
+      play('a.mp4');
+      tl('"Just for me" plays it here, not shared', !!(await answer('Just for me')) && (await wait(2500), p2p.role() === 'off' && !lives().length && state.video.files.some((f) => /a\.mp4$/.test(f))));
+      play('b.mp4');
+      tl('Cancel plays nothing', !!(await answer('Cancel')) && (await wait(1000), !state.video.files.some((f) => /b\.mp4$/.test(f)) && p2p.role() === 'off'));
+      ipcMain.emit('cmd', { sender: wc }, { type: 'stop-video', key: visWins[0].key });
       surf('home');
       tl('opening Surf opens the hub\'s Surf stream, not the media stream', await until(() => surfMode() === 'hub' && !!hubWeb && hubWeb.running() && surfView().open, 30000) && !web.info().has);
       tl('...and nothing is shared on the media stream', (await wait(1500), p2p.role() === 'off' && !lives().length));
@@ -3800,13 +3859,14 @@ async function runShots() {
       tl('my own Surf tabs are put away, kept', !web.info().has && !!surfKept && surfKept.urls.length === 1);
       await until(() => stepOf(other) >= 1, 40000); await wait(1500);
       play('b.mp4');
-      tl('picking a video while theirs is on asks first (I see Cancel)', await untilA(async () => { const c = await card(); return !!c && c.btns.includes('Cancel'); }, 15000));
+      tl('the question offers a vote, theirs being on', ((await answer('Ask to share')) || { btns: [] }).btns.includes('Ask to share'));
+      tl('picking a video while theirs is on asks first (I see Cancel)',await untilA(async () => { const c = await card(); return !!c && c.btns.includes('Cancel'); }, 15000));
       tl('...and nothing switches yet', theirsOn());
       step(1.5);
       await until(() => stepOf(other) >= 2, 40000);
       tl('they said no: still watching theirs', theirsOn() && !(await card()));
-      play('b.mp4');
-      tl('they said yes: mine goes on', await until(mineOn, 40000));
+      play('b.mp4'); await answer('Ask to share');
+      tl('they said yes: mine goes on',await until(mineOn, 40000));
       tl('...and they follow', await until(() => p2p.count() === 1, 40000));
       await until(() => stepOf(other) >= 3, 40000);
       tl('their music: a card asks me', await asked());
@@ -3957,6 +4017,7 @@ async function runShots() {
         if (process.env.DRIFT_TESTSS_CLIP) {
           state.video.folders = [path.dirname(process.env.DRIFT_TESTSS_CLIP)];
           ipcMain.emit('cmd', { sender: wc }, { type: 'play-videos', files: [process.env.DRIFT_TESTSS_CLIP], key: visWins[0].key });
+          await until(() => pageRun(wc, () => { if (!document.querySelector('#confirm').classList.contains('on')) return false; document.querySelector('#confirmYes').click(); return true; }), 10000);       // (in a hub, a pick asks first: Share to hub)
           tl('a video goes on the media stream meanwhile', await until(() => p2p.role() === 'host' && ((hubNow() || {}).lives || []).length === 1, 30000));
         }
         await step('media');

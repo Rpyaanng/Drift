@@ -637,6 +637,7 @@
   // question({ title, note, detail, yes, no, danger, mon }) resolves true for yes, false for anything else: no, Esc, a click outside,
   // or another question taking its place. `detail` is a line shown as it is (a link's whole address); `danger: false` makes yes a
   // plain go-ahead rather than red. Enter answers with the button that has the keyboard (yes, to begin with); chat.js uses it too.
+  // `alt` adds a third answer between no and yes: its button resolves 'alt' (a pick in a hub: play it just here).
   const confirmEl = $('#confirm');
   let asking = null;       // { done(answer), quit }
   function question(o) {
@@ -645,13 +646,26 @@
     $('#confirmNote').textContent = o.note || '';
     $('#confirmDetail').textContent = o.detail || ''; $('#confirmDetail').hidden = !o.detail;
     $('#confirmNo').textContent = o.no || 'Cancel';
-    const yes = $('#confirmYes');
+    const yes = $('#confirmYes'), alt = $('#confirmAlt');
     yes.textContent = o.yes || 'OK'; yes.className = `btn ${o.danger === false ? 'primary' : 'danger'}`;
+    yes.title = o.yesTip || ''; alt.textContent = o.alt || ''; alt.title = o.altTip || '';
+    alt.style.display = o.alt ? '' : 'none'; alt.hidden = !o.alt;
     $('#confirmMon').style.display = o.mon ? '' : 'none';
     confirmEl.classList.add('on'); yes.focus();
     return new Promise((resolve) => {
-      asking = { quit: !!o.quit, done: (v) => { asking = null; confirmEl.classList.remove('on'); document.activeElement?.blur(); resolve(!!v); } };
+      asking = { quit: !!o.quit, done: (v) => { asking = null; confirmEl.classList.remove('on'); document.activeElement?.blur(); resolve(v === 'alt' ? 'alt' : !!v); } };
     });
+  }
+  // A video or music picked while online in a hub (main.js mediaPlay): play it just here, share it to the hub (which asks
+  // everyone first when someone else's is on: the vote card), or neither. The answer goes back as 'media-choice'.
+  function askMedia(c) {
+    const what = String(c.title || 'this').slice(0, 80), hub = String(c.hub || 'the hub').slice(0, 40);
+    const note = c.vote ? `${c.on || 'Something'} is on in ${hub}. Sharing asks everyone there to switch to yours.`
+      : c.hosting ? `It replaces what you're sharing in ${hub} now.`
+      : `Everyone online in ${hub} will watch along with you.`;
+    question({ title: `Play “${what}”`, note, no: 'Cancel', alt: 'Just for me', altTip: 'Play it on this PC only. Nobody in the hub sees it.',
+      yes: c.vote ? 'Ask to share' : 'Share to hub', yesTip: c.vote ? 'Everyone online votes, and it goes on if more than half agree' : 'Play it for everyone online in the hub', danger: false })
+      .then((v) => api.cmd({ type: 'media-choice', id: c.id, choice: v === 'alt' ? 'private' : v ? 'share' : 'cancel' }));
   }
   window.driftAsk = question;
   // Esc, the ✕ button and Alt+F4 all ask first. Enter closes, Esc (or a click outside) stays.
@@ -2256,6 +2270,7 @@
   $('#exit').addEventListener('click', askQuit);
   $('#confirmYes').addEventListener('click', () => { if (asking) asking.done(true); });
   $('#confirmNo').addEventListener('click', closeAsk);
+  $('#confirmAlt').addEventListener('click', () => { if (asking) asking.done('alt'); });
   $('#confirmMon').addEventListener('click', () => { closeAsk(); api.cmd({ type: 'monitor-off', index: me.index }); });
   confirmEl.addEventListener('mousedown', (e) => { if (e.target === confirmEl) closeAsk(); });      // a click outside the box means "stay"
 
@@ -2371,6 +2386,7 @@
   api.on('cmd', (c) => {
     if (c.type === 'show-panel') { tab = c.tab === 'video' || c.tab === 'music' ? 'media' : c.tab; tellTab(); showPanel(true); clearTimeout(hideTimer); syncUI(); }
     else if (c.type === 'toast') { if (isCenter || panel.classList.contains('show')) toast(c.text, Math.max(3200, Math.min(9000, c.text.length * 70))); }     // one screen is enough
+    else if (c.type === 'media-ask') askMedia(c);
     else if (c.type === 'ask-quit') { if (asking && asking.quit) api.cmd({ type: 'quit' }); else askQuit(); }       // (asked twice: Alt+F4 again closes)
     else if (c.type === 'rtc') onRtc(c);
     else if (c.type === 'ss-rtc') { if (c.d && typeof c.d === 'object') ssRtc(c.d).catch((e) => console.log('Surf stream set-up: ' + e.message)); }
