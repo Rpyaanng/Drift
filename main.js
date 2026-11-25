@@ -185,7 +185,9 @@ function loadSettings() {
     if (state.music.source === 'files') state.music.playing = false;
     if (!state.surf || typeof state.surf !== 'object' || !Array.isArray(state.surf.urls)) state.surf = null;
     state.mixer = cleanMixer({ ...DEFAULTS.mixer, ...(state.mixer && typeof state.mixer === 'object' ? state.mixer : {}) });
-    if (typeof s.notesSeen !== 'string' || !/^(\d+\.\d+\.\d+)?$/.test(s.notesSeen)) state.notesSeen = '';       // (from before What's new: this version's notes show once)
+    // From before What's new (1.9.1): the last release anyone could have had was 1.8.7 (1.8.8 and 1.9.0 were never released),
+    // so everything since then shows as New, and nobody updating from it misses what came between
+    if (typeof s.notesSeen !== 'string' || !/^(\d+\.\d+\.\d+)?$/.test(s.notesSeen)) state.notesSeen = '1.8.7';
   } catch { state.notesSeen = app.getVersion(); }       // first run: nothing to tell a new install about
 }
 const QUALITY = { original: { h: 0, kbps: 0 }, 1080: { h: 1080, kbps: 6000 }, 720: { h: 720, kbps: 3000 }, 480: { h: 480, kbps: 1200 } };
@@ -4248,6 +4250,13 @@ async function runShots() {
     const pics = async () => { await until(async () => { const s = await wn(); return !!s && s.pics.every((p) => p.done); }, 8000); return (await wn()).pics; };
     const now = app.getVersion(), list = notesList();
     tl('a new install doesn\'t show it: it counts as seen', state.notesSeen === now);
+    {       // settings from before What's new: counted as coming from 1.8.7, the last release before it
+      const f = path.join(app.getPath('userData'), 'notes-test-settings.json'), keep = settingsFile, was = state;
+      fs.writeFileSync(f, JSON.stringify({ settingsVersion: 7 }));
+      settingsFile = f; loadSettings();
+      tl('settings from before What\'s new count as coming from 1.8.7', state.notesSeen === '1.8.7');
+      settingsFile = keep; state = was; fs.unlinkSync(f);
+    }
     await pageRun(wc, () => document.head.append(Object.assign(document.createElement('style'), { textContent: '.wn *, .wn { transition: none !important; animation: none !important; }' })));       // (a hidden window never runs them)
     state.notesSeen = '1.8.6';       // as if this copy had just been updated from 1.8.6
     notesCheck();
