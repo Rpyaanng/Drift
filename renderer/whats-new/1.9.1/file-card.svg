@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -40 1200 460" width="1200" height="460" role="img" aria-label="Three file cards: one downloading at 2.1 MB/s, one paused that carries on by itself, and one downloaded with Open and Show in folder">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#11162a"/>
+      <stop offset="1" stop-color="#0c0f1d"/>
+    </linearGradient>
+    <linearGradient id="bar" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#22c08a"/>
+      <stop offset="1" stop-color="#5be3b4"/>
+    </linearGradient>
+    <!-- Drift's cat, flat green (as in hero.svg). Bottom of the paws at y 858 -->
+    <g id="catFlat" stroke-linejoin="round" stroke-linecap="round">
+      <path d="M1150 800C1300 812 1452 730 1456 590C1459 494 1400 440 1335 448C1284 455 1266 502 1284 532C1300 558 1334 582 1327 640C1319 702 1268 742 1196 762Z" fill="#22c08a" stroke="#1a1230" stroke-width="34"/>
+      <path d="M345 355C340 250 380 150 440 125C510 105 590 160 645 225C710 205 790 205 845 225C900 160 980 105 1050 125C1110 150 1145 250 1140 355C1220 430 1260 560 1245 660C1230 760 1170 820 1080 835C900 860 600 860 420 835C320 820 250 740 240 620C235 520 270 420 345 355Z" fill="#22c08a" stroke="#1a1230" stroke-width="34"/>
+      <path d="M425 335C425 262 445 205 468 198C508 194 552 224 580 258C524 274 474 300 425 335Z" fill="#128a62"/>
+      <path d="M1059 335C1059 262 1039 205 1016 198C976 194 932 224 904 258C960 274 1010 300 1059 335Z" fill="#128a62"/>
+      <path d="M408 820C400 760 450 722 512 722C576 722 620 762 618 812C616 850 560 858 510 858C450 858 412 852 408 820Z" fill="#22c08a" stroke="#1a1230" stroke-width="30"/>
+      <path d="M918 820C910 760 960 722 1022 722C1086 722 1130 762 1128 812C1126 850 1070 858 1020 858C960 858 922 852 918 820Z" fill="#22c08a" stroke="#1a1230" stroke-width="30"/>
+      <path d="M478 790v40M548 790v40M988 790v40M1058 790v40" fill="none" stroke="#1a1230" stroke-width="12" opacity=".7"/>
+      <ellipse cx="470" cy="630" rx="58" ry="30" fill="#ff8fb8" opacity=".45"/><ellipse cx="1025" cy="630" rx="58" ry="30" fill="#ff8fb8" opacity=".45"/>
+      <path d="M690 552C690 594 738 596 750 562C762 596 810 594 810 552" fill="none" stroke="#1a1230" stroke-width="22"/>
+    </g>
+    <g id="catOpen"><circle cx="545" cy="530" r="70" fill="#f4fff4" stroke="#1a1230" stroke-width="26"/><circle cx="950" cy="530" r="70" fill="#f4fff4" stroke="#1a1230" stroke-width="26"/><circle cx="553" cy="536" r="32" fill="#1b1030"/><circle cx="958" cy="536" r="32" fill="#1b1030"/><circle cx="541" cy="522" r="10" fill="#fff"/><circle cx="946" cy="522" r="10" fill="#fff"/></g>
+    <g id="catShut" fill="none" stroke="#1a1230" stroke-width="28" stroke-linecap="round"><path d="M478 522Q545 586 612 522"/><path d="M883 522Q950 586 1017 522"/></g>
+    <g id="catZ" fill="none" stroke="#b58cff" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"><path d="M1150 330h110l-110 110h110"/><path d="M1270 170h150l-150 150h150"/><path d="M1420 -20h200l-200 200h200"/></g>
+  </defs>
+  <rect y="-40" width="1200" height="460" rx="24" fill="url(#bg)"/>
+  <g font-family="Segoe UI, system-ui, sans-serif">
+    <!-- downloading -->
+    <g transform="translate(40 40)">
+      <rect width="360" height="340" rx="18" fill="#171d33" stroke="#263052" stroke-width="2"/>
+      <rect x="24" y="26" width="60" height="70" rx="10" fill="#1d3b37"/>
+      <text x="54" y="68" text-anchor="middle" font-size="15" font-weight="700" fill="#22c08a">MKV</text>
+      <text x="102" y="52" font-size="19" font-weight="600" fill="#eef2ff">holiday video.mkv</text>
+      <text x="102" y="80" font-size="15" fill="#8a93b5">3.8 GB</text>
+      <rect x="24" y="124" width="312" height="8" rx="4" fill="#262f4e"/>
+      <rect x="24" y="124" width="190" height="8" rx="4" fill="url(#bar)"/>
+      <text x="24" y="166" font-size="15" fill="#aab2cf">2.3 GB of 3.8 GB · 21 MB/s</text>
+      <text x="24" y="190" font-size="15" fill="#aab2cf">about 1 min left · directly</text>
+      <rect x="24" y="230" width="88" height="34" rx="9" fill="#232b47"/><text x="68" y="252" text-anchor="middle" font-size="14" fill="#dfe4f7">Pause</text>
+      <rect x="124" y="230" width="88" height="34" rx="9" fill="#3a2230"/><text x="168" y="252" text-anchor="middle" font-size="14" fill="#ff9aa8">Cancel</text>
+      <text x="24" y="306" font-size="13" font-weight="700" letter-spacing="1.5" fill="#22c08a">DOWNLOADING</text>
+    </g>
+    <!-- paused, carries on by itself -->
+    <g transform="translate(420 40)">
+      <rect width="360" height="340" rx="18" fill="#171d33" stroke="#263052" stroke-width="2"/>
+      <rect x="24" y="26" width="60" height="70" rx="10" fill="#2a2148"/>
+      <text x="54" y="68" text-anchor="middle" font-size="15" font-weight="700" fill="#b58cff">ZIP</text>
+      <text x="102" y="52" font-size="19" font-weight="600" fill="#eef2ff">project files.zip</text>
+      <text x="102" y="80" font-size="15" fill="#8a93b5">412 MB</text>
+      <rect x="24" y="124" width="312" height="8" rx="4" fill="#262f4e"/>
+      <rect x="24" y="124" width="118" height="8" rx="4" fill="#b58cff"/>
+      <text x="24" y="166" font-size="15" fill="#aab2cf">Paused at 38% · it carries on by</text>
+      <text x="24" y="190" font-size="15" fill="#aab2cf">itself when Sam is back online</text>
+      <rect x="24" y="230" width="88" height="34" rx="9" fill="#232b47"/><text x="68" y="252" text-anchor="middle" font-size="14" fill="#dfe4f7">Pause</text>
+      <rect x="124" y="230" width="96" height="34" rx="9" fill="#3a2230"/><text x="172" y="252" text-anchor="middle" font-size="14" fill="#ff9aa8">Discard</text>
+      <text x="24" y="306" font-size="13" font-weight="700" letter-spacing="1.5" fill="#b58cff">WAITING FOR SAM</text>
+    </g>
+    <!-- downloaded -->
+    <g transform="translate(800 40)">
+      <rect width="360" height="340" rx="18" fill="#171d33" stroke="#263052" stroke-width="2"/>
+      <rect x="24" y="26" width="60" height="70" rx="10" fill="#1d3b37"/>
+      <text x="54" y="68" text-anchor="middle" font-size="15" font-weight="700" fill="#22c08a">PDF</text>
+      <text x="102" y="52" font-size="19" font-weight="600" fill="#eef2ff">trip plan.pdf</text>
+      <text x="102" y="80" font-size="15" fill="#8a93b5">2.4 MB</text>
+      <circle cx="40" cy="152" r="16" fill="#22c08a"/>
+      <path d="M32 152 l6 6 l11 -12" fill="none" stroke="#0b1a14" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="66" y="158" font-size="16" fill="#dfe4f7">Downloaded, every piece checked</text>
+      <rect x="24" y="230" width="80" height="34" rx="9" fill="#22c08a"/><text x="64" y="252" text-anchor="middle" font-size="14" font-weight="600" fill="#08130f">Open</text>
+      <rect x="116" y="230" width="140" height="34" rx="9" fill="#232b47"/><text x="186" y="252" text-anchor="middle" font-size="14" fill="#dfe4f7">Show in folder</text>
+      <text x="24" y="306" font-size="13" font-weight="700" letter-spacing="1.5" fill="#22c08a">DONE</text>
+    </g>
+  </g>
+  <!-- the cats: one asleep on the card that's waiting for Sam, one sitting on the finished one -->
+  <g transform="translate(724 43) scale(.07) translate(-742 -858)"><use href="#catFlat"/><use href="#catShut"/><use href="#catZ"/></g>
+  <g transform="translate(1104 43) scale(-.07 .07) translate(-742 -858)"><use href="#catFlat"/><use href="#catOpen"/></g>
+</svg>

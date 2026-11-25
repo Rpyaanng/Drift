@@ -2344,6 +2344,7 @@
     b.style.pointerEvents = ['checking', 'downloading'].includes(u.status) ? 'none' : '';
     n.textContent = u.error || { latest: `Drift ${u.current} is the latest version`, available: `Drift ${u.version} is out (you have ${u.current})`, ready: 'Or it installs by itself when you close Drift', manual: `Drift ${u.version} is out. This copy can’t update itself here: the button opens the releases page` }[u.status] || `You have Drift ${u.current}`;
   }
+  $('#wnBtn').addEventListener('click', () => { if (window.whatsNew) window.whatsNew.open({ since: S.notesSeen || '' }); });       // (whatsnew.js: every version, this one first)
   $('#updBtn').addEventListener('click', () => {
     const u = S.update || {};
     if (u.status === 'ready') api.cmd({ type: 'update-install' });

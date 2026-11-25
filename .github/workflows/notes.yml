@@ -1,0 +1,25 @@
+# What's new: every version has its notes (renderer/whats-new/<version>.md), and they're right. A push that bumps the version
+# in package.json without writing its notes fails here, so a release can't go out without them (and the app would have
+# nothing to show when people update). The same check runs before every push, from .githooks/pre-push.
+name: Release notes
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+jobs:
+  notes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0       # the tags too: every released version must have notes
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Every version has its notes, and they're right
+        run: node scripts/check-notes.js
+      - name: The notes reader, the checker and the release description
+        run: node scripts/test-notes.js

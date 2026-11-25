@@ -11,6 +11,7 @@ const subsLib = require('./subtitles');
 const createXcoder = require('./xcode');
 const createP2P = require('./p2p');
 const createChat = require('./chat');
+const createFiles = require('./files');
 const createWeb = require('./web');
 const createUpdater = require('./updater');
 const { readTags } = require('./tags');
@@ -95,6 +96,10 @@ const DEFAULTS = {
   sfx: { on: true, volume: 0.7 },
   // GIF search in the Hub tab: the user's own GIPHY API key ('' = search is off; pictures from this PC still send)
   gif: { key: '' },
+  // files sent straight between PCs (docs/plans/files.md): where downloads go ('' = Downloads\Drift)
+  files: { folder: '' },
+  // What's new (renderer/whatsnew.js): the newest version whose notes were shown. A newer one starting shows them, once
+  notesSeen: '',
   // the Surf stream of the hub this PC hosts (docs/plans/streams.md): its tabs (kept with the hub they belong to), whether every
   // download on it is refused, the local addresses it may open (surf-lan.js), and whether the host was told pages load from their connection
   hubSurf: { hub: '', urls: [], active: 0, noDownloads: false, allowLan: [], told: false, showSpecs: false, showBrowsing: false },
@@ -180,7 +185,8 @@ function loadSettings() {
     if (state.music.source === 'files') state.music.playing = false;
     if (!state.surf || typeof state.surf !== 'object' || !Array.isArray(state.surf.urls)) state.surf = null;
     state.mixer = cleanMixer({ ...DEFAULTS.mixer, ...(state.mixer && typeof state.mixer === 'object' ? state.mixer : {}) });
-  } catch { /* first run */ }
+    if (typeof s.notesSeen !== 'string' || !/^(\d+\.\d+\.\d+)?$/.test(s.notesSeen)) state.notesSeen = '';       // (from before What's new: this version's notes show once)
+  } catch { state.notesSeen = app.getVersion(); }       // first run: nothing to tell a new install about
 }
 const QUALITY = { original: { h: 0, kbps: 0 }, 1080: { h: 1080, kbps: 6000 }, 720: { h: 720, kbps: 3000 }, 480: { h: 480, kbps: 1200 } };
 function cleanShare(q) {
@@ -1397,7 +1403,11 @@ let chat = null, chatPub = '', shownSessionHub = '';
 const chatLog = (t) => { console.log(t); if (SHOT_DIR) { try { fs.appendFileSync(path.join(SHOT_DIR, 'chat.log'), new Date().toISOString().slice(11, 23) + ' ' + t + '\n'); } catch { /* fine */ } } };       // test runs keep chat's log
 function startChat() {
   const enc = safeStorage.isEncryptionAvailable();
+  files = createFiles({ dir: path.join(app.getPath('userData'), 'chat'), downloads: ftFolder, log: chatLog });
+  setInterval(ftAuto, 5000);       // (and whenever the hubs change: who's online)
   chat = createChat({
+    hasOffer: (id) => files.has(id),       // files offered from this PC: still here, unchanged?
+    offerGone: (id) => files.forget(id),
     dir: path.join(app.getPath('userData'), 'chat'),
     seal: (b) => (enc ? safeStorage.encryptString(b.toString('latin1')) : b),
     unseal: (b) => (enc ? Buffer.from(safeStorage.decryptString(Buffer.from(b)), 'latin1') : b),
@@ -1414,10 +1424,12 @@ function startChat() {
       surfModeCheck();
       if (hubWeb || chat.hostedHub()) { hubBrowser(); ssWinSync(); }
       if (surfMode() !== 'own') pushState();       // (who watches the Surf stream)
+      setImmediate(ftAuto);       // (someone whose file stopped coming came back online)
     },
     event: (hub, m) => {
       if (String(m.t).startsWith('voice-')) { onVoiceEvent(hub, m); return; }       // for the call's window, not the panels
       if (String(m.t).startsWith('ss-')) { onSsEvent(hub, m); return; }       // the Surf stream's: for its windows
+      if (String(m.t).startsWith('ft-')) { onFtEvent(hub, m); return; }       // file transfers': for the transfer window (the panels get ftState)
       if (m.t === 'media-vote') onMediaVote(hub, m.vote);
       if (m.t === 'live-no' && p2p.role() === 'host' && liveHub === hub) { mediaRefused(hub, m); return; }
       if ((m.t === 'bc-off' || m.t === 'bc-watch-off') && m.why && m.why !== 'ended') say(m.why);       // e.g. the host stopped your broadcast
@@ -1439,7 +1451,7 @@ function startChat() {
     connectOnStart: false,       // online in a hub means on its stream (and sharing what you pick): only once you click it
   });
   chat.setName(shareName());
-  if (!SHOT_DIR || process.env.DRIFT_TESTCHAT || process.env.DRIFT_TESTSTREAM || process.env.DRIFT_TESTSS || process.env.DRIFT_TESTPICS) chat.start().catch((e) => console.log('chat: ' + e.message));
+  if (!SHOT_DIR || process.env.DRIFT_TESTCHAT || process.env.DRIFT_TESTSTREAM || process.env.DRIFT_TESTSS || process.env.DRIFT_TESTPICS || process.env.DRIFT_TESTFT) chat.start().catch((e) => console.log('chat: ' + e.message));
   publicIp().then((ip) => { chatPub = ip; }).catch(() => {});
 }
 // ---- Hub sounds (renderer/sfx.js makes them, in the hidden audio window, so they never double across monitors) ----
@@ -1823,6 +1835,32 @@ const CHAT_OPS = {
   // a picture or GIF from this PC (pasted, dropped or picked): its bytes, as the panel read them
   sendFile: (hub, ch, bytes, w, h, text, reply) => chat.sendFile(String(hub), +ch, Buffer.from(bytes instanceof Uint8Array || bytes instanceof ArrayBuffer ? bytes : []), +w || 1, +h || 1, String(text || ''), +reply || undefined),
   file: async (hub, id) => { const r = await chat.file(String(hub), String(id || '')); return r.error ? r : { data: `data:${r.mime};base64,${r.data.toString('base64')}` }; },
+  // files sent straight between PCs (docs/plans/files.md): offered from a path on this PC (dropped, pasted or picked)
+  offerFile: (hub, ch, file, text, reply) => ftOffer(String(hub), +ch, String(file || ''), String(text || ''), +reply || undefined),
+  offerPick: async (hub, ch, text, reply) => {
+    const r = await dialog.showOpenDialog(BrowserWindow.getFocusedWindow() || undefined, { title: 'Offer a file', properties: ['openFile'] });
+    if (r.canceled || !r.filePaths.length) return { canceled: true };
+    return ftOffer(String(hub), +ch, r.filePaths[0], String(text || ''), +reply || undefined);
+  },
+  offerDrop: async (hub, id) => { const r = await chat.offerDrop(String(hub), String(id || '')); ftPush(true); return r; },
+  ftGet: (hub, o, from, direct) => ftGet(String(hub), o, String(from || ''), !!direct),
+  ftStop: async (offer, discard) => {       // stop a download (what it has is kept, unless discard), or throw away one that stopped
+    offer = String(offer || '');
+    for (const r of [...ftRuns.values()]) if (r.offer === offer && r.role === 'recv') ftDone(r.x, 'You stopped it.', false, false, true);
+    files.setPaused(offer, true);       // (also one waiting to carry on by itself: it waits for Resume now)
+    if (discard) { await files.recvDrop(offer); ftNotes.delete(offer); ftBack.delete(offer); }
+    ftPush(true);
+    return {};
+  },
+  ftOpen: (offer) => ftOpenFile(offer, false),
+  ftShow: (offer) => ftOpenFile(offer, true),
+  ftState: () => ftState(),
+  ftFolder: async () => {
+    const r = await dialog.showOpenDialog(BrowserWindow.getFocusedWindow() || undefined, { title: 'Where downloaded files go', properties: ['openDirectory', 'createDirectory'], defaultPath: ftFolder() });
+    if (r.canceled || !r.filePaths.length) return { folder: ftFolder() };
+    state.files = { ...(state.files || {}), folder: r.filePaths[0] }; saveSoon(); ftPush(true);
+    return { folder: ftFolder() };
+  },
   gifSearch: (q) => gifSearch(String(q || '').slice(0, 100)),
   gifSend: async (hub, ch, url, w, h, reply) => { const b = await gifFetch(String(url || '')); return b.error ? b : chat.sendFile(String(hub), +ch, b, +w || 1, +h || 1, '', +reply || undefined); },
   typing: (hub, ch) => chat.typing(String(hub), +ch),
@@ -2271,6 +2309,228 @@ function onBcEvent(hub, m) {
     default: break;
   }
 }
+// ---- What's new (renderer/whatsnew.js) ------------------------------------------------------------------------------------
+// Each version's notes are renderer/whats-new/<version>.md, with its pictures in whats-new/<version>/ (scripts/check-notes.js
+// keeps them right, and CI runs it, so a version can't go out without them). The first time a newer version than the one
+// whose notes were last shown starts, they open by themselves on the main monitor, a moment after Drift has drawn.
+const NOTES_DIR = path.join(__dirname, 'renderer', 'whats-new');
+function notesList() {
+  let names = [];
+  try { names = fs.readdirSync(NOTES_DIR).filter((f) => /^\d+\.\d+\.\d+\.md$/.test(f)); } catch { return []; }
+  const num = (v) => v.split('.').map(Number);
+  return names.map((f) => ({ version: f.slice(0, -3), text: fs.readFileSync(path.join(NOTES_DIR, f), 'utf8').slice(0, 200000) }))
+    .sort((a, b) => { const x = num(a.version), y = num(b.version); return y[0] - x[0] || y[1] - x[1] || y[2] - x[2]; });       // newest first
+}
+ipcMain.handle('notes', () => ({ current: app.getVersion(), seen: state.notesSeen || '', list: notesList() }));
+// The window on the main monitor (or the first one), once it has loaded. since: the version whose notes were last shown.
+function notesShow(since, auto = true, tries = 40) {
+  const p = screen.getPrimaryDisplay().bounds, cx = p.x + p.width / 2, cy = p.y + p.height / 2;
+  const v = visWins.find((w) => !w.win.isDestroyed() && cx >= w.bounds.x && cx < w.bounds.x + w.bounds.width && cy >= w.bounds.y && cy < w.bounds.y + w.bounds.height) || visWins.find((w) => !w.win.isDestroyed());
+  if (!v || v.win.webContents.isLoading()) { if (tries > 0) setTimeout(() => notesShow(since, auto, tries - 1), 500); return; }
+  v.win.webContents.send('cmd', { type: 'whats-new', auto, since });
+}
+function notesCheck() {
+  const now = app.getVersion(), seen = state.notesSeen || '';
+  if (!notesList().some((n) => n.version === now)) return;       // (no notes for this version: nothing to show; check-notes.js stops that being released)
+  if (seen && !require('./updater').newer(now, seen)) return;
+  setTimeout(() => notesShow(seen), 1800);       // (after the scene has come up, so it lands on something)
+}
+
+// ---- files sent straight between members' PCs (docs/plans/files.md) ---------------------------------------------------
+// A file stays on the PC that offered it until someone downloads it. chat.js signs and checks the setup messages; files.js
+// reads, writes and checks the pieces; the hidden transfer window (renderer/ft.html) holds one data channel for each file
+// moving. This carries messages between the three, keeps the PC awake while anything moves, and tells the panels how each
+// transfer is doing (the 'ft' chat message: ftState()).
+let files = null, ftWin = null, ftUp = false, ftQueue = [], ftAwake = null, ftPushTimer = null, ftIdle = null;
+const ftRuns = new Map();       // transfer id -> { x, hub, offer, role ('send' | 'recv'), peer, name, size, root, piece, got, state, at, rate, last, direct }
+const ftPreps = new Map();      // a file being read to offer it: key -> { hub, ch, name, size, done }
+const ftNotes = new Map();      // offer id -> how its last download ended, when it went wrong (for the card)
+const ftSent = new Map();       // offer id -> the names of who downloaded it from here (this session)
+const ftFolder = () => (state.files && state.files.folder) || path.join(app.getPath('downloads'), 'Drift');
+function ftOpenWin() {
+  clearTimeout(ftIdle);
+  if (ftWin && !ftWin.isDestroyed()) return;
+  const w = ftWin = new BrowserWindow({ show: false, width: 200, height: 100, skipTaskbar: true, title: 'Drift files',
+    webPreferences: { preload: path.join(__dirname, 'ft-preload.js'), sandbox: true, contextIsolation: true, backgroundThrottling: false } });
+  w.webContents.setAudioMuted(true);
+  w.on('closed', () => { if (ftWin !== w) return; ftWin = null; ftUp = false; ftQueue = []; for (const r of [...ftRuns.values()]) ftDone(r.x, 'The transfer window closed.'); });
+  w.loadFile(path.join(__dirname, 'renderer', 'ft.html')).catch(() => {});
+}
+const toFt = (m) => { ftOpenWin(); if (ftUp && !ftWin.isDestroyed()) ftWin.webContents.send('ft', m); else ftQueue.push(m); };
+function ftIdleCheck() {       // the window goes a little after the last transfer ends
+  clearTimeout(ftIdle);
+  if (ftRuns.size || !ftWin) return;
+  ftIdle = setTimeout(() => { if (ftRuns.size || !ftWin) return; const w = ftWin; ftWin = null; ftUp = false; ftQueue = []; if (!w.isDestroyed()) w.destroy(); }, 15000);
+}
+function ftAwakeSync() {       // a download that takes hours shouldn't stop because the PC went to sleep
+  if (ftRuns.size && ftAwake === null) ftAwake = powerSaveBlocker.start('prevent-app-suspension');
+  if (!ftRuns.size && ftAwake !== null) { powerSaveBlocker.stop(ftAwake); ftAwake = null; }
+}
+function ftState() {
+  return {
+    runs: [...ftRuns.values()].map((r) => ({ x: r.x, hub: r.hub, offer: r.offer, role: r.role, peer: r.peer, peerName: r.peerName || memberName(r.hub, r.peer), name: r.name, size: r.size, got: r.got, state: r.state, rate: r.rate, direct: r.direct })),
+    preps: [...ftPreps.entries()].map(([k, p]) => ({ key: k, ...p })),
+    downloads: files ? files.downloads() : [],
+    notes: Object.fromEntries(ftNotes), sent: Object.fromEntries(ftSent), folder: ftFolder(), awake: ftAwake !== null,
+  };
+}
+function ftPush(now) {
+  if (ftPushTimer && !now) return;
+  clearTimeout(ftPushTimer);
+  ftPushTimer = setTimeout(() => { ftPushTimer = null; broadcast('chat', { type: 'ft', ft: ftState() }, false); }, now ? 0 : 400);
+}
+function ftTick(r) {       // its speed, smoothed over a few seconds
+  const now = Date.now(), dt = (now - r.last.at) / 1000;
+  if (dt < 1) return;
+  const v = Math.max(0, (r.got - r.last.got) / dt);
+  r.rate = r.rate ? r.rate * 0.6 + v * 0.4 : v; r.last = { at: now, got: r.got };
+  ftPush();
+}
+// A transfer is over: finished (ok), stopped by either end, or failed. A download that didn't finish keeps what it has, and carries
+// on by itself once it can (ftAuto) unless you paused it (mine) or it failed in a way trying again wouldn't fix (fatal).
+function ftDone(x, why = '', ok = false, fatal = false, mine = false) {
+  const r = ftRuns.get(x);
+  if (!r) return;
+  ftRuns.delete(x);
+  chat.ftEnd(x, ok ? '' : why);
+  if (ftWin && ftUp) toFt({ t: 'stop', x, why: ok ? '' : why });
+  if (r.role === 'recv' && !r.finished) {
+    if (fatal || mine) files.setPaused(r.offer, true, mine ? '' : why);
+    files.recvPause(r.offer).then(() => ftPush(true));
+  }
+  if (r.role === 'recv') { if (ok || r.finished) ftNotes.delete(r.offer); else if (why) ftNotes.set(r.offer, why); }
+  if (r.role === 'send' && ok) { const n = ftSent.get(r.offer) || []; ftSent.set(r.offer, [...new Set([...n, r.peerName || memberName(r.hub, r.peer)])].slice(-20)); }
+  if (r.role === 'recv' && (ok || r.finished)) say(`${r.name} downloaded`);
+  ftAwakeSync(); ftIdleCheck(); ftPush(true);
+}
+// What chat.js says about transfers (all of it already checked there).
+function onFtEvent(hub, m) {
+  const r = ftRuns.get(m.x);
+  switch (m.t) {
+    case 'ft-want': {       // someone wants a file offered from this PC
+      const o = files.offerInfo(m.offer);
+      if (!o || !files.has(m.offer)) { chat.ftEnd(m.x, 'That file isn\'t on their PC any more.'); return; }
+      ftRuns.set(m.x, { x: m.x, hub, offer: m.offer, role: 'send', peer: m.from, peerName: m.name, name: o.name, size: o.size, got: 0, state: 'connecting', at: Date.now(), rate: 0, last: { at: Date.now(), got: 0 }, direct: m.policy === 'all' });
+      toFt({ t: 'send', x: m.x, iceServers: m.iceServers, policy: m.policy });
+      break;
+    }
+    case 'ft-sdp': if (r) toFt({ t: 'sdp', x: m.x, sdp: m.sdp }); break;
+    case 'ft-candidate': if (r) toFt({ t: 'candidate', x: m.x, c: m.c }); break;
+    case 'ft-end': if (r) ftDone(m.x, m.why || (r.role === 'recv' ? `${memberName(hub, r.peer)}'s PC stopped sending it.` : ''), false, !!m.fatal); break;
+    case 'ft-refused': say(`Couldn't verify ${m.name}'s file connection, so it was stopped. The hub may be interfering.`); break;
+    default: break;
+  }
+  ftAwakeSync(); ftPush();
+}
+ipcMain.on('ft', (e, type, d) => {
+  if (!ftWin || ftWin.isDestroyed() || e.sender !== ftWin.webContents) return;
+  if (type === 'hello') { ftUp = true; for (const m of ftQueue.splice(0)) ftWin.webContents.send('ft', m); return; }
+  if (type === 'log') { chatLog('files: ' + String(d).slice(0, 300)); return; }
+  const x = String((d && d.x) || ''), r = ftRuns.get(x);
+  if (!r) return;
+  if (type === 'signal' && d.d && typeof d.d === 'object') chat.ftSignal(x, d.d);
+  else if (type === 'cert') { if (chat.ftCert(x, String(d.alg || ''), String(d.fp || '')).ok) { r.state = 'verified'; ftBack.delete(r.offer); toFt({ t: 'verified', x }); } ftPush(); }       // (a mismatch ends it: chat.js says so)
+  else if (type === 'state') { if (r.state !== 'verified' || d.state !== 'connected') r.state = String(d.state || '').slice(0, 20); ftPush(); }
+  else if (type === 'ended') ftDone(x, String(d.why || '').slice(0, 200), !!d.ok, !!d.fatal);
+});
+// The window's reads and writes: only ever the file that belongs to that transfer.
+ipcMain.handle('ft', async (e, op, x, ...a) => {
+  if (!ftWin || ftWin.isDestroyed() || e.sender !== ftWin.webContents) return { error: 'No.' };
+  const r = ftRuns.get(String(x || ''));
+  if (!r) return { error: 'That transfer is over.' };
+  try {
+    if (r.role === 'send') {
+      if (op === 'head') return files.head(r.offer) || { error: `${r.name} isn't on their PC any more.` };
+      if (op === 'read') { const data = await files.read(r.offer, +a[0], +a[1]); r.got = Math.min(r.size, r.got + data.length); ftTick(r); return { data }; }
+    } else {
+      if (op === 'head-in') {       // what the sender says, over the verified connection, must be the file that was offered
+        const h = a[0] || {};
+        if (+h.size !== r.size || String(h.root) !== r.root || +h.piece !== r.piece) return { error: 'The file they sent isn\'t the one they offered.' };
+        return {};
+      }
+      if (op === 'hashes') return files.recvHashes(r.offer, a[0]);
+      if (op === 'write') {
+        const w = await files.recvWrite(r.offer, +a[0], +a[1], a[2] instanceof Uint8Array ? a[2] : new Uint8Array(0));
+        r.got = w.got; ftTick(r);
+        return w;
+      }
+      if (op === 'finish') { const f = await files.recvFinish(r.offer); if (!f.error) { r.finished = true; r.got = r.size; } return f; }
+    }
+  } catch (err) { return { error: String((err && err.message) || err) }; }
+  return { error: 'No.' };
+});
+// Offer a file from this PC in a channel: read it once for its check (a big one takes a while: the card shows how far), then send the message.
+async function ftOffer(hub, ch, file, text, reply) {
+  if (!file || !path.isAbsolute(file)) return { error: 'Drift couldn\'t tell where that file is.' };
+  const key = crypto.randomBytes(6).toString('hex'), st = await fs.promises.stat(file).catch(() => null);
+  if (!st || !st.isFile()) return { error: 'That isn\'t a file Drift can read (a folder can\'t be sent: zip it first).' };
+  ftPreps.set(key, { hub, ch, name: path.basename(file), size: st.size, done: 0 }); ftPush(true);
+  try {
+    const meta = await files.prepare(file, (done) => { const p = ftPreps.get(key); if (p) { p.done = done; ftPush(); } });
+    const r = await chat.offer(hub, ch, meta, text, reply);
+    if (r.error) files.forget(meta.id);
+    return r;
+  } catch (e) { return { error: String((e && e.message) || e) }; } finally { ftPreps.delete(key); ftPush(true); }
+}
+// Download (or carry on downloading) a file someone offered. o: the offer as the message carries it. direct: connect straight
+// to their PC (needed over 500 MB; the panel asks first, as each of you sees the other's address).
+async function ftGet(hub, o, from, direct, auto = false) {
+  const offer = String((o && o.id) || '');
+  if (!o || !offer || typeof o !== 'object') return { error: 'That file can\'t be downloaded.' };
+  if ([...ftRuns.values()].some((r) => r.offer === offer && r.role === 'recv')) return { error: 'That file is already downloading.' };
+  const size = Math.floor(+o.size), piece = Math.floor(+o.piece), root = String(o.root || '');
+  const st = await files.recvStart({ offer, hub, from, name: String(o.name || ''), size, root, piece, direct: !!direct });
+  if (st.error) return st;
+  const g = await chat.ftGet(hub, offer, from, { direct: !!direct });
+  if (g.error) { if (st.have || auto) await files.recvPause(offer); else await files.recvDrop(offer); ftPush(true); return g; }
+  const d = files.download(offer);
+  ftRuns.set(g.x, { x: g.x, hub, offer, role: 'recv', peer: from, name: st.name, size, root, piece, got: d ? d.got : 0, state: 'connecting', at: Date.now(), rate: 0, last: { at: Date.now(), got: d ? d.got : 0 }, direct: g.policy === 'all' });
+  ftNotes.delete(offer);
+  toFt({ t: 'recv', x: g.x, iceServers: g.iceServers, policy: g.policy });
+  ftAwakeSync(); ftPush(true);
+  return { x: g.x };
+}
+async function ftOpenFile(offer, show) {
+  const d = files.download(String(offer || ''));
+  if (!d || !d.path) return { error: 'That file isn\'t on this PC any more.' };
+  if (show) { shell.showItemInFolder(d.path); return {}; }
+  if (d.risky) {
+    const r = await dialog.showMessageBox({ type: 'warning', buttons: ['Open it', 'Cancel'], defaultId: 1, cancelId: 1, title: 'Open this file?',
+      message: `${d.name} can run a program on this PC.`, detail: 'Only open it if you trust the person who sent it and expected this file.' });
+    if (r.response !== 0) return {};
+  }
+  const err = await shell.openPath(d.path);
+  return err ? { error: err } : {};
+}
+// Downloads that stopped part of the way carry on by themselves: when the hub is back, the sender is online again, or Drift starts
+// again (as soon as you go online in that hub). Not one you paused, or one that failed a check. Tries come further apart each
+// time (5 s, 10 s, 20 s ... 5 min); a connection that gets verified starts the count again. A file no longer offered stops it.
+const ftBack = new Map();       // offer id -> { next (when to try again), n (tries since it last connected) }
+const ftTrying = new Set();
+function ftAuto() {
+  if (!files || !chat) return;
+  const I = chat.info(), now = Date.now();
+  for (const d of files.downloads()) {
+    if (!d.partial || d.running || d.paused || ftTrying.has(d.offer) || [...ftRuns.values()].some((r) => r.offer === d.offer)) continue;
+    const h = I.hubs.find((x) => x.id === d.hub && x.status === 'connected'), who = h && h.members.find((m) => m.id === d.from);
+    if (!who || !who.online) continue;       // (waiting for them: no try is spent)
+    const b = ftBack.get(d.offer) || { next: 0, n: 0 };
+    if (now < b.next) continue;
+    b.n++; b.next = now + Math.min(300e3, 5e3 * 2 ** Math.min(6, b.n - 1)); ftBack.set(d.offer, b);
+    ftTrying.add(d.offer);
+    chatLog(`files: carrying on with ${d.name} (try ${b.n})`);
+    ftGet(d.hub, { id: d.offer, name: d.name, size: d.size, root: d.root, piece: d.piece }, d.from, d.direct, true).then((r) => {
+      if (r.error && r.gone) { files.setPaused(d.offer, true, 'It isn\'t offered any more.'); ftBack.delete(d.offer); }
+      else if (r.error) chatLog(`files: ${d.name} can't carry on yet: ${r.error}`);
+      ftPush(true);
+    }).finally(() => ftTrying.delete(d.offer));
+  }
+}
+async function ftQuit() {       // closing Drift: downloads stop where they are, to carry on next time
+  for (const r of [...ftRuns.values()]) { if (r.role === 'recv') await files.recvPause(r.offer).catch(() => {}); chat.ftEnd(r.x, 'Their Drift closed.'); }
+  ftRuns.clear(); ftAwakeSync();
+}
+
 ipcMain.handle('chat', async (_e, op, ...args) => {
   if (!chat || !Object.hasOwn(CHAT_OPS, op)) return { error: 'Chat isn\'t ready.' };
   try { return (await CHAT_OPS[op](...args)) ?? {}; } catch (e) { return { error: String(e && e.message || e) }; }
@@ -2834,6 +3094,8 @@ ipcMain.on('cmd', async (e, c) => {
     case 'update-check': if (updater) updater.check(); break;
     case 'update-download': if (updater) updater.download(); break;
     case 'update-page': if (updater) shell.openExternal(updater.info().page).catch(() => {}); break;
+    case 'notes-seen': if (state.notesSeen !== app.getVersion()) { state.notesSeen = app.getVersion(); saveSoon(); } break;       // (What's new opened by itself: not again for this version)
+    case 'notes-link': if (/^https:\/\/[^\s"'<>]+$/.test(String(c.url || ''))) shell.openExternal(String(c.url)).catch(() => {}); break;       // a link in the notes: only web pages, in the browser
     case 'update-install': if (updater && updater.install(true)) { quitting = true; app.quit(); } break;
     case 'monitor-off': {      // from the "Close Drift?" prompt: leave this one monitor alone and keep Drift on the others
       const i = c.index | 0;
@@ -3206,6 +3468,7 @@ else {
     clock = { base: 0, ref: Date.now() };
     createAudioWindow();
     buildWindows();
+    if (!SHOT_DIR) notesCheck();       // a new version's first start: What's new
     if (state.surf && !SHOT_DIR) web.restore(state.surf);       // the browser that was open last time, its pages held paused
     applySideEffects(null);
     spotifyWatch(true);       // Drift follows Spotify by itself: see spotifyLead()
@@ -3233,7 +3496,7 @@ else {
     quitting = true;
     if ((p2p.role() !== 'off' || chat) && !goodbye) {       // tell friends, and close the door on the router, before going
       goodbye = true; e.preventDefault();
-      Promise.all([p2p.stop().catch(() => {}), chat ? chat.stop().catch(() => {}) : null]).finally(() => app.quit());
+      Promise.all([p2p.stop().catch(() => {}), chat ? (files ? ftQuit() : Promise.resolve()).catch(() => {}).then(() => chat.stop()).catch(() => {}) : null]).finally(() => app.quit());
       return;
     }
     if (updater) updater.install(false);       // a downloaded update goes in once Drift has closed
@@ -3974,6 +4237,69 @@ async function runShots() {
     await snap('pics');
     done();
   }
+  if (process.env.DRIFT_TESTNOTES) {     // What's new (renderer/whatsnew.js), one copy of Drift (scripts/test-whats-new.js): as if it had just been updated from
+    // 1.8.6, it opens by itself on the main monitor with what changed since, pictures and all; then the keys, the pictures, the
+    // Settings button, and that it doesn't open by itself again. Writes notes.json in DRIFT_SHOTS.
+    const wc = visWins[0].win.webContents, res = {}, tl = (k, v) => { res[k] = v; log.push(`notes: ${k} ${JSON.stringify(v)}`); };
+    const until = async (f, ms = 15000) => { for (let t = 0; t < ms; t += 200) { if (await f()) return true; await wait(200); } return !!(await f()); };
+    const wn = () => pageRun(wc, () => (window.whatsNew ? window.whatsNew.state() : null));
+    const key = (k) => pageRun(wc, (kk) => { const r = document.querySelector('.wn'); if (r) r.dispatchEvent(new KeyboardEvent('keydown', { key: kk, bubbles: true })); }, k);
+    const pick = (v) => pageRun(wc, (vv) => { const b = document.querySelector(`.wnVer[data-v="${vv}"]`); if (b) b.click(); return !!b; }, v);
+    const pics = async () => { await until(async () => { const s = await wn(); return !!s && s.pics.every((p) => p.done); }, 8000); return (await wn()).pics; };
+    const now = app.getVersion(), list = notesList();
+    tl('a new install doesn\'t show it: it counts as seen', state.notesSeen === now);
+    await pageRun(wc, () => document.head.append(Object.assign(document.createElement('style'), { textContent: '.wn *, .wn { transition: none !important; animation: none !important; }' })));       // (a hidden window never runs them)
+    state.notesSeen = '1.8.6';       // as if this copy had just been updated from 1.8.6
+    notesCheck();
+    tl('updated: it opens by itself', await until(async () => !!(await wn()), 10000));
+    let s = await wn();
+    log.push('notes: opened ' + JSON.stringify(s));
+    const want = list.filter((n) => require('./updater').newer(n.version, '1.8.6') && !require('./updater').newer(n.version, now)).map((n) => n.version);
+    tl('on this version, marked as opened by itself', !!s && s.version === now && s.auto);
+    tl('with the title from its notes', !!s && s.title === (/^title:\s*(.+)$/m.exec(list.find((n) => n.version === now).text) || [])[1].trim());
+    tl('every version is in the rail, newest first', !!s && JSON.stringify(s.versions) === JSON.stringify(list.map((n) => n.version)));
+    tl('the ones since 1.8.6 are marked New, and it says how many', !!s && JSON.stringify(s.fresh) === JSON.stringify(want) && s.since.startsWith(`${want.length} updates`));
+    tl('it counts as seen now, so it won\'t open by itself again', await until(() => state.notesSeen === now, 5000));
+    let p = await pics();
+    log.push('notes: pictures ' + JSON.stringify(p));
+    tl('its hero picture and the picture in its notes load', p.length >= 2 && p.every((x) => x.w > 0));
+    s = await wn();
+    tl('its sections and cards are drawn', s.sections.some((x) => /New/.test(x)) && s.cards >= 3);
+    const geo = await pageRun(wc, () => { const c = document.querySelector('.wnCard').getBoundingClientRect(), r = document.querySelector('.wnRail').getBoundingClientRect(); return { l: c.left, t: c.top, r: c.right, b: c.bottom, w: innerWidth, h: innerHeight, rail: Math.round(r.width), z: getComputedStyle(document.querySelector('.wn')).zIndex }; });
+    log.push('notes: geometry ' + JSON.stringify(geo));
+    tl('it sits inside the screen, over everything, with the rail beside the notes', geo.l >= 0 && geo.t >= 0 && geo.r <= geo.w && geo.b <= geo.h && geo.rail === 272 && +geo.z >= 9998);
+    await key('ArrowLeft');
+    s = await wn();
+    tl('← goes to the version before', s.version === list[list.findIndex((n) => n.version === now) + 1].version);
+    await key('ArrowRight');
+    tl('→ comes back', (await wn()).version === now);
+    const ahead = list.find((n) => require('./updater').newer(n.version, now));
+    if (ahead) {
+      await pick(ahead.version);
+      p = await pics();
+      tl(`a version not out yet (${ahead.version}) shows too, its svg pictures with it`, (await wn()).version === ahead.version && p.length >= 1 && p.every((x) => x.w > 0));
+    }
+    const plain = list.find((n) => !/^hero:/m.test(n.text));
+    await pick(plain.version);
+    tl(`a version with no picture (${plain.version}) gets art of its own`, await pageRun(wc, () => !!document.querySelector('.wnHero.noimg .wnHeroArt .wnHeroNum')));
+    await pick(now);
+    await until(async () => (await wn()).pics.every((x) => x.done), 5000);
+    await pageRun(wc, () => document.querySelector('.wnFigBtn').click());
+    tl('a picture opens bigger', await until(() => pageRun(wc, () => !!document.querySelector('.wnLight img')), 3000));
+    await key('Escape');
+    tl('Esc closes the picture first', await pageRun(wc, () => !document.querySelector('.wnLight') && !!document.querySelector('.wn')));
+    await key('Escape');
+    tl('...then the window', await until(async () => !(await wn()), 3000));
+    notesCheck();
+    await wait(3500);
+    tl('starting again, it doesn\'t open by itself', !(await wn()));
+    wc.send('cmd', { type: 'show-panel', tab: 'settings' }); await wait(600);
+    await pageRun(wc, () => document.querySelector('#wnBtn').click());
+    tl('Settings → What\'s new opens it, on this version', await until(async () => { const x = await wn(); return !!x && x.version === now && !x.auto; }, 5000));
+    await pageRun(wc, () => document.querySelector('.wnOk').click());
+    tl('Close closes it', await until(async () => !(await wn()), 3000));
+    fs.writeFileSync(path.join(SHOT_DIR, 'notes.json'), JSON.stringify(res, null, 1));
+  }
   if (process.env.DRIFT_TESTVOICE) {     // a hub's voice room with three copies of Drift on one PC (DRIFT_USERDATA apart): =host, =guest or =third. DRIFT_TESTCODE = a file
     // for the invite, DRIFT_TESTVOICE_OUT = a folder where each writes what it saw (<role>.json). The host's Drift runs the hub, so DRIFT_HUB_TAMPER
     // goes to the host. Opening the hub doesn't put you in voice: each presses Join voice in the hub bar, then Unmute (a test tone, not a microphone).
@@ -4372,6 +4698,119 @@ async function runShots() {
     } catch (e) {
       if (!/^stopped early/.test(e && e.message)) { tl('failed: ' + (e && e.stack || e), false); abort('crashed'); }
       if (aborted()) res.stopped = fs.readFileSync(abortFile, 'utf8');       // (why: the test script prints it)
+    }
+    fs.writeFileSync(path.join(outDir, role + '.json'), JSON.stringify(res, null, 1));
+    await step('end', 20000);
+  }
+  if (process.env.DRIFT_TESTFT) {     // files sent straight between PCs (docs/plans/files.md), two copies of Drift (scripts/test-file-transfer.js): =host or =guest.
+    // The host offers a 40 MB file (it goes through the hub's relay, held to its speed for files) and a 600 MB one (directly);
+    // the guest presses Download on the first, pauses partway, resumes, then downloads the second. Both must arrive whole.
+    // DRIFT_TESTCODE = a file for the invite, DRIFT_TESTFT_OUT = a folder for each step's marker, the files and <role>.json.
+    const role = process.env.DRIFT_TESTFT, codeFile = process.env.DRIFT_TESTCODE, outDir = process.env.DRIFT_TESTFT_OUT, other = role === 'host' ? 'guest' : 'host';
+    const name = role === 'host' ? 'Hosty' : 'Guesty', wc = visWins[0].win.webContents, js = (c) => pageJs(wc, c);
+    const abortFile = path.join(outDir, 'abort'), aborted = () => fs.existsSync(abortFile);
+    const abort = (why) => { try { fs.writeFileSync(abortFile, `${role}: ${why}`); } catch { /* fine */ } };
+    const until = async (f, ms = 30000) => { for (let t = 0; t < ms && !aborted(); t += 250) { if (await f()) return true; await wait(250); } return !!(await f()); };
+    const step = async (s, ms = 120000) => { fs.writeFileSync(path.join(outDir, `${role}-${s}`), ''); log.push(`files ${role}: at ${s}`); return until(() => fs.existsSync(path.join(outDir, `${other}-${s}`)), ms); };
+    const res = { role, name }, tl = (k, v) => { res[k] = v; log.push(`files ${role}: ${k} ${JSON.stringify(v)}`); };
+    const need = (k, v) => { tl(k, v); if (!v) { abort(k); throw new Error('stopped early: ' + k); } };
+    const hubNow = () => chat.info().hubs.find((h) => h.status === 'connected');
+    const sha = (p) => new Promise((ok) => { const h = crypto.createHash('sha256'); fs.createReadStream(p).on('data', (d) => h.update(d)).on('end', () => ok(h.digest('hex'))).on('error', () => ok('')); });
+    const small = path.join(outDir, 'small one.bin'), big = path.join(outDir, 'big one.bin');
+    fs.mkdirSync(outDir, { recursive: true });
+    const dl = path.join(outDir, 'downloads-' + role); fs.mkdirSync(dl, { recursive: true }); app.setPath('downloads', dl);
+    patch({ music: { source: 'off' }, share: { internet: false, name, wait: false }, voice: { talk: false, deaf: true, direct: false, pin: '' } });
+    wc.send('cmd', { type: 'show-panel', tab: 'hub' }); await wait(800);
+    try {
+      if (role === 'host') {
+        fs.writeFileSync(small, crypto.randomBytes(40 * 1024 * 1024));
+        const fd = fs.openSync(big, 'w'); fs.writeSync(fd, crypto.randomBytes(1024 * 1024)); fs.ftruncateSync(fd, 600 * 1024 * 1024); fs.writeSync(fd, crypto.randomBytes(4096), 0, 4096, 600 * 1024 * 1024 - 4096); fs.closeSync(fd);
+        await js("document.querySelector('#chHost').click()");
+        need('hub up', await until(() => !!hubNow()));
+        fs.writeFileSync(codeFile, (await chat.invite(hubNow().id)).code || '');
+        need('the guest joins', await step('ready'));
+        const h = hubNow(), ch = h.channels[0].id;
+        const a = await CHAT_OPS.offerFile(h.id, ch, small, 'the small one');
+        need('a 40 MB file is offered', !!(a.msg && a.msg.offer && a.msg.offer.size === 40 * 1024 * 1024));
+        const b = await CHAT_OPS.offerFile(h.id, ch, big, 'and the big one');
+        need('a 600 MB file is offered', !!(b.msg && b.msg.offer));
+        tl('both are offered from this PC', chat.info().offers.length === 2);
+        await step('offered');
+        tl('the guest asks: a connection opens to them', await until(() => [...ftRuns.values()].some((r) => r.role === 'send'), 30000));
+        await step('done', 300000);
+        tl('it knows who downloaded each', (ftSent.get(a.msg.offer.id) || []).includes('Guesty') && (ftSent.get(b.msg.offer.id) || []).includes('Guesty'));
+        const st = chat.relayStats() || {};
+        log.push('files host: relay ' + JSON.stringify(st));
+        tl('the small one went through the hub\'s relay, the big one not', st.fileBytes >= 40 * 1024 * 1024 && st.fileBytes < 200 * 1024 * 1024);
+        tl('nothing is moving now: the PC may sleep again', await until(() => !ftRuns.size && ftAwake === null, 10000));
+      } else {
+        need('the host\'s invite', await until(() => fs.existsSync(codeFile) && !!fs.readFileSync(codeFile, 'utf8'), 120000));
+        await js(`document.querySelector('#chCode').value = ${JSON.stringify(fs.readFileSync(codeFile, 'utf8'))}; document.querySelector('#chJoin').click()`);
+        need('joined the hub', await until(() => !!hubNow(), 60000));
+        await step('ready');
+        need('the host offered two files', await step('offered'));
+        const cards = () => pageRun(wc, () => [...document.querySelectorAll('.chFile')].map((c) => ({ name: c.querySelector('.chFileName').textContent, text: c.innerText.replace(/\n+/g, ' | '), btns: [...c.querySelectorAll('button')].map((x) => x.textContent) })));
+        const press = (file, label) => pageRun(wc, (f, l) => { const c = [...document.querySelectorAll('.chFile')].find((x) => x.querySelector('.chFileName').textContent === f); const b = c && [...c.querySelectorAll('button')].find((x) => x.textContent === l); if (b) b.click(); return !!b; }, file, label);
+        let cs = [];
+        need('both show as file cards, with Download', await until(async () => { cs = await cards(); return cs.length === 2 && cs.every((c) => c.btns.some((x) => /^Download/.test(x))); }, 20000));
+        log.push('files guest: cards ' + JSON.stringify(cs));
+        tl('the big one says it connects directly', cs.some((c) => c.name === 'big one.bin' && c.btns.includes('Download (direct)')));
+        const offers = (await chat.history(hubNow().id, hubNow().channels[0].id)).msgs.filter((m) => m.offer);
+        const os1 = offers.find((m) => m.offer.name === 'small one.bin'), ob = offers.find((m) => m.offer.name === 'big one.bin');
+        need('Download', await press('small one.bin', 'Download'));
+        const run = () => [...ftRuns.values()].find((r) => r.offer === os1.offer.id);
+        need('it connects through the relay, certificate checked', await until(() => run() && run().state === 'verified', 40000));
+        tl('...relayed, not direct', !run().direct);
+        tl('while it moves, the PC is kept awake', ftAwake !== null);
+        need('the first piece arrives and checks out', await until(() => run() && run().got > 17 * 1024 * 1024, 60000));
+        const r0 = { at: Date.now(), got: run().got };
+        await wait(4000);
+        const speed = run() ? (run().got - r0.got) / ((Date.now() - r0.at) / 1000) : 0;
+        log.push(`files guest: relayed at ${(speed / 1048576).toFixed(2)} MB/s`);
+        tl('the relay holds files to its speed (2 MB/s)', speed > 0.3 * 1048576 && speed < 2.7 * 1048576);
+        need('Pause', await press('small one.bin', 'Pause'));
+        await wait(1000);
+        const part = files.download(os1.offer.id);
+        tl('paused: what arrived is kept', !!part && part.partial && part.got >= 16 * 1024 * 1024 && !run());
+        await wait(1500);
+        cs = await cards();
+        tl('the card says where it stopped, with Resume', cs.some((c) => c.name === 'small one.bin' && /Stopped at \d+%/.test(c.text) && c.btns.includes('Resume')));
+        need('Resume', await press('small one.bin', 'Resume'));
+        need('it carries on', await until(() => run() && run().state === 'verified' && run().got > 26 * 1024 * 1024, 60000));
+        const H = hubNow().id;
+        chat.disconnect(H);       // the hub drops (as if the host's connection went): the relayed download can't go on
+        tl('the hub drops: the relayed download stops, keeping what it has', await until(() => !run(), 15000) && files.download(os1.offer.id).got >= 16 * 1024 * 1024 && !files.download(os1.offer.id).paused);
+        chat.reconnect(H);
+        need('the hub is back', await until(() => !!hubNow(), 30000));
+        tl('...and it carries on by itself, without pressing anything', await until(() => run() && run().state === 'verified', 60000));
+        need('it finishes', await until(() => { const d = files.download(os1.offer.id); return !!(d && d.path); }, 120000));
+        const got1 = files.download(os1.offer.id).path;
+        tl('the small one arrived whole', await sha(got1) === await sha(small));
+        tl('in Downloads\\Drift, under its own name', path.dirname(got1) === path.join(dl, 'Drift') && path.basename(got1) === 'small one.bin');
+        const direct = await CHAT_OPS.ftGet(hubNow().id, ob.offer, ob.from, false);
+        tl('the big one won\'t go through the relay', !!direct.error && !!direct.direct);
+        const g = await CHAT_OPS.ftGet(hubNow().id, ob.offer, ob.from, true);       // (as the card does once you agree to connect directly)
+        need('the big one starts directly', !!g.x);
+        tl('...directly', !!(ftRuns.get(g.x) && ftRuns.get(g.x).direct));
+        need('it connects, certificate checked', await until(() => ftRuns.get(g.x) && ftRuns.get(g.x).state === 'verified' && ftRuns.get(g.x).got > 8 * 1024 * 1024, 60000));
+        const H2 = hubNow().id, gotAt = ftRuns.get(g.x).got;
+        chat.disconnect(H2);       // the hub drops again: a direct download doesn't need it any more
+        await wait(2500);
+        log.push(`files guest: direct, ${gotAt} then ${ftRuns.get(g.x) ? ftRuns.get(g.x).got : 'ended'} bytes across the hub dropping`);
+        tl('the hub drops: the direct download carries on without it', !!ftRuns.get(g.x) && ftRuns.get(g.x).got > gotAt && !hubNow());
+        need('and finishes', await until(() => { const d = files.download(ob.offer.id); return !!(d && d.path); }, 180000));
+        chat.reconnect(H2);
+        need('the hub is back', await until(() => !!hubNow(), 30000));
+        tl('the big one arrived whole', await sha(files.download(ob.offer.id).path) === await sha(big));
+        await wait(1500);
+        cs = await cards();
+        tl('the cards say Downloaded, with Open and Show in folder', cs.length === 2 && cs.every((c) => /Downloaded/.test(c.text) && c.btns.includes('Open') && c.btns.includes('Show in folder')));
+        tl('no .part files are left', !fs.readdirSync(path.join(dl, 'Drift')).some((f) => f.endsWith('.drift-part')));
+        await step('done');
+      }
+    } catch (e) {
+      if (!/^stopped early/.test(e && e.message)) { tl('failed: ' + (e && e.stack || e), false); abort('crashed'); }
+      if (aborted()) res.stopped = fs.readFileSync(abortFile, 'utf8');
     }
     fs.writeFileSync(path.join(outDir, role + '.json'), JSON.stringify(res, null, 1));
     await step('end', 20000);

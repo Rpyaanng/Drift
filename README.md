@@ -50,7 +50,8 @@ panels you open on top of it. Leave the panel alone and it hides again.
 
 Your settings carry over to new versions. Drift **updates itself**: when a new release is out, a download icon appears
 on the **Settings** tab. Press **Download update**, then restart now or let it install when you close Drift. Tick
-*Update Drift automatically* to have this happen in the background.
+*Update Drift automatically* to have this happen in the background. The first time a new version opens, **What's new**
+shows what changed; **Settings → Updates → What's new** has every version's notes.
 
 ---
 
@@ -194,6 +195,9 @@ company or account in between. In a hub you can:
 - **Chat** in channels, with replies, editing, reactions, emoji, pictures and GIFs, and a little formatting
   (`**bold**`, `*italic*`, `` `code` ``, `||spoiler||`, `> quote`). Press **Enter** anywhere in Drift to write a
   message without opening the Hub tab.
+- **Send files** of any size. Press **+**, paste or drop a file on the chat and press **Enter**. Pictures and GIFs up
+  to 4 MB are kept on the hub as before; anything else stays on your PC, and friends download it straight from yours.
+  Downloads can be paused and resumed (even after a restart), and every piece is checked as it arrives.
 - **Talk** in the hub's voice room. Press **Join voice** to hear everyone, then unmute to talk. Push-to-talk works even
   while a game has the keyboard.
 - **Watch and listen together.** Pick a video or a song while you're in a hub and Drift asks whether to play it just
@@ -238,6 +242,11 @@ sees each other's pointer in their own colour with their name. **Hide cursor** i
   **Block** someone, which hides them for you.
 - Pictures you send and your profile picture are saved again small before sending, which removes hidden details such as
   where a photo was taken.
+- **Files go straight between your PCs, encrypted.** The hub never sees them or keeps them. Files up to 500 MB go
+  through the hub's relay, so nobody learns anyone's address; the relay sends files at up to 2 MB/s, so a download never
+  crowds out voice. Bigger files connect directly, and Drift asks first because each of you then sees the other's IP
+  address. Drift checks every piece against the check that came with the offer, so a file that was changed or damaged on
+  the way is never kept. Before you open a received program or shortcut, Drift asks whether you trust it.
 
 ---
 
@@ -435,6 +444,48 @@ python -m castlabs_evs.account signup
 From then on, `dev-build` signs every build, after any other signing as VMP requires. Without EVS it warns and builds
 anyway.
 
+### Release notes and releasing
+
+The first time a new version starts, Drift opens **What's new** on the main monitor. It shows that version's notes, with
+every version since the last one seen marked New. **Settings → Updates → What's new** opens it again, with every past
+version. The notes are written once, in the repo, and the GitHub release's description is made from the same file.
+
+Each version has `renderer/whats-new/<version>.md`, with any pictures in `renderer/whats-new/<version>/`:
+
+```md
+---
+version: 1.9.1
+date: 2026-11-25
+title: Send files of any size, straight from your PC      # up to 80 characters
+hero: hero.svg                                             # optional, across the top
+hero-alt: Two PCs passing a file between them              # required with a hero
+---
+
+## New                                                     # or Fixed, Improved, Changed
+
+- **A bold start.** Becomes the item's title; the rest is its text.
+  - An indented item belongs to the one above.
+
+![What it shows](card.png "A caption")                     # a picture on its own line
+
+> A note.
+```
+
+Pictures are png, jpg, webp, gif (each under 1.5 MB) or svg (under 250 KB, with no scripts or outside links).
+`node scripts/check-notes.js` checks all of it. CI runs it on every push and pull request (`.github/workflows/notes.yml`),
+and the pre-push hook runs it too, so **a version can't be pushed without its notes**. It also checks that every tag has
+notes and that no stray pictures are left behind.
+
+To release:
+
+1. Bump `version` in `package.json` and write `renderer/whats-new/<version>.md`.
+2. `node scripts/check-notes.js`, then build and zip `Drift-win32-x64` as `Drift-Windows-x64.zip`.
+3. `node scripts/release-notes.js --zip Drift-Windows-x64.zip > notes.md` writes the release's description: the notes,
+   with their pictures pointing at the tag's copy, then the download section and the zip's SHA-256 (the updater checks every
+   download against it).
+4. Commit, tag `v<version>`, push both, then
+   `gh release create v<version> Drift-Windows-x64.zip --title "Drift <version>" --notes-file notes.md`.
+
 ### ffmpeg
 
 Converting Dolby / DTS audio, HDR and other video formats, and reading subtitle tracks inside a video all need
@@ -470,6 +521,10 @@ Tests (each starts its own copies of Drift, with their own settings):
 | --- | --- |
 | `node scripts/test-chat.js`, `node scripts/test-voice.js` | Chat and voice logic (no Electron needed) |
 | `node scripts/test-reach.js` | The check of whether friends elsewhere could watch, before anything is shared (no Electron needed; `DRIFT_REACH=internet\|lan\|manual` decides what it finds) |
+| `node scripts/test-files.js` | Files sent between PCs: pieces and their check, resuming, the signed setup, the limits (no Electron needed; `DRIFT_BIG=1` adds a 5 GB file) |
+| `node scripts/test-file-transfer.js` | Two copies: a file through the relay, paused and resumed, and a 600 MB one directly |
+| `node scripts/check-notes.js`, `node scripts/test-notes.js` | Every version's release notes, and the notes reader, checker and release description (no Electron needed; CI runs both) |
+| `node scripts/test-whats-new.js` | What's new: opens by itself after an update with what changed since, pictures, keys, Settings, and only once |
 | `node scripts/test-calls.js` | Three copies in a voice room, honestly and with the hub tampering (`DRIFT_HUB_TAMPER=fingerprint\|unsigned\|replay\|swapkey`) |
 | `node scripts/test-mic.js` | The microphone test and noise suppression |
 | `node scripts/test-covers.js` | Song covers, titles and artists from tags |

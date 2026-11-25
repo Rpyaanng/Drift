@@ -11,8 +11,13 @@
 //
 // Credentials are the usual "TURN REST" kind, so the hub hands each member short-lived ones and stores nothing:
 //   username = `${expiresUnixSeconds}:${memberId}`, password = base64(HMAC-SHA1(secret, username))
-// and `allowed(memberId)` is asked on every request, so someone who leaves the call (or is removed) stops being relayed.
+// and `allowed(memberId, tag)` is asked on every request, so someone who leaves the call (or is removed) stops being relayed.
 //   const t = createTurn({ secret, relayHost, allowed }); await t.listen(47900, '0.0.0.0'); t.credentials('alice', 3600)
+//
+// File transfers (docs/plans/files.md) get credentials with a tag, `${expires}:${memberId}:f.${transferId}`, and what their
+// allocations send is held to `files`: a speed for each transfer and for all of them together, a most for each transfer and a
+// most for the day. Over it, packets are dropped (the data channel's own congestion control slows down), so a file never
+// crowds out voice, broadcasts or the Surf stream, and the host's connection can't be used up by one big download.
 const dgram = require('dgram');
 const crypto = require('crypto');
 const zlib = require('zlib');
@@ -87,12 +92,12 @@ function integrityOk(msg, key) {
   return got.length === 20 && crypto.timingSafeEqual(want, got);
 }
 
-module.exports = function createTurn({ secret, realm = 'drift', relayHost = '127.0.0.1', maxAllocations = 128, perMember = 24, allowed = () => true, log = () => {} }) {
+module.exports = function createTurn({ secret, realm = 'drift', relayHost = '127.0.0.1', maxAllocations = 128, perMember = 24, allowed = () => true, files = {}, log = () => {} }) {
   const sock = dgram.createSocket('udp4');
   const allocs = new Map();       // "ip:port" of the client -> its allocation
   const byRelay = new Map();      // relay port (an address on this server that only exists in here) -> its allocation
   let nextPort = 49152;
-  const stats = { allocations: 0, packetsIn: 0, packetsOut: 0, bytesIn: 0, bytesOut: 0, refused: 0, dropped: 0 };
+  const stats = { allocations: 0, packetsIn: 0, packetsOut: 0, bytesIn: 0, bytesOut: 0, refused: 0, dropped: 0, fileBytes: 0, fileDropped: 0 };
   const nonceKey = crypto.randomBytes(16);
   // A nonce says when it was made and is signed, so the server keeps no state for it; it goes stale after 10 minutes.
   const makeNonce = () => { const t = Math.floor(Date.now() / 1000).toString(16); return t + crypto.createHmac('sha256', nonceKey).update(t).digest('hex').slice(0, 16); };
@@ -101,7 +106,24 @@ module.exports = function createTurn({ secret, realm = 'drift', relayHost = '127
     if (!t || crypto.createHmac('sha256', nonceKey).update(t).digest('hex').slice(0, 16) !== sig) return 'bad';
     return Date.now() / 1000 - parseInt(t, 16) > 600 ? 'stale' : 'ok';
   };
-  const memberOf = (user) => user.slice(user.indexOf(':') + 1);
+  const memberOf = (user) => user.split(':')[1] || '';
+  const tagOf = (user) => user.split(':').slice(2).join(':');
+  // ---- what file transfers may send through here (see the top) ----
+  const fileMax = { rate: 2 << 20, rateAll: 4 << 20, max: 550e6, day: 5e9, ...files };
+  const fileUse = new Map();       // tag -> { tokens, at, bytes }
+  const fileAll = { tokens: 0, at: 0, day: '', dayBytes: 0 };
+  const isFile = (tag) => tag.startsWith('f.');
+  function fileOk(tag, n) {
+    const now = Date.now(), today = new Date(now).toISOString().slice(0, 10);
+    if (fileAll.day !== today) { fileAll.day = today; fileAll.dayBytes = 0; }
+    let u = fileUse.get(tag);
+    if (!u) { u = { tokens: fileMax.rate / 2, at: now, bytes: 0 }; fileUse.set(tag, u); }
+    const fill = (b, rate) => { b.tokens = Math.min(rate / 2, b.tokens + ((now - b.at) * rate) / 1000); b.at = now; };       // (half a second's worth can go at once)
+    fill(u, fileMax.rate); fill(fileAll, fileMax.rateAll);
+    if (u.bytes + n > fileMax.max || fileAll.dayBytes + n > fileMax.day || u.tokens < n || fileAll.tokens < n) { stats.fileDropped++; return false; }
+    u.tokens -= n; fileAll.tokens -= n; u.bytes += n; fileAll.dayBytes += n; stats.fileBytes += n;
+    return true;
+  }
   const password = (user) => crypto.createHmac('sha1', secret).update(user).digest('base64');
   const keyFor = (user) => crypto.createHash('md5').update(`${user}:${realm}:${password(user)}`).digest();
   const send = (buf, port, address) => sock.send(buf, port, address);
@@ -116,7 +138,7 @@ module.exports = function createTurn({ secret, realm = 'drift', relayHost = '127
     if (!user || !nonce || !msg.attrs.has(A.integrity)) { fail(msg, from, 401, null, challenge); return null; }
     const name = user.toString(), exp = parseInt(name.split(':')[0], 10), key = keyFor(name);
     if (!integrityOk(msg, key) || !(exp > Date.now() / 1000)) { fail(msg, from, 401, null, challenge); return null; }
-    if (!allowed(memberOf(name))) { fail(msg, from, 403, key); return null; }       // not in the call (any more)
+    if (!allowed(memberOf(name), tagOf(name))) { fail(msg, from, 403, key); return null; }       // not in the call (any more), or the transfer is over
     const ns = nonceState(nonce.toString());
     if (ns !== 'ok') { fail(msg, from, 438, null, challenge); return null; }
     return { key, user: name };
@@ -125,6 +147,7 @@ module.exports = function createTurn({ secret, realm = 'drift', relayHost = '127
   function expire(a) {
     allocs.delete(a.id); byRelay.delete(a.port);
     clearTimeout(a.timer);
+    if (a.tag && ![...allocs.values()].some((x) => x.tag === a.tag)) fileUse.delete(a.tag);
     log(`allocation ${a.id} closed`);
   }
   const touch = (a, secs) => { clearTimeout(a.timer); a.timer = setTimeout(() => expire(a), secs * 1000); a.timer.unref?.(); };
@@ -150,7 +173,7 @@ module.exports = function createTurn({ secret, realm = 'drift', relayHost = '127
     while (byRelay.has(port)) port = port >= 65535 ? 49152 : port + 1;
     nextPort = port >= 65535 ? 49152 : port + 1;
     const want = msg.attrs.get(A.lifetime);
-    const a = { id, client: from, user: who.user, key: who.key, tx: Buffer.from(msg.tx), port, perms: new Map(), chans: new Map(), chanOf: new Map(), lifetime: Math.min(MAX_S, Math.max(DEFAULT_S, want ? want.readUInt32BE(0) : DEFAULT_S)), timer: null };
+    const a = { id, client: from, user: who.user, tag: tagOf(who.user), key: who.key, tx: Buffer.from(msg.tx), port, perms: new Map(), chans: new Map(), chanOf: new Map(), lifetime: Math.min(MAX_S, Math.max(DEFAULT_S, want ? want.readUInt32BE(0) : DEFAULT_S)), timer: null };
     allocs.set(id, a); byRelay.set(port, a); stats.allocations++;
     touch(a, a.lifetime);
     log(`allocation ${id} for ${who.user} relays on ${relayHost}:${port}`);
@@ -160,6 +183,7 @@ module.exports = function createTurn({ secret, realm = 'drift', relayHost = '127
   function deliver(a, data, peer) {
     const b = peer.address === relayHost && byRelay.get(peer.port);
     if (!b) { stats.dropped++; return; }
+    if ((isFile(a.tag) || isFile(b.tag)) && !fileOk(a.tag || b.tag, data.length)) return;       // (a file's allocations only reach each other, but either end's tag counts)
     stats.packetsIn++; stats.bytesIn += data.length;
     fromPeer(b, data, { address: relayHost, port: a.port });
   }
@@ -238,9 +262,11 @@ module.exports = function createTurn({ secret, realm = 'drift', relayHost = '127
       // Windows' default 64 KB socket buffer drops video bursts before they're read (docs/plans/broadcast.md, spike C): 4 MB holds them
       try { sock.setRecvBufferSize(4 << 20); sock.setSendBufferSize(4 << 20); } catch (e) { log('udp buffers: ' + e.message); }
       sock.on('error', (e) => log('udp: ' + e.message)); ok(sock.address()); }); }),
-    credentials: (member, secs = 3600) => { const username = `${Math.floor(Date.now() / 1000) + secs}:${member}`; return { username, credential: password(username) }; },
-    stats: () => ({ ...stats, open: allocs.size }),
-    drop: (member) => { for (const a of [...allocs.values()]) if (memberOf(a.user) === member) expire(a); },       // they left the call: stop relaying for them now
+    credentials: (member, secs = 3600, tag = '') => { const username = `${Math.floor(Date.now() / 1000) + secs}:${member}${tag ? ':' + tag : ''}`; return { username, credential: password(username) }; },
+    stats: () => ({ ...stats, open: allocs.size, fileDay: fileAll.dayBytes }),
+    // they left the call: stop relaying for them now (with a tag, only those allocations: a file transfer that ended)
+    drop: (member, tag) => { for (const a of [...allocs.values()]) if (memberOf(a.user) === member && (tag === undefined ? !a.tag : a.tag === tag)) expire(a); },
+    dropTag: (tag) => { for (const a of [...allocs.values()]) if (a.tag === tag) expire(a); },
     port: () => sock.address().port,
     close: () => { for (const a of [...allocs.values()]) expire(a); sock.close(); },
   };

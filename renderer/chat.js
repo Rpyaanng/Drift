@@ -228,6 +228,7 @@
       if (head) row.append(face(x, m.from, '.msgFace'), h('div.chBy', {}, h('b', {}, nameOf(x, m.from)), h('time', { title: new Date(m.at).toLocaleString() }, when(m.at))));
       if (m.text || m.edited) row.append(h('div.chText', {}, render(m.text), m.edited ? h('span.chEd', { title: 'Edited ' + new Date(m.edited).toLocaleString() }, ' (edited)') : null));
       if (m.file) row.append(pic(x, m.file));
+      else if (m.offer) row.append(fileCard(x, m));
       else if (!m.text) row.append(h('div.chText.chGone', {}, 'This picture isn\'t kept on the hub any more.'));
       if (m.reacts && m.reacts.length) row.append(reactRow(x, m));
       const tools = h('div.chTools');
@@ -242,7 +243,103 @@
     }
     if (stick || atEnd) list.scrollTop = list.scrollHeight;
   }
-  const picWord = (m) => (m.file ? (m.file.mime === 'image/gif' ? '(a GIF)' : '(a picture)') : '');
+  const picWord = (m) => (m.file ? (m.file.mime === 'image/gif' ? '(a GIF)' : '(a picture)') : m.offer ? `(a file: ${m.offer.name})` : '');
+
+  // ---- files offered from someone's PC (docs/plans/files.md): a card saying what it is, how its download is doing, and what
+  // you can do with it. main.js sends how every transfer is doing (ft); the cards are filled again from that as it changes. ----
+  let ft = { runs: [], preps: [], downloads: [], notes: {}, sent: {}, folder: '', awake: false };
+  const RELAY_MAX = 500 * 1024 * 1024;       // bigger files connect directly (hub.js LIMITS.relayMax)
+  const sizeText = (n) => (n < 1024 * 1024 ? Math.max(1, Math.round(n / 1024)) + ' KB' : n < 1024 ** 3 ? (n / 1024 / 1024).toFixed(n < 10 * 1024 * 1024 ? 1 : 0) + ' MB' : (n / 1024 ** 3).toFixed(1) + ' GB');
+  const timeLeft = (s) => (s < 90 ? `about ${Math.max(1, Math.round(s))} s left` : s < 5400 ? `about ${Math.round(s / 60)} min left` : `about ${(s / 3600).toFixed(1)} h left`);
+  const pct = (a, b) => `${Math.floor((100 * a) / Math.max(1, b))}%`;
+  function fileCard(x, m) {
+    const box = h('div.chFile', { 'data-offer': m.offer.id });
+    box.msg = m; box.hubId = x.id;
+    fillCard(box);
+    return box;
+  }
+  function fillCard(box) {
+    const x = info.hubs.find((y) => y.id === box.hubId), m = box.msg, o = m.offer;
+    if (!x) return;
+    const here = (info.offers || []).includes(o.id), mine = m.from === info.me.id, who = nameOf(x, m.from);
+    const run = ft.runs.find((r) => r.offer === o.id && r.role === 'recv'), sends = ft.runs.filter((r) => r.offer === o.id && r.role === 'send');
+    // (the same file offered again, under a new message: what came of the last offer counts, as files.js carries on from it)
+    const dl = ft.downloads.find((d) => d.offer === o.id) || ft.downloads.find((d) => d.root === o.root && d.size === o.size && (d.path || (d.partial && !ft.runs.some((r) => r.offer === d.offer))));
+    const note = ft.notes[o.id] || (dl && dl.offer === o.id && dl.why), owner = x.members.find((y) => y.id === m.from), online = !!(owner && owner.online);
+    const lines = [], btns = [];
+    let bar = null;
+    const btn = (label, fn, cls = '') => h('button.mini' + cls, { onclick: fn }, label);
+    if (dl && dl.path) {
+      lines.push('Downloaded');
+      btns.push(btn('Open', () => call('ftOpen', dl.offer).then((r) => r.error && toast(r.error))), btn('Show in folder', () => call('ftShow', dl.offer).then((r) => r.error && toast(r.error))));
+    } else if (run) {
+      bar = run.got / Math.max(1, o.size);
+      const moving = run.state === 'verified';
+      lines.push(moving ? `${sizeText(run.got)} of ${sizeText(o.size)}${run.rate > 1024 ? ` · ${sizeText(run.rate)}/s · ${timeLeft((o.size - run.got) / run.rate)}` : ''}` : run.got ? `Connecting to ${who} to carry on (${pct(run.got, o.size)})…` : `Connecting to ${who}…`);
+      if (run.direct) lines.push('Directly between your PCs');
+      btns.push(btn('Pause', () => call('ftStop', o.id, false)), btn('Cancel', () => stopDownload(o), '.danger'));
+    } else if (here) {
+      lines.push(o.gone ? 'No longer offered' : 'Offered from this PC: it stays here, and friends download it from you');
+      for (const r of sends) lines.push(`Sending to ${r.peerName}${r.state === 'verified' ? ` · ${pct(r.got, o.size)}` : '…'}`);
+      if ((ft.sent[o.id] || []).length) lines.push('Downloaded by ' + ft.sent[o.id].join(', '));
+      if (!o.gone && o.size > RELAY_MAX) lines.push('Over 500 MB, so whoever downloads it connects to your PC directly');
+      if (!o.gone) btns.push(btn('Stop offering', () => call('offerDrop', x.id, o.id).then((r) => r.error && toast(r.error))));
+    } else if (o.gone) {
+      lines.push('No longer offered');
+      if (dl && dl.partial) {
+        lines.push(`${pct(dl.got, o.size)} was downloaded: if ${who} offers it again, it carries on from there`);
+        btns.push(btn('Discard what was downloaded', () => call('ftStop', dl.offer, true)));
+      }
+    } else if (mine) {
+      lines.push('Offered from your other PC');
+    } else if (dl && dl.partial) {
+      bar = dl.got / Math.max(1, o.size);
+      const at = `${pct(dl.got, o.size)} (${sizeText(dl.got)} of ${sizeText(o.size)})`;
+      if (dl.paused) {       // you paused it, or it failed a check: it waits for you
+        lines.push(`Stopped at ${at}${online ? '' : ` · ${who} is offline`}`);
+        btns.push(btn('Resume', () => download(x, m)), btn('Discard', () => stopDownload(o, dl.offer), '.danger'));
+        if (!online) btns[0].disabled = true;
+      } else {       // it dropped (the hub, or their PC): it carries on by itself
+        lines.push(online ? `Carrying on from ${at}…` : `Paused at ${at} · it carries on by itself when ${who} is back online`);
+        btns.push(btn('Pause', () => call('ftStop', dl.offer, false)), btn('Discard', () => stopDownload(o, dl.offer), '.danger'));
+      }
+    } else {
+      const b = btn(o.size > RELAY_MAX ? 'Download (direct)' : 'Download', () => download(x, m));
+      b.title = online ? `Saves to ${ft.folder || 'Downloads\\Drift'}` : `${who} is offline: the file is on their PC`;
+      if (!online) { b.disabled = true; lines.push(`${who} is offline`); }
+      btns.push(b);
+    }
+    if (note && !run && !(dl && dl.path)) lines.push(h('span.chFileErr', {}, note));
+    box.classList.toggle('gone', !!o.gone && !(dl && dl.path));
+    box.replaceChildren(
+      h('div.chFileIco', {}, (o.name.match(/\.([A-Za-z0-9]{1,5})$/) || ['', 'file'])[1].toUpperCase()),
+      h('div.chFileBody', {}, h('b.chFileName', { title: o.name }, o.name), h('span.chFileSize', {}, sizeText(o.size)),
+        bar !== null ? h('div.chFileBar', {}, h('i', { style: `width:${Math.min(100, Math.max(0, bar * 100)).toFixed(1)}%` })) : null,
+        lines.map((l) => h('div.chFileLine', {}, l)), btns.length ? h('div.chFileBtns', {}, btns) : null));
+  }
+  async function download(x, m) {
+    const o = m.offer, who = nameOf(x, m.from);
+    const direct = () => ask({ title: `Connect directly to ${who}?`, note: `Files over 500 MB go straight between your PCs, not through the hub, so ${who}'s PC and yours see each other's IP address.`, yes: 'Download', danger: false });
+    let d = false;
+    if (o.size > RELAY_MAX) { if (!(await direct())) return; d = true; }
+    let r = await call('ftGet', x.id, o, m.from, d);
+    if (r.error && r.direct && !d) { if (!(await direct())) return; r = await call('ftGet', x.id, o, m.from, true); }
+    if (r.error) toast(r.error);
+  }
+  async function stopDownload(o, id = o.id) {       // (id: the download's own, when it came of an earlier offer of the same file)
+    if (await ask({ title: `Throw away ${o.name}?`, note: 'What was downloaded so far is deleted. Pause keeps it, to carry on later.', yes: 'Throw it away' })) call('ftStop', id, true);
+  }
+  const folderBtn = $('#ftFolderBtn');
+  if (folderBtn) folderBtn.addEventListener('click', () => call('ftFolder').then((r) => { if (r.folder) $('#ftFolderText').textContent = r.folder; }));
+  function onFt(next) {
+    ft = next || ft;
+    if ($('#ftFolderText') && ft.folder) $('#ftFolderText').textContent = ft.folder;
+    for (const el of document.querySelectorAll('.chFile')) fillCard(el);
+    if (attach && attach.file && attach.sending) {
+      const p = ft.preps.find((y) => y.name === attach.name);
+      if (p) $('#chAttachText').textContent = `Reading ${attach.name} to make its check… ${pct(p.done, p.size)}`;
+    }
+  }
 
   // ---- pictures and GIFs in messages: fetched from the hub through chat.js once, kept here as data: URLs ----
   // The box is sized from what the sender said the picture measures, so the list doesn't jump when it arrives.
@@ -391,11 +488,24 @@
   // ---- sending a picture or GIF of your own: + , paste, or drop it on the chat. It waits over the box until Enter ----
   // Photos are drawn again as WebP (at most 2560 px on a side): that drops where they were taken and the rest of what the
   // file carried, and keeps them small. GIFs and animated WebPs are sent as they are, so they still move.
-  let attach = null;       // { bytes: Uint8Array, w, h, gif }
+  // Anything else (and a picture still over 4 MB) is offered instead: it stays on this PC and friends download it from here
+  // (docs/plans/files.md). Enter reads it once to make its check, then sends the message that offers it.
+  let attach = null;       // a picture: { bytes: Uint8Array, w, h, gif }; a file: { file: true, path, name, size, sending }
+  function prepFile(f) {
+    const x = hubNow();
+    if (!f || !x || x.status !== 'connected' || !chanNow()) return;
+    const p = api.pathOf ? api.pathOf(f) : '';
+    if (!p) { toast('Drift couldn\'t tell where that file is. Drop it from a folder, or press + to pick it.'); return; }
+    attach = { file: true, path: p, name: f.name, size: f.size, sending: false };
+    $('#chAttachPic').replaceChildren(h('span.chFileIco', {}, (f.name.match(/\.([A-Za-z0-9]{1,5})$/) || ['', 'file'])[1].toUpperCase()));
+    $('#chAttachText').textContent = `${f.name} · ${sizeText(f.size)} · Enter offers it: it stays on this PC and friends download it from you${f.size > RELAY_MAX ? ' (directly, so whoever downloads it sees your IP address)' : ''}`;
+    $('#chAttach').classList.add('on');
+    input.focus();
+  }
   async function prepPicture(f) {
     const x = hubNow();
     if (!f || !x || x.status !== 'connected' || !chanNow()) return;
-    if (!/^image\/(png|jpeg|webp|gif|bmp)$/.test(f.type)) { toast('Only pictures and GIFs (PNG, JPEG, WebP, GIF) can be sent.'); return; }
+    if (!/^image\/(png|jpeg|webp|gif|bmp)$/.test(f.type) || f.size > 64 * 1024 * 1024) { prepFile(f); return; }
     let bmp = null;
     try { bmp = await createImageBitmap(f); } catch { toast('That picture couldn\'t be opened.'); return; }
     let bytes = new Uint8Array(await f.arrayBuffer()), w = bmp.width, hh = bmp.height;
@@ -412,7 +522,7 @@
       }
     }
     bmp.close();
-    if (bytes.length > 4 * 1024 * 1024) { toast('That\'s too big: pictures and GIFs can be up to 4 MB.'); return; }
+    if (bytes.length > 4 * 1024 * 1024) { prepFile(f); return; }       // (a big GIF: offered from this PC instead of kept on the hub)
     let b64 = '';
     for (let i = 0; i < bytes.length; i += 0x8000) b64 += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
     const kind = moving ? f.type : 'image/webp';
@@ -427,7 +537,7 @@
   $('#chFileBtn').addEventListener('click', () => $('#chFile').click());
   $('#chFile').addEventListener('change', (e) => { const f = e.target.files && e.target.files[0]; e.target.value = ''; prepPicture(f); });
   $('#chInput').addEventListener('paste', (e) => {
-    const f = [...(e.clipboardData ? e.clipboardData.files : [])].find((y) => y.type.startsWith('image/'));
+    const all = [...(e.clipboardData ? e.clipboardData.files : [])], f = all.find((y) => y.type.startsWith('image/')) || all[0];
     if (f) { e.preventDefault(); prepPicture(f); }
   });
   // (anywhere in the window: a file dropped on it would otherwise open in its place)
@@ -437,8 +547,9 @@
     if (!e.dataTransfer || ![...e.dataTransfer.types].includes('Files')) return;
     e.preventDefault(); $('#chMain').classList.remove('dropping');
     if (!e.target.closest || !e.target.closest('#chMain')) return;
-    const f = [...e.dataTransfer.files].find((y) => y.type.startsWith('image/'));
-    if (f) prepPicture(f); else toast('Only pictures and GIFs can be sent.');
+    const f = e.dataTransfer.files[0];
+    if (e.dataTransfer.files.length > 1) toast('One at a time: drop the others after this one is sent.');
+    if (f) prepPicture(f);
   });
   // What fills the middle while you aren't online in a hub: what a hub is, and the next step to get into one.
   function drawIntro(x) {
@@ -962,11 +1073,13 @@
     const text = input.value.trim(), m = mode, a = m && m.kind === 'edit' ? null : attach;
     if (!text && !a) { if (m && m.kind === 'edit') setMode(null); return; }
     input.disabled = true;
-    if (a) $('#chAttachText').textContent = 'Sending…';
+    if (a) { $('#chAttachText').textContent = a.file ? `Reading ${a.name} to make its check…` : 'Sending…'; a.sending = true; }
     const r = m && m.kind === 'edit' ? await call('edit', sel.hub, m.msg.id, text)
+      : a && a.file ? await call('offerFile', sel.hub, sel.ch, a.path, text, m && m.kind === 'reply' ? m.msg.id : undefined)
       : a ? await call('sendFile', sel.hub, sel.ch, a.bytes, a.w, a.h, text, m && m.kind === 'reply' ? m.msg.id : undefined)
       : await call('send', sel.hub, sel.ch, text, m && m.kind === 'reply' ? m.msg.id : undefined);
     input.disabled = false; input.focus();
+    if (a) a.sending = false;
     if (r.error) { toast(r.error); if (a && attach === a) $('#chAttachText').textContent = 'Not sent · Enter tries again, Esc drops it'; return; }
     if (a && attach === a) dropAttach();
     input.value = ''; mode = null; input.dataset.editing = ''; fit(); drawMode();
@@ -1137,7 +1250,7 @@
     if (msg.id && [...coList.children].some((r) => r.dataset.id === String(msg.id))) return;       // (already in the log)
     const c = x && x.channels.find((y) => y.id === msg.ch);
     const row = h('div.coMsg', { 'data-id': msg.id || '' }, face(x, msg.from, '.co'),
-      h('div.coBody', {}, h('b.coName', {}, nameOf(x, msg.from)), x && x.channels.length > 1 && c ? h('em', {}, '#' + c.name) : null, msg.text ? h('span.coText', {}, render(msg.text)) : null, msg.file && x ? pic(x, msg.file, 240, 160) : null));
+      h('div.coBody', {}, h('b.coName', {}, nameOf(x, msg.from)), x && x.channels.length > 1 && c ? h('em', {}, '#' + c.name) : null, msg.text ? h('span.coText', {}, render(msg.text)) : null, msg.file && x ? pic(x, msg.file, 240, 160) : msg.offer ? h('span.coText', {}, `📄 ${msg.offer.name}`) : null));
     coList.append(row);
     while (coList.children.length > 8) coList.firstChild.remove();
     coFade(row, ms);
@@ -1274,9 +1387,11 @@
     else if (c.type === 'event') onEvent(c.hub, c.m);
     else if (c.type === 'notify') onNotify(c.hub, c.msg, !!c.overlay);
     else if (c.type === 'voice') onVoice(c.live);
+    else if (c.type === 'ft') onFt(c.ft);
     else if (c.type === 'bclive') { const was = !!(bcLiveS && bcLiveS.paused); bcLiveS = c.live; if (was !== !!(c.live && c.live.paused)) drawCall(); }
   });
   refresh();
+  call('ftState').then((r) => { if (r && Array.isArray(r.runs)) onFt(r); });
   window.chatUI = { hub: () => sel.hub,       // app.js shares into this hub
     quick: () => openCompose(), closeQuick: () => closeCompose(),       // over Surf (app.js): the chat button, and Enter the page didn't want
     overlay: () => [...coList.children].map((r) => r.innerText.replace(/\n+/g, ' ')), compose: (t) => { if (!openCompose()) return false; coInput.value = t; coInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); return true; },

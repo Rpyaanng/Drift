@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer, sharedTexture } = require('electron');
+const { contextBridge, ipcRenderer, sharedTexture, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('drift', {
   init: () => ipcRenderer.invoke('init'),
@@ -17,6 +17,8 @@ contextBridge.exposeInMainWorld('drift', {
     if (['state', 'levels', 'now', 'cmd', 'chat'].includes(channel)) ipcRenderer.on(channel, (_e, data) => fn(data));
   },
   chat: (op, ...args) => ipcRenderer.invoke('chat', op, ...args),       // chat.js, through main.js (see CHAT_OPS there)
+  notes: () => ipcRenderer.invoke('notes'),       // What's new: { current, seen, list: [{ version, text }] }, newest first (renderer/whats-new/)
+  pathOf: (file) => { try { return webUtils.getPathForFile(file) || ''; } catch { return ''; } },       // where a dropped or picked file is on this PC ('' for one pasted from memory)
 });
 
 // A Surf page drawn offscreen (web.js, "Draw Surf on the graphics card") arrives here frame by frame as a texture on the graphics

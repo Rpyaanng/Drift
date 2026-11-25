@@ -1,0 +1,3 @@
+#!/bin/sh
+# What's new: nothing is pushed while a version is missing its notes or they're wrong (the same check CI runs).
+node "$(git rev-parse --show-toplevel)/scripts/check-notes.js" || { echo "pre-push: fix the notes above (renderer/whats-new/), then push again"; exit 1; }

@@ -36,7 +36,13 @@ const createTurn = require('./turn');
 
 const VERSION = 1;
 const LIMITS = { line: 256 * 1024, text: 4000, name: 24, channel: 32, channels: 50, page: 100, actions: 10, perSecs: 10, connections: 64, avatar: 14000, voice: 16, talkers: 8, signals: 200, broadcasts: 4, viewers: 7, bcTitle: 80, bcThumb: 200000, surfWatchers: 7,
-  file: 4 * 1024 * 1024, fileChunk: 160 * 1024, files: 300 * 1024 * 1024, reactions: 20 };       // file: the biggest picture or GIF (bytes), sent fileChunk at a time; files: all of a hub's together
+  file: 4 * 1024 * 1024, fileChunk: 160 * 1024, files: 300 * 1024 * 1024, reactions: 20,       // file: the biggest picture or GIF (bytes), sent fileChunk at a time; files: all of a hub's together
+  // Files sent straight between members' PCs (docs/plans/files.md): offered in a message, never kept here. offerMax: the
+  // biggest a file may say it is; relayMax: the biggest that may go through the hub's relay (bigger ones connect directly);
+  // offers: open at once for each member; ftSend / ftRecv: transfers at once for each member; ftRelayed: through the relay at
+  // once in the whole hub; ftRate / ftRateAll / ftDay: the relay's speed for each file and for all, and its most in a day.
+  offerName: 200, offerMax: 2 ** 40, relayMax: 500 * 1024 * 1024, offers: 50, ftSend: 3, ftRecv: 3, ftRelayed: 8,
+  ftRate: 2 * 1024 * 1024, ftRateAll: 4 * 1024 * 1024, ftDay: 5e9, piece: 16 * 1024 * 1024 };
 const TURN_SECS = 24 * 3600;       // how long relay credentials last (the relay also stops as soon as someone leaves the room or stops listening)
 const INVITE_DAYS = 7;
 // Where a member connects from, as far as reaching each other's shares goes ("reach" below): 'near' for this PC, its own network
@@ -136,6 +142,15 @@ function cleanEmoji(e) {
   return [...new Intl.Segmenter().segment(e)].length === 1 ? e : '';
 }
 const avatarId = (d) => (d ? crypto.createHash('sha256').update(d).digest().subarray(0, 9).toString('base64url') : '');
+// A file's name as offered: no folders, nothing Windows can't keep in a name, and not too long (the receiving Drift cleans it again).
+function cleanFileName(n) {
+  let s = String(n || '').normalize('NFC').replace(/[\x00-\x1f\x7f<>:"/\\|?*]/g, '_').replace(/\s+/g, ' ').trim().replace(/^[. ]+|[. ]+$/g, '');
+  if (s.length > LIMITS.offerName) { const ext = (s.match(/\.[^.]{1,12}$/) || [''])[0]; s = s.slice(0, LIMITS.offerName - ext.length) + ext; }
+  if (/^(con|prn|aux|nul|com\d|lpt\d)(\.|$)/i.test(s)) s = '_' + s;
+  return s;
+}
+const OFFER_ID = /^[A-Za-z0-9_-]{16,64}$/, ROOT = /^[A-Za-z0-9_-]{43}$/;
+const cleanMime = (t) => (/^[a-z0-9.+-]{1,40}\/[a-z0-9.+-]{1,80}$/i.test(String(t || '')) ? String(t).toLowerCase() : 'application/octet-stream');
 const cleanChannel = (n) => String(n || '').toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9_-]/g, '').replace(/-{2,}/g, '-').replace(/^-|-$/g, '').slice(0, LIMITS.channel);
 
 // opts: dir (where the database and key live), owner (the host's public key, raw 32 bytes), name (what the hub is
@@ -156,6 +171,9 @@ module.exports = function createHub(opts) {
     CREATE TABLE IF NOT EXISTS files (id TEXT PRIMARY KEY, msg INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE, mime TEXT NOT NULL,
       w INTEGER NOT NULL, h INTEGER NOT NULL, size INTEGER NOT NULL, data BLOB NOT NULL, at INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS files_by_msg ON files (msg);
+    CREATE TABLE IF NOT EXISTS offers (id TEXT PRIMARY KEY, msg INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE, name TEXT NOT NULL,
+      size INTEGER NOT NULL, mime TEXT NOT NULL, root TEXT NOT NULL, piece INTEGER NOT NULL, gone INTEGER NOT NULL DEFAULT 0);
+    CREATE INDEX IF NOT EXISTS offers_by_msg ON offers (msg);
     CREATE TABLE IF NOT EXISTS reactions (msg INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE, who TEXT NOT NULL, emoji TEXT NOT NULL,
       at INTEGER NOT NULL, PRIMARY KEY (msg, who, emoji));
   `);
@@ -182,7 +200,7 @@ module.exports = function createHub(opts) {
   // Messages last one session of the host's Drift: wiped when it closes (clearMessages) and, in case it didn't close
   // cleanly, when it first hosts again (opts.fresh). Channels, members and invites stay.
   function clearMessages() {
-    db.exec('DELETE FROM files; DELETE FROM reactions; DELETE FROM messages');
+    db.exec('DELETE FROM files; DELETE FROM offers; DELETE FROM reactions; DELETE FROM messages');
     try { db.exec('PRAGMA wal_checkpoint(TRUNCATE); VACUUM'); } catch { /* still wiped; the file shrinks next time */ }
   }
   if (opts.fresh) clearMessages();
@@ -211,6 +229,11 @@ module.exports = function createHub(opts) {
     reactsOf: q('SELECT emoji, who FROM reactions WHERE msg = ? ORDER BY at, rowid'), addReact: q('INSERT OR IGNORE INTO reactions (msg, who, emoji, at) VALUES (?, ?, ?, ?)'),
     dropReact: q('DELETE FROM reactions WHERE msg = ? AND who = ? AND emoji = ?'), reactKinds: q('SELECT COUNT(DISTINCT emoji) n FROM reactions WHERE msg = ?'),
     reactKind: q('SELECT 1 FROM reactions WHERE msg = ? AND emoji = ? LIMIT 1'),
+    addOffer: q('INSERT INTO offers (id, msg, name, size, mime, root, piece) VALUES (?, ?, ?, ?, ?, ?, ?)'),
+    offerOf: q('SELECT id, name, size, mime, root, piece, gone FROM offers WHERE msg = ?'),
+    offer: q('SELECT o.*, m.author, m.ch FROM offers o JOIN messages m ON m.id = o.msg WHERE o.id = ?'),
+    offersBy: q('SELECT COUNT(*) n FROM offers o JOIN messages m ON m.id = o.msg WHERE m.author = ? AND o.gone = 0'),
+    dropOffer: q('UPDATE offers SET gone = 1 WHERE id = ?'),
   });
   // Reactions on a message, in the order they were first given: [{ e, who: [member ids] }]
   function reactsOf(id) {
@@ -225,6 +248,8 @@ module.exports = function createHub(opts) {
     const out = { id: m.id, ch: m.ch, from: m.author, text: m.body, reply: m.reply || null, at: m.at, edited: m.edited || null };
     const f = S.fileOf.get(m.id), reacts = reactsOf(m.id);
     if (f) out.file = { id: f.id, mime: f.mime, w: f.w, h: f.h, size: f.size };
+    const o = S.offerOf.get(m.id);
+    if (o) out.offer = { id: o.id, name: o.name, size: o.size, mime: o.mime, root: o.root, piece: o.piece, gone: !!o.gone };
     if (reacts.length) out.reacts = reacts;
     return out;
   };
@@ -310,7 +335,7 @@ module.exports = function createHub(opts) {
 
   function onConnection(sock) {
     if (sessions.size >= LIMITS.connections) { sock.destroy(); return; }
-    const s = { id: null, nonce: crypto.randomBytes(24).toString('base64url'), wire: null, acts: { msg: [], other: [], live: [], sig: [], bc: [], react: [], part: [] }, typed: 0, upload: null, place: placeOf(sock.remoteAddress) };
+    const s = { id: null, nonce: crypto.randomBytes(24).toString('base64url'), wire: null, acts: { msg: [], other: [], live: [], sig: [], bc: [], react: [], part: [], offer: [], ft: [] }, typed: 0, upload: null, place: placeOf(sock.remoteAddress) };
     sessions.add(s);
     const login = setTimeout(() => { if (!s.id) s.wire.close(); }, 15000);
     s.wire = wire(sock, null, (m) => { try { onMessage(s, m); } catch (e) { reply(s, m, { error: 'Something went wrong on the hub.' }); if (opts.log) opts.log('hub: ' + (e && e.stack || e)); } }, () => {
@@ -322,6 +347,7 @@ module.exports = function createHub(opts) {
       }
       if (s.id && surfWatch.get(s.id) === s) { surfWatch.delete(s.id); relayCheck(s.id); relayCheck(ownerId); surfNews(); }
       if (s.id && voice.get(s.id) && voice.get(s.id).s === s) leaveRoom(s.id);
+      ftSessionGone(s);
     }, LIMITS.line);
     s.wire.send({ t: 'hello', v: VERSION, nonce: s.nonce, name: hubName, still: LIMITS.bcThumb });       // (still: the largest broadcast still it takes; a hub from before says nothing, and takes 14000 characters)
   }
@@ -375,7 +401,19 @@ module.exports = function createHub(opts) {
         if (again) return reply(s, m, { msg: row(again) });
         const up = m.up ? s.upload : null;
         if (m.up && (!up || up.token !== m.up || up.got !== up.size)) return reply(s, m, { error: 'That picture didn\'t finish uploading. Try again.' });
-        if (!text && !up) return reply(s, m, { error: 'Nothing to send.' });
+        let offer = null;
+        if (m.offer) {       // a file that stays on the sender's PC, for others to download from it (docs/plans/files.md)
+          const o = m.offer, size = Math.floor(+o.size), piece = Math.floor(+o.piece), name = cleanFileName(o.name);
+          if (up) return reply(s, m, { error: 'A message can carry a picture or a file, not both.' });
+          if (!OFFER_ID.test(String(o.id || '')) || S.offer.get(String(o.id))) return reply(s, m, { error: 'That file\'s id can\'t be used.' });
+          if (!name) return reply(s, m, { error: 'That file needs a name.' });
+          if (!(size > 0 && size <= LIMITS.offerMax)) return reply(s, m, { error: 'That file is too big to offer.' });
+          if (!ROOT.test(String(o.root || '')) || !(piece >= 1 << 20 && piece <= 1 << 26 && (piece & (piece - 1)) === 0)) return reply(s, m, { error: 'That file\'s check doesn\'t look right.' });
+          if (S.offersBy.get(s.id).n >= LIMITS.offers) return reply(s, m, { error: `You can offer up to ${LIMITS.offers} files at once. Stop offering one first.` });
+          if (slow(s, 'offer', 20)) return reply(s, m, { error: 'Slow down a little.' });       // (a handful dropped at once is fine; the 50 open at once is the real limit)
+          offer = { id: String(o.id), name, size, mime: cleanMime(o.mime), root: String(o.root), piece };
+        }
+        if (!text && !up && !offer) return reply(s, m, { error: 'Nothing to send.' });
         if (text.length > LIMITS.text) return reply(s, m, { error: `Messages can be up to ${LIMITS.text} characters.` });
         if (!cid) return reply(s, m, { error: 'Missing message id.' });
         if (slow(s)) return reply(s, m, { error: 'Slow down a little.' });
@@ -390,6 +428,7 @@ module.exports = function createHub(opts) {
           S.addFile.run(crypto.randomBytes(12).toString('base64url'), r.lastInsertRowid, mime, up.w, up.h, data.length, data, Date.now());
           makeRoom();
         }
+        if (offer) { S.addOffer.run(offer.id, r.lastInsertRowid, offer.name, offer.size, offer.mime, offer.root, offer.piece); holders.set(offer.id, s); }
         const msg = row(S.msg.get(r.lastInsertRowid));
         everyone({ t: 'msg', msg });
         return reply(s, m, { msg });
@@ -443,6 +482,8 @@ module.exports = function createHub(opts) {
       case 'delete': {       // deleting really deletes: the row goes, and everyone connected drops it
         const old = S.msg.get(+m.id);
         if (!old || (old.author !== s.id && !isHost)) return reply(s, m, { error: 'You can only delete your own messages.' });
+        const o = S.offerOf.get(old.id);
+        if (o) offerGone(o.id, 'The file\'s message was deleted.');
         S.dropMsg.run(old.id);
         everyone({ t: 'gone', ch: old.ch, id: old.id });
         return reply(s, m, {});
@@ -580,6 +621,11 @@ module.exports = function createHub(opts) {
         recount();
         return reply(s, m, {});
       }
+      case 'offer-here': return offerHere(s, m);
+      case 'offer-drop': return offerDrop(s, m, isHost);
+      case 'ft-want': return ftWant(s, m);
+      case 'ft-signal': return ftSignal(s, m);
+      case 'ft-end': return ftEnd(s, m);
       case 'voice-state': return voiceState(s, m);
       case 'voice-signal': {       // a setup message for one other person in the call, passed on as it is: the signature inside is theirs, not the hub's
         const v = voice.get(s.id), to = String(m.to || '');
@@ -615,6 +661,86 @@ module.exports = function createHub(opts) {
       }
       default: return reply(s, m, { error: 'The hub doesn\'t know how to do that.' });
     }
+  }
+
+  // ---- files sent straight between members' PCs (docs/plans/files.md) ----
+  // A file is offered in a message (its name, size and check); the file itself stays on the sender's PC. Someone who wants it
+  // asks here (ft-want, with their signed request), the hub finds the session whose PC has it and passes their setup messages
+  // between the two (ft-signal), and the bytes go over a data channel between them: through the hub's relay for files up to
+  // relayMax, so nobody learns anyone's address, or directly for bigger ones (the receiver agrees to that first). The hub never
+  // sees the file and can't change it unnoticed: the request and both SDPs are signed (chat.js), and the receiving Drift checks
+  // every piece against the check in the offer, which came over the verified connection too.
+  const holders = new Map();       // offer id -> the session whose PC has the file (the one that offered it, or said so again after reconnecting)
+  const xfers = new Map();         // transfer id -> { x, offer, from (who has it), fs (their session), to, ts, relay, since }. Memory only.
+  const XFER = /^[A-Za-z0-9_-]{16,64}$/;
+  const live = (x) => !!x && sessions.has(x) && !!x.wire;
+  const fileRelay = (id, x, relay) => ({ relay: relay && turn ? { port: turn.port(), ...turn.credentials(id, TURN_SECS, 'f.' + x) } : null, hosts: relayHosts(), stun: turn ? turn.port() : 0 });
+  function offerHere(s, m) {       // after reconnecting: the files this PC still has, of those it offered here. Answers which are still offered.
+    const have = [];
+    for (const id of (Array.isArray(m.ids) ? m.ids : []).slice(0, 500)) {
+      const o = S.offer.get(String(id));
+      if (!o || o.gone || o.author !== s.id) continue;
+      holders.set(o.id, s); have.push(o.id);
+    }
+    return reply(s, m, { have });
+  }
+  function offerGone(id, why) {       // no longer offered: transfers of it end
+    holders.delete(id);
+    for (const t of [...xfers.values()]) if (t.offer === id) ftClose(t, why);
+  }
+  function offerDrop(s, m, isHost) {
+    const o = S.offer.get(String(m.id || ''));
+    if (!o) return reply(s, m, { error: 'That file isn\'t offered.' });
+    if (o.author !== s.id && !isHost) return reply(s, m, { error: 'Only whoever offered it (or the host) can stop offering it.' });
+    if (!o.gone) {
+      S.dropOffer.run(o.id); offerGone(o.id, 'They stopped offering it.');
+      const msg = row(S.msg.get(o.msg));
+      if (msg) everyone({ t: 'msg', msg, again: true });
+    }
+    return reply(s, m, {});
+  }
+  function ftWant(s, m) {
+    const o = S.offer.get(String(m.offer || '')), x = String(m.x || ''), relay = m.relay !== false, d = m.d;
+    if (!o || o.gone) return reply(s, m, { error: 'That file isn\'t offered any more.', gone: true });
+    if (!XFER.test(x) || xfers.has(x)) return reply(s, m, { error: 'That transfer id can\'t be used.' });
+    if (!d || typeof d !== 'object') return reply(s, m, { error: 'That request wasn\'t signed.' });
+    const h = holders.get(o.id);
+    if (h === s) return reply(s, m, { error: 'That file is on this PC already.' });
+    if (!live(h)) return reply(s, m, { error: `${nameOf(o.author)}'s PC with that file isn't online right now.`, offline: true });
+    if (relay && o.size > LIMITS.relayMax) return reply(s, m, { error: `Files over ${LIMITS.relayMax / 1024 / 1024} MB need a direct connection.`, direct: true });
+    if (relay && !turn) return reply(s, m, { error: 'The hub\'s relay isn\'t running, so files can only go directly.', direct: true });
+    const all = [...xfers.values()];
+    if (all.filter((t) => t.fs === h).length >= LIMITS.ftSend) return reply(s, m, { error: `${nameOf(o.author)} is already sending ${LIMITS.ftSend} files. Try again in a little while.`, busy: true });
+    if (all.filter((t) => t.ts === s).length >= LIMITS.ftRecv) return reply(s, m, { error: `You can download ${LIMITS.ftRecv} files at once. Wait for one to finish.`, busy: true });
+    if (relay && all.filter((t) => t.relay).length >= LIMITS.ftRelayed) return reply(s, m, { error: `The hub's relay is carrying ${LIMITS.ftRelayed} files already. Try again in a little while.`, busy: true });
+    if (slow(s, 'ft')) return reply(s, m, { error: 'Slow down a little.' });
+    const t = { x, offer: o.id, from: o.author, fs: h, to: s.id, ts: s, relay, since: Date.now() };
+    xfers.set(x, t);
+    h.wire.send({ t: 'ft-want', x, offer: o.id, from: s.id, relayed: relay, d, ...fileRelay(o.author, x, relay) });
+    return reply(s, m, { x, ...fileRelay(s.id, x, relay) });
+  }
+  function ftSignal(s, m) {       // an offer, answer or candidate between the two ends of one transfer, passed on as it is (signed by them)
+    const t = xfers.get(String(m.x || ''));
+    if (!t || (s !== t.fs && s !== t.ts) || !m.d || typeof m.d !== 'object') return;
+    if (slow(s, 'sig', LIMITS.signals)) return;
+    const to = s === t.fs ? t.ts : t.fs, toId = s === t.fs ? t.to : t.from;
+    for (const [dest, d] of bent.signal(s.id, toId, m.d)) if (dest === toId && live(to)) to.wire.send({ t: 'ft-signal', x: t.x, from: s.id, d });
+  }
+  function ftEnd(s, m) {       // either end: done, cancelled, or it went wrong
+    const t = xfers.get(String(m.x || ''));
+    if (t && (s === t.fs || s === t.ts)) ftClose(t, String(m.why || '').slice(0, 200), s);
+    return reply(s, m, {});
+  }
+  function ftClose(t, why, by, soft = false) {
+    xfers.delete(t.x);
+    if (turn) turn.dropTag('f.' + t.x);
+    for (const x of [t.fs, t.ts]) if (x !== by && live(x)) x.wire.send({ t: 'ft-end', x: t.x, why, ...(soft ? { soft: true } : {}) });
+  }
+  // One end went offline. A relayed transfer can't go on. A direct one may still be going between the two PCs, which don't need
+  // the hub once connected: the other end is told with `soft`, and carries on if its connection was already verified.
+  function ftSessionGone(s) {
+    for (const [id, h] of [...holders]) if (h === s) holders.delete(id);
+    for (const t of [...xfers.values()]) if (t.fs === s || t.ts === s) ftClose(t, s === t.fs ? 'The sender went offline.' : 'They went offline.', s, !t.relay);
   }
 
   // ---- the voice room: one per hub, up to 16 people and 8 talking ----
@@ -654,11 +780,15 @@ module.exports = function createHub(opts) {
   }
   const inRoom = (s) => !!(voice.get(s.id) && voice.get(s.id).s === s);
   // Who the relay is for: in the room and listening, or broadcasting, or watching a broadcast (with listening off).
-  const relayed = (id) => (!!voice.get(id) && (voice.get(id).listen || [...bcs.values()].some((b) => b.from === id || b.viewers.has(id)))) || surfRelayed(id);
+  // (a tag is a file transfer's, 'f.' and its id: only its two ends, and only while it goes through the relay)
+  const relayed = (id, tag = '') => {
+    if (tag) { const t = tag.startsWith('f.') && xfers.get(tag.slice(2)); return !!t && t.relay && (t.from === id || t.to === id); }
+    return (!!voice.get(id) && (voice.get(id).listen || [...bcs.values()].some((b) => b.from === id || b.viewers.has(id)))) || surfRelayed(id);
+  };
   const relayCheck = (id) => { if (turn && !relayed(id)) turn.drop(id); };
+  const relayHosts = () => [...new Set([...(opts.addrs ? opts.addrs() : []), relayHost])].filter((a) => /^\d+\.\d+\.\d+\.\d+$/.test(a));       // where members can reach the relay (IPv4 only)
   function relayFor(id) {
-    const hosts = [...new Set([...(opts.addrs ? opts.addrs() : []), relayHost])].filter((a) => /^\d+\.\d+\.\d+\.\d+$/.test(a));       // where members can reach the relay (IPv4 only)
-    return { relay: turn && relayed(id) ? { port: turn.port(), ...turn.credentials(id, TURN_SECS) } : null, hosts };
+    return { relay: turn && relayed(id) ? { port: turn.port(), ...turn.credentials(id, TURN_SECS) } : null, hosts: relayHosts() };
   }
 
   // ---- broadcasts: one per person, four per hub, up to 7 viewers each (§4, §11.3) ----
@@ -788,7 +918,9 @@ module.exports = function createHub(opts) {
     for (const p of [port, 0]) {
       // Allocations are only bookkeeping (no socket each). A full room of 16 with 8 talking, plus four broadcasts to 7
       // viewers each, is a few hundred; one member broadcasting to 7 while talking to 7 others is about 28.
-      const t = createTurn({ secret: crypto.randomBytes(32), relayHost, allowed: relayed, maxAllocations: 512, perMember: 48, log: (x) => opts.log && opts.log('hub relay: ' + x) });
+      // (files: a relayed file may be relayMax, and a little more goes with it: the data channel's own headers and resends)
+      const files = { rate: LIMITS.ftRate, rateAll: LIMITS.ftRateAll, max: LIMITS.relayMax * 1.15 + (8 << 20), day: LIMITS.ftDay, ...(opts.files || {}) };
+      const t = createTurn({ secret: crypto.randomBytes(32), relayHost, allowed: relayed, files, maxAllocations: 512, perMember: 48, log: (x) => opts.log && opts.log('hub relay: ' + x) });
       try { await t.listen(p, opts.relayBind || '0.0.0.0'); turn = t; return; } catch { try { t.close(); } catch { /* never opened */ } }
     }
     if (opts.log) opts.log('hub: the voice relay could not start');
@@ -865,4 +997,4 @@ module.exports = function createHub(opts) {
     }),
   };
 };
-Object.assign(module.exports, { encodeInvite, decodeInvite, pinOfPeer, memberId, rawKey, loginText, cleanText, cleanAvatar, avatarId, sniffImage, cleanEmoji, placeOf, VERSION, LIMITS });
+Object.assign(module.exports, { encodeInvite, decodeInvite, pinOfPeer, memberId, rawKey, loginText, cleanText, cleanAvatar, avatarId, sniffImage, cleanEmoji, placeOf, cleanFileName, VERSION, LIMITS });

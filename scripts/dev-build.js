@@ -62,6 +62,7 @@ function vmpSign(appDir) {
       /^\/dev-build(\/|$)/,
       /^\/scripts(\/|$)/,
       /^\/\.githooks(\/|$)/,
+      /^\/\.github(\/|$)/,
       /^\/\.git(\/|$)/,
       /^\/vendor(\/|$)/,
       /^\/spikes(\/|$)/,

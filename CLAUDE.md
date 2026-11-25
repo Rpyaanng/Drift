@@ -6,6 +6,15 @@
   only shows up at runtime. If a one-off script is really needed, write it to a file with Write and run the file.
 - Keep each file's line endings (most are CRLF). `sed -i` turns a CRLF file into LF.
 
+## Releases need notes
+- Every version needs `renderer/whats-new/<version>.md` (README, "Release notes and releasing"). When you bump the version
+  in package.json, write its notes in the same change: CI and the pre-push hook run `node scripts/check-notes.js` and refuse
+  a version without them. Write them for the people using Drift, not the code: what they can do now, what was fixed.
+- Pictures drawn for the notes include Drift's cats: the real cat's outline (`#coCat` in renderer/index.html) filled a flat
+  green like the default accent (fur `#22c08a`, ears `#128a62`, ink `#1a1230`), not the live cats' gradients and glow. Copy
+  the `catFlat` group from `renderer/whats-new/1.9.1/hero.svg`. Don't paint cats into real screenshots: retake them with the
+  cats summoned.
+
 ## In-app tests (`runShots` in main.js, driven by `scripts/test-*.js`)
 - Drive a page with `pageRun(wc, fn, ...args)`: `fn` is a real function, run in the page with `args` passed as JSON. It's
   checked with the rest of main.js by `node --check`, and nothing is escaped twice. It can't see main.js's variables: pass

@@ -112,6 +112,22 @@ function verifySs(raw, f, sig) {
     return !!t && !!raw && raw.length === 32 && memberId(raw) === f.from && typeof sig === 'string' && crypto.verify(null, t, keyFromRaw(raw), Buffer.from(sig, 'base64url'));
   } catch { return false; }
 }
+// Files sent straight between members' PCs (docs/plans/files.md) are signed the same way again, under their own first line,
+// with the transfer id (fresh for each download), the offer, and whether it goes through the hub's relay or directly: the
+// receiver chose that (directly shows each PC's address to the other), so a hub can't quietly switch a relayed one to direct.
+// The receiver asks with a signed `want`, the sender's offer carries that nonce, and the receiver's answer the same one again.
+function ftText({ pin, x, offer, mode, type, from, to, nonce, sdp }) {
+  const p = type === 'want' ? [] : fingerprints(sdp);
+  if (!BC_TYPES.includes(type) || (type !== 'want' && !p.length) || !['relay', 'direct'].includes(mode) || ![pin, x, offer, from, to, nonce].every((v) => TOKEN.test(String(v)))) return null;
+  return Buffer.from(['drift-file-v1', type, mode, pin, x, offer, from, to, nonce, ...p].join('\n'));
+}
+function signFt(key, f) { const t = ftText(f); return t ? crypto.sign(null, t, key).toString('base64url') : null; }
+function verifyFt(raw, f, sig) {
+  try {
+    const t = ftText(f);
+    return !!t && !!raw && raw.length === 32 && memberId(raw) === f.from && typeof sig === 'string' && crypto.verify(null, t, keyFromRaw(raw), Buffer.from(sig, 'base64url'));
+  } catch { return false; }
+}
 const nonce = () => crypto.randomBytes(16).toString('base64url');
 
 module.exports = function createChat(opts) {       // (module.exports.decodeInvite: is this a hub's invite?)
@@ -262,6 +278,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
       log(`chat: the connection to ${c.h.name || c.h.id} closed`);
       clearInterval(c.pinger); c.wire = null; c.voice = []; c.roomId = ''; c.oldRoomId = ''; c.inRoom = false; c.roomNote = ''; c.sent = ''; c.bcs = []; c.surf = null;
       ssGone(c.h.id, 'The connection to the hub dropped.');
+      ftHubGone(c.h.id, 'The connection to the hub dropped.');
       if (call && call.hub === c.h.id) endCall('');       // back in the room by itself once the hub is reachable again
       bcHubGone(c.h.id, 'The connection to the hub dropped.');       // the hub has ended them too
       for (const p of c.pending.values()) p({ error: 'The connection to the hub dropped.' });
@@ -298,6 +315,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
       const mine = c.members.find((x) => x.id === myId), want = avatarId(me.avatar || '');
       if (mine && (mine.av || '') !== want) c.wire.send({ t: 'avatar', re: 'av', data: me.avatar || '' });       // a picture chosen (or removed) while away
       if (myMic !== null) c.wire.send({ t: 'mic', on: myMic });
+      offerHere(c);       // the files this PC offered here, and still has
       if (myWhere) c.wire.send({ t: 'where', at: myWhere });
       Object.assign(c.h, { joined: true, token: undefined, name: String(m.hub || c.h.name || 'Hub').slice(0, 40) });
       if (Array.isArray(m.addrs) && m.addrs.length && !c.h.mine) c.h.addrs = [...new Set([...m.addrs, ...c.h.addrs])].slice(0, 8);
@@ -320,6 +338,9 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
       case 'bc-thumb': onBcThumb(c, m); return;
       case 'surf': c.surf = cleanSurf(m.s); onSsRoster(c); changed(); return;
       case 'surf-signal': onSsMember(c, m); return;
+      case 'ft-want': onFtWant(c, m); return;
+      case 'ft-signal': onFtSignal(c, m); return;
+      case 'ft-end': onFtEnd(c, m); return;
       case 'channels': c.channels = Array.isArray(m.list) ? m.list : []; changed(); break;
       case 'lives': c.lives = Array.isArray(m.list) ? m.list : []; changed(); break;
       case 'media-vote': if (!m.vote || typeof m.vote !== 'object') return; c.mediaVote = m.vote.result ? null : { ...m.vote, at: Date.now() }; changed(); break;       // a vote to change what's on (the hub counts it)
@@ -995,6 +1016,154 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
   }
 
   // A safety number with someone, and marking them checked (kept on this PC only).
+  // ---- files sent straight between members' PCs (docs/plans/files.md) ----
+  // Offering: a message carries the file's name, size and check (worked out by main.js, files.js); the file stays here. The
+  // offers this PC made are kept (offers.json: offer id -> hub), so after reconnecting it tells the hub it still has them.
+  // Downloading: the receiver signs a request (ftGet), the hub passes it to the PC that has the file, and the two make a data
+  // channel between their transfer windows. As with broadcasts, this only signs and checks the setup messages: every SDP that
+  // reaches a window has passed, and the certificate each end really used must be one the other signed (ftCert).
+  const myOffers = readJson('offers.json', {});       // offer id -> hub id
+  const saveOffers = () => writeJson('offers.json', myOffers);
+  const fts = new Map();       // transfer id -> { x, hub, offer, role ('send' | 'recv'), peer, relay, want, offered, prints, verdict, refused }
+  const ftSeen = new Set();       // request nonces already used (a copy of one is a replay)
+  async function offer(hubId, ch, meta, text, reply) {
+    const r = await ask(hubId, { t: 'send', ch, text, reply, cid: cid(), offer: meta });
+    if (!r.error) { myOffers[meta.id] = hubId; saveOffers(); changed(); }
+    return r;
+  }
+  async function offerDrop(hubId, id) {
+    const r = await ask(hubId, { t: 'offer-drop', id });
+    if (!r.error && myOffers[id]) { delete myOffers[id]; saveOffers(); if (opts.offerGone) opts.offerGone(id); changed(); }
+    return r;
+  }
+  async function offerHere(c) {
+    const mine = Object.keys(myOffers).filter((id) => myOffers[id] === c.h.id);
+    if (!mine.length) return;
+    const kept = mine.filter((id) => !opts.hasOffer || opts.hasOffer(id)), lost = mine.filter((id) => !kept.includes(id));
+    const r = await ask(c.h.id, { t: 'offer-here', ids: kept });
+    if (r.error) return;       // (asked again next time)
+    const have = new Set(Array.isArray(r.have) ? r.have : []);
+    for (const id of lost) ask(c.h.id, { t: 'offer-drop', id });       // the file went from this PC: the message says it isn't offered any more
+    for (const id of mine) if (!have.has(id)) { delete myOffers[id]; if (opts.offerGone) opts.offerGone(id); }
+    saveOffers(); changed();
+  }
+  // For a direct connection: the hub's relay port answers "what's my address?" too, and so does a public server.
+  function directServers(c, r) {
+    const out = [{ urls: 'stun:stun.l.google.com:19302' }];
+    const s = r.stun > 0 && relayServer(c, { relay: { port: r.stun, username: '', credential: '' }, hosts: r.hosts });
+    if (s) out.unshift({ urls: s.urls.replace(/^turn:/, 'stun:').replace(/\?.*$/, '') });
+    return out;
+  }
+  const ftFields = (c, t, type, from, to, n, sdp) => ({ pin: c.h.id, x: t.x, offer: t.offer, mode: t.relay ? 'relay' : 'direct', type, from, to, nonce: n, sdp });
+  // Download a file `from` offered in hub `hubId`. direct: connect straight to their PC (they and you see each other's address).
+  async function ftGet(hubId, offerId, from, { direct = false } = {}) {
+    const c = conns.get(hubId);
+    if (!c || c.status !== 'connected' || !c.wire) return { error: 'Not connected to that hub right now.' };
+    if (!TOKEN.test(offerId) || !TOKEN.test(from)) return { error: 'That file can\'t be downloaded.' };
+    if (!c.keys.get(from)) return { error: 'Drift has no key for whoever offered that, so it couldn\'t check the file is from them.' };
+    const t = { x: crypto.randomBytes(18).toString('base64url'), hub: hubId, offer: offerId, role: 'recv', peer: from, relay: !direct, want: nonce(), offered: '', prints: null, verdict: '', refused: '' };
+    const sig = signFt(key, ftFields(c, t, 'want', myId, from, t.want));
+    if (!sig) return { error: 'That request couldn\'t be signed.' };
+    fts.set(t.x, t);
+    const r = await ask(hubId, { t: 'ft-want', offer: offerId, x: t.x, relay: !direct, d: { want: true, nonce: t.want, sig } });
+    if (r.error) { fts.delete(t.x); return { error: r.error, direct: !!r.direct, offline: !!r.offline, busy: !!r.busy, gone: !!r.gone }; }
+    if (fts.get(t.x) !== t) return { error: 'The transfer stopped before it started.' };
+    const server = direct ? null : relayServer(c, r);
+    if (!direct && !server) { ftEnd(t.x, 'Couldn\'t reach the hub\'s relay.'); return { error: 'Couldn\'t reach the hub\'s relay.' }; }
+    changed();
+    return { x: t.x, iceServers: direct ? directServers(c, r) : [server], policy: direct ? 'all' : 'relay' };
+  }
+  // Someone wants a file this PC offered: check their signed request, then the transfer window makes them an offer.
+  function onFtWant(c, m) {
+    const x = String(m.x || ''), offerId = String(m.offer || ''), from = String(m.from || ''), d = m.d && typeof m.d === 'object' ? m.d : {};
+    if (!TOKEN.test(x) || fts.has(x)) return;
+    const end = (why) => { if (c.wire) c.wire.send({ t: 'ft-end', x, why }); };
+    if (myOffers[offerId] !== c.h.id || (opts.hasOffer && !opts.hasOffer(offerId))) return end('That file isn\'t on their PC any more.');
+    const raw = c.keys.get(from), n = String(d.nonce || ''), t = { x, hub: c.h.id, offer: offerId, role: 'send', peer: from, relay: !!m.relayed, want: n, offered: '', prints: null, verdict: '', refused: '' };
+    const why = !raw ? 'the hub has no key for them that matches their id' : !d.sig ? 'it wasn\'t signed' : ftSeen.has(n) ? 'it was a copy of one already used'
+      : !verifyFt(raw, ftFields(c, t, 'want', from, myId, n), d.sig) ? 'its signature doesn\'t match (wrong sender, file, or relayed when they asked for direct)' : '';
+    if (why) { log(`chat: refused a file request from ${nameIn(c, from)}: ${why}`); emit(c.h.id, { t: 'ft-refused', x, from, name: nameIn(c, from), why }); return end('Drift couldn\'t check the request, so it wasn\'t sent. The hub may be interfering.'); }
+    ftSeen.add(n);
+    fts.set(x, t);
+    const server = t.relay ? relayServer(c, m) : null;
+    if (t.relay && !server) { ftEnd(x, 'Couldn\'t reach the hub\'s relay.'); return; }
+    emit(c.h.id, { t: 'ft-want', x, offer: offerId, from, name: nameIn(c, from), iceServers: t.relay ? [server] : directServers(c, m), policy: t.relay ? 'relay' : 'all' });
+    changed();
+  }
+  // From a transfer window: our offer (sending) or answer (receiving), signed here with the request's nonce; or a candidate.
+  function ftSignal(x, d) {
+    const t = fts.get(x), c = t && conns.get(t.hub);
+    if (!t || !c || !c.wire || t.refused || !d || typeof d !== 'object') return;
+    if (d.c && typeof d.c === 'object') { c.wire.send({ t: 'ft-signal', x, d: { c: d.c } }); return; }
+    const type = d.sdp && d.sdp.type, sdp = d.sdp && String(d.sdp.sdp || '');
+    if (!sdp || type !== (t.role === 'send' ? 'offer' : 'answer')) return;       // the sender always offers; the receiver answers
+    let n = '';
+    if (t.role === 'send') { n = t.want; t.want = ''; t.offered = n; } else { n = t.offered; t.offered = ''; }
+    const sig = n && signFt(key, ftFields(c, t, type, myId, t.peer, n, sdp));
+    if (!sig) { log('chat: a file transfer\'s setup message could not be signed (or had no request to answer), so it was not sent'); return; }
+    c.wire.send({ t: 'ft-signal', x, d: { sdp: { type, sdp }, nonce: n, sig } });
+  }
+  function onFtSignal(c, m) {
+    const x = String(m.x || ''), t = fts.get(x), from = String(m.from || ''), d = m.d && typeof m.d === 'object' ? m.d : {};
+    if (!t || t.hub !== c.h.id || t.peer !== from || t.refused) return;
+    if (d.c) { emit(c.h.id, { t: 'ft-candidate', x, c: d.c }); return; }
+    if (!d.sdp) return;
+    const type = d.sdp.type, sdp = String(d.sdp.sdp || ''), n = String(d.nonce || ''), raw = c.keys.get(from);
+    const why = type !== (t.role === 'send' ? 'answer' : 'offer') ? 'it was the wrong kind of setup message'
+      : !raw ? 'the hub has no key for them that matches their id'
+      : !d.sig ? 'it wasn\'t signed'
+      : (t.role === 'send' ? t.offered : t.want) !== n ? 'it wasn\'t for a request this PC made'
+      : !verifyFt(raw, ftFields(c, t, type, from, myId, n, sdp), d.sig) ? 'its signature doesn\'t match (wrong fingerprint, sender, file or kind of connection)' : '';
+    if (why) {
+      log(`chat: refused a file transfer's setup message from ${nameIn(c, from)}: ${why}`);
+      t.refused = why;
+      emit(c.h.id, { t: 'ft-refused', x, from, name: nameIn(c, from), why });
+      ftEnd(x, 'Drift couldn\'t check the connection, so it stopped. The hub may be interfering.', true);
+      return;
+    }
+    if (t.role === 'send') t.offered = ''; else { t.want = ''; t.offered = n; }       // each nonce is used once
+    t.prints = fingerprints(sdp);
+    emit(c.h.id, { t: 'ft-sdp', x, sdp: { type, sdp } });       // exactly what was checked
+  }
+  // Once connected: the certificate the other end really used must be one their signed SDP promised.
+  function ftCert(x, alg, fp) {
+    const t = fts.get(x);
+    if (!t || !t.prints) return { ok: false };
+    const ok = t.prints.includes(`a=fingerprint:${String(alg)} ${String(fp)}`.replace(/\s+/g, ' ').toLowerCase());
+    t.verdict = ok ? 'verified' : 'mismatch';
+    if (!ok) { log('chat: a file transfer\'s certificate doesn\'t match the signed one; stopping it'); ftEnd(x, 'The connection didn\'t match its signed certificate. The hub may be interfering.', true); }
+    return { ok };
+  }
+  // Done, cancelled or failed, from this end. main.js hears of it too (ft-end) when this ended it itself: fatal when a check failed,
+  // so it isn't tried again by itself.
+  function ftEnd(x, why = '', fatal = false) {
+    const t = fts.get(x);
+    if (!t) return {};
+    fts.delete(x);
+    const c = conns.get(t.hub);
+    if (c && c.wire) c.wire.send({ t: 'ft-end', x, why: String(why || '').slice(0, 200) });
+    emit(t.hub, { t: 'ft-end', x, why: String(why || '').slice(0, 200), fatal });
+    changed();
+    return {};
+  }
+  function onFtEnd(c, m) {       // from the other end, or the hub (they went offline, or the file isn't offered any more)
+    const x = String(m.x || ''), t = fts.get(x);
+    if (!t || t.hub !== c.h.id) return;
+    if (m.soft && !t.relay && t.verdict === 'verified') return;       // (the other end lost the hub, not us: a direct connection doesn't need it)
+    fts.delete(x);
+    emit(c.h.id, { t: 'ft-end', x, why: String(m.why || '').slice(0, 200) });
+    changed();
+  }
+  // The connection to the hub dropped. A transfer through its relay goes with it (the bytes went through the host's PC). One
+  // straight between the two PCs, already verified, needs nothing more of the hub, so it carries on.
+  function ftHubGone(hubId, why) {
+    for (const [x, t] of [...fts]) {
+      if (t.hub !== hubId) continue;
+      if (!t.relay && t.verdict === 'verified') { log('chat: the hub dropped; a direct file transfer carries on without it'); continue; }
+      fts.delete(x); emit(hubId, { t: 'ft-end', x, why });
+    }
+  }
+
   async function safety(id, member) {
     const c = conns.get(id), raw = c && c.keys.get(member);
     if (!raw) return { error: 'There\'s no key for them to compare.' };
@@ -1158,6 +1327,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
         host: ssHost ? { hub: hostedId(), on: ssHost.on, watchers: ssHost.watchers, names: Object.fromEntries([...ssHost.people].map(([k, v]) => [k, v.name])), viewers: Object.fromEntries([...ssHost.viewers].map(([id, p]) => [id, peerInfo(p)])) } : null,
         watching: ssWatchOf ? { hub: ssWatchOf.hub, from: ssWatchOf.from, ...peerInfo(ssWatchOf) } : null,
       },
+      offers: Object.keys(myOffers),       // the files offered from this PC (only this one can send them)
     };
   }
   let changeTimer = null;
@@ -1186,6 +1356,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
     setVoice, voiceSignal, voiceCert, safety, setVerified, inRoom: () => (call ? call.hub : ''), disconnect, reconnect,
     bcStart, bcUpdate, bcStop, bcHostStop, bcWatch, bcUnwatch, bcSignal, bcCert, bcThumb,
     ssSet, ssRelay, ssWatch, ssUnwatch, ssSignal, ssCert, hostedHub: hostedId,
+    offer, offerDrop, ftGet, ftSignal, ftCert, ftEnd, ftPeer: (x) => { const t = fts.get(x); return t ? { hub: t.hub, peer: t.peer, role: t.role, offer: t.offer, relay: t.relay } : null; },
     hostVoicePort: () => (hub ? hub.voicePort() : 0), relayStats: () => (hub ? hub.relayStats() : null),
     history: (id, ch, o = {}) => ask(id, { t: 'history', ch, before: o.before, after: o.after, limit: o.limit }).then(filterMsgs),
     send: (id, ch, text, reply) => ask(id, { t: 'send', ch, text, reply, cid: cid() }),
@@ -1209,4 +1380,4 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
     _ssWant: () => (ssWatchOf || {}).want || '',       // (tests only: likewise for the Surf stream)       // (tests only: the nonce our request to watch carries, for forging what a hub might send)
   };
 };
-Object.assign(module.exports, { decodeInvite, checkMembers, safetyNumber, fingerprints, voiceText, signSdp, verifySdp, bcText, signBc, verifyBc, stillText, ssText, signSs, verifySs });
+Object.assign(module.exports, { decodeInvite, checkMembers, safetyNumber, fingerprints, voiceText, signSdp, verifySdp, bcText, signBc, verifyBc, stillText, ssText, signSs, verifySs, ftText, signFt, verifyFt });
