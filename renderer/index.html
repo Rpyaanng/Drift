@@ -9,7 +9,7 @@
 </head>
 <body>
 <div id="stage"><canvas id="c"></canvas><canvas id="vbg"></canvas><video id="v" playsinline muted></video></div>
-<div id="bjTable"></div><div id="bjPtrs"></div>
+<div id="bjTable"></div><div id="bjPtrs"></div><div id="rlTable"></div><div id="pkTable"></div><div id="skTable"></div><div id="gmPtrs"></div>
 <div id="mediaBack"><div class="mbBackArt" aria-hidden="true"></div><div class="mbOrb a" aria-hidden="true"></div><div class="mbOrb b" aria-hidden="true"></div><div class="mbFlash" aria-hidden="true"></div>
   <div class="mbBars" aria-hidden="true"></div>
   <div class="mbWorld">
@@ -337,7 +337,7 @@
           <div class="optCard">
             <h3>Sounds</h3>
             <label class="chk optRow"><span class="optText"><b>Play sounds</b><em>When you go online, join or leave voice, mute, or go live, when friends come and go, and for messages you aren't looking at. Only you hear them.</em></span><input type="checkbox" id="sfxOn"><i></i></label>
-            <label class="chk optRow"><span class="optText"><b>Blackjack table sounds</b><em>Cards, chips, your turn, and how your hand went. On their own switch, so they play with the hub's sounds off.</em></span><input type="checkbox" id="sfxTable"><i></i></label>
+            <label class="chk optRow"><span class="optText"><b>Game table sounds</b><em>Blackjack, Roulette, Hold'em and Sketch &amp; Guess: cards, chips, the wheel, your turn, a right guess, and how you did. On their own switch, so they play with the hub's sounds off.</em></span><input type="checkbox" id="sfxTable"><i></i></label>
             <div class="optRow slideRow"><div class="optText"><b>Volume<output id="o-sfxVol"></output></b></div><input type="range" id="sfxVol" min="0" max="1" step="0.01" aria-label="Volume of the hub's sounds"></div>
             <div class="sfxTry" id="sfxTry"></div>
           </div>
@@ -634,6 +634,9 @@
 <script src="cats.js"></script>
 <script src="cursors.js"></script>
 <script src="blackjack.js"></script>
+<script src="roulette.js"></script>
+<script src="poker.js"></script>
+<script src="sketch.js"></script>
 <script src="app.js"></script>
 <script src="emoji.js"></script>
 <script src="mic.js"></script>

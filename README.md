@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>Turn every monitor you own into one calm, living picture, and share it with your friends.</b><br>
-  36 ambient scenes and a blackjack table, your own videos and music, a web browser and a place to hang out with friends, all in one app.
+  36 ambient scenes and a games room (blackjack, roulette, Texas Hold'em and Sketch & Guess), your own videos and music, a web browser and a place to hang out with friends, all in one app.
 </p>
 
 <p align="center">
@@ -103,7 +103,7 @@ Drift's ambient sound, your music, or Spotify.
 | <img src="docs/images/scene-globe.jpg" alt="Wire Globe"><br>Wire Globe | <img src="docs/images/scene-tunnel.jpg" alt="Hex Tunnel"><br>Hex Tunnel | <img src="docs/images/scene-polyhedra.jpg" alt="Platonic Solids"><br>Platonic Solids | <img src="docs/images/scene-menger.jpg" alt="Menger Sponge"><br>Menger Sponge |
 
 <details>
-<summary><b>All 37 scenes</b></summary>
+<summary><b>All 40 scenes</b></summary>
 
 - **Ambient**: Aurora, Nebula, Silk, Deep Water, Starfield, Lava Lamp, Ridgelines, Ripples, Mandala, Bokeh, Horizon Lines
 - **Landscapes**: Mountain Lake, Misty Forest, Desert Dunes, Ocean Sunset, Rolling Hills, Canyon Night
@@ -112,7 +112,7 @@ Drift's ambient sound, your music, or Spotify.
 - **Mathematical geometry**: Quasicrystal (crossing waves that never repeat), Hyperbolic Tiling ({7,3}, {5,4}, {8,3} and
   {4,5} tilings of the Poincaré disc), Apollonian Gasket, Phyllotaxis (golden-angle sunflower spirals), Rose Curves
   (r = cos kθ), Chladni Plate (sand on a vibrating plate)
-- **Games room**: Blackjack (below)
+- **Games room**: Blackjack, Roulette, Texas Hold'em, Sketch & Guess (below)
 
 </details>
 
@@ -130,6 +130,43 @@ blackjack pays 3 to 2. Bets are 10 to 500. Run out of chips and you're back in w
   starting with 1,000. You see each other's cards, pointers and pictures, and the hub keeps a board of its five
   **biggest pots**. Click someone at the table in the hub bar to sit down next to them. **Stand up** to watch.
 - The table has its own sounds, with their own switch in the Hub tab's Sounds.
+
+### Roulette
+
+**Scenes → Games room → Roulette** is a European wheel (one zero) in the same room. Pick a chip and click the layout: on
+a number, on the line between two for a split, on a corner for four, on the outside edge for a street (or a six line where
+two meet), or on the outside bets. Everything pays the book's odds, from 35 to 1 down to even money. Right-click takes the
+last chip back; **Same again** repeats last spin's bets. The ball goes when everyone has pressed **Spin**, or after 25
+seconds. Run out of chips and you're back in with 1,000 after 20 seconds.
+
+- **Alone**, your chips are kept.
+- **Online in a hub**, up to eight bet on the same layout at once, each in their own colour, with everyone's pointer
+  showing. The hub picks the number and keeps a board of its five **biggest wins**.
+
+### Texas Hold'em
+
+**Scenes → Games room → Texas Hold'em** is a no-limit table for up to six, blinds 5 and 10, with side pots when someone is
+all in. Your two cards are only ever sent to you; everyone's are turned over at a showdown. Fold, check, call, or pick a
+raise with the slider (½ pot, pot, all in). Run out of chips and you're back in with 1,000 after 20 seconds.
+
+- **Alone**, you play three computer players, and your chips are kept.
+- **Online in a hub**, you play the people at the hub's table. Alone there, a computer player keeps you company until a
+  second person sits down. The hub keeps a board of its five **biggest pots** won.
+
+### Sketch & Guess
+
+**Scenes → Games room → Sketch & Guess** is a drawing game for everyone online in your hub (it needs two or more, so
+there's no playing it alone). Each turn one player picks a word from three and draws it; everyone else types guesses.
+Guess sooner to score more; the drawer scores for every person who gets it. A letter of the word shows at half time and
+another at three quarters, and a guess one letter off is told "very close" (only to you). Everyone draws once a round,
+three rounds a game, up to twelve players.
+
+- The board is laid out like a diagram editor: **tools** down the left (pen, line, arrow, rectangle, ellipse, diamond,
+  triangle, eraser, undo, clear, each with a key: P L A R O D T E, Ctrl+Z), **15 colours**, three widths and three fills
+  (none, light, solid) along the top, and a white sheet on a grid. Hold Shift for straight lines, squares and circles.
+- Everyone sees the drawing as it's drawn. Right guesses are never shown to the others, and once you know the word your
+  messages only go to the drawer and the others who know it.
+- The hub keeps a board of its five **best scores** in a game.
 
 ## Sound
 
@@ -544,6 +581,10 @@ Tests (each starts its own copies of Drift, with their own settings):
 | `node scripts/test-surf-stream.js` | Two copies through a hub's Surf stream |
 | `node scripts/test-blackjack-engine.js` | Blackjack's rules, with stacked cards and a fake clock (no Electron needed; seconds) |
 | `node scripts/test-blackjack.js` | Two copies at the Blackjack table: alone, then side by side at a hub's (about a minute; `timeout 240`) |
+| `node scripts/test-roulette-engine.js` | Roulette's rules: every bet's odds, payouts, the clock, crapping out (no Electron needed; a second) |
+| `node scripts/test-poker-engine.js` | Hold'em's rules: hand ranking, blinds, side pots, the turn timer, the computer players (no Electron needed; a second) |
+| `node scripts/test-sketch-engine.js` | Sketch & Guess's rules: turns, guessing and scores, hints, what each player may see, the drawing's limits (no Electron needed; a second) |
+| `node scripts/test-games.js` | Two copies at Roulette, Hold'em and Sketch & Guess: alone, then together at a hub's tables (about two minutes; `timeout 330`; `DRIFT_GAMESHOTS=1` saves pictures) |
 | `node scripts/test-surf-lan.js` | The Surf stream's guard against the host's network (no Electron needed) |
 | `node scripts/test-broadcast-ui.js` | The Share tab's real buttons, with two copies |
 | `node scripts/test-broadcast.js [modes...]` | Three copies through a whole broadcast: the grid, full screen, pointers, Switch source, Pause, Stop, sound, and hub tampering |

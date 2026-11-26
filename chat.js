@@ -192,7 +192,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
   // fresh: the first time this run hosts, last run's messages are wiped (they last one session; see stop()).
   let hosting = readJson('hosting.json', null), hub = null, mappings = [], hostNote = '', fresh = true;
   async function startHub() {
-    hub = createHub({ dir: file('hub'), owner: pub, name: hosting.name, port: hosting.port, seal, unseal, addrs: () => opts.addrs ? opts.addrs() : ['127.0.0.1'], log, fresh, bjTimes: opts.bjTimes });
+    hub = createHub({ dir: file('hub'), owner: pub, name: hosting.name, port: hosting.port, seal, unseal, addrs: () => opts.addrs ? opts.addrs() : ['127.0.0.1'], log, fresh, bjTimes: opts.bjTimes, gameTimes: opts.gameTimes });
     fresh = false;
     const port = await hub.start();
     if (port !== hosting.port) { hosting.port = port; writeJson('hosting.json', hosting); }
@@ -339,6 +339,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
       case 'surf': c.surf = cleanSurf(m.s); onSsRoster(c); changed(); return;
       case 'surf-signal': onSsMember(c, m); return;
       case 'bj-view': case 'bj-ptrs': opts.event && opts.event(c.h.id, m); return;       // the blackjack table's (main.js bjFromHub), not the panels'
+      case 'game-view': case 'game-ptrs': case 'game-ink': opts.event && opts.event(c.h.id, m); return;       // the other Games room tables' (main.js gmFromHub)
       case 'ft-want': onFtWant(c, m); return;
       case 'ft-signal': onFtSignal(c, m); return;
       case 'ft-end': onFtEnd(c, m); return;
@@ -1295,7 +1296,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
   // Which screen this PC shows (Scenes, Media, Surf or Share; the panel says), so friends can jump to it from the hub bar.
   let myWhere = '';
   function setWhere(at) {
-    at = ['scenes', 'media', 'surf', 'broadcast', 'blackjack'].includes(at) ? at : '';
+    at = ['scenes', 'media', 'surf', 'broadcast', 'blackjack', 'roulette', 'poker', 'sketch'].includes(at) ? at : '';
     if (myWhere === at) return;
     myWhere = at;
     for (const c of conns.values()) if (c.status === 'connected' && c.wire) c.wire.send({ t: 'where', at });
@@ -1373,6 +1374,19 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
       if (t === 'bj-ptr') { const c = conns.get(id); if (c && c.wire && c.status === 'connected') c.wire.send({ t, x: +m.x, y: +m.y }); return Promise.resolve({}); }
       if (!['bj-sit', 'bj-watch', 'bj-stand', 'bj-leave', 'bj-bet', 'bj-insure', 'bj-act'].includes(t)) return Promise.resolve({ error: 'Not a table move' });
       return ask(id, { t, amount: +m.amount || 0, yes: !!m.yes, do: String(m.do || '').slice(0, 12) }, 8000);
+    },
+    // the hub's other Games room tables (hub.js gameMessage), the same way: g names the game, a move goes as m
+    game: (id, m) => {
+      const t = String((m && m.t) || ''), g = String((m && m.g) || '').slice(0, 16);
+      if (t === 'game-ptr') { const c = conns.get(id); if (c && c.wire && c.status === 'connected') c.wire.send({ t, g, x: +m.x, y: +m.y }); return Promise.resolve({}); }
+      if (t === 'game-ink') {       // a piece of a drawing (Sketch & Guess): just sent, like a pointer
+        const c = conns.get(id);
+        if (c && c.wire && c.status === 'connected' && m.op && typeof m.op === 'object' && JSON.stringify(m.op).length <= 4000) c.wire.send({ t, g, op: m.op });
+        return Promise.resolve({});
+      }
+      if (!['game-sit', 'game-watch', 'game-stand', 'game-leave', 'game-move'].includes(t)) return Promise.resolve({ error: 'Not a table move' });
+      const mv = m.m && typeof m.m === 'object' ? m.m : {};
+      return ask(id, { t, g, m: { do: String(mv.do || '').slice(0, 12), key: String(mv.key || '').slice(0, 24), amount: +mv.amount || 0, text: String(mv.text || '').slice(0, 80) } }, 8000);
     },
     channel: (id, name) => ask(id, { t: 'channel', name }),
     dropChannel: (id, ch) => ask(id, { t: 'channel-delete', ch }),

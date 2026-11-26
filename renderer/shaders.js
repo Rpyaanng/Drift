@@ -51,6 +51,9 @@ window.SCENES = [
   { id: 'meadow',  name: 'Rolling Hills', group: 'land' },
   { id: 'canyon',  name: 'Canyon Night',  group: 'land' },
   { id: 'blackjack', name: 'Blackjack', group: 'games', game: true },       // the Games room: never in the rotation (main.js GAMES)
+  { id: 'roulette', name: 'Roulette', group: 'games', game: true },
+  { id: 'poker', name: "Texas Hold'em", group: 'games', game: true },
+  { id: 'sketch', name: 'Sketch & Guess', group: 'games', game: true },       // (a hub only: it needs people)
 ];
 
 window.SHADER_VERT = `attribute vec2 a; void main(){ gl_Position = vec4(a, 0.0, 1.0); }`;
@@ -1247,3 +1250,5 @@ vec3 scene(vec2 uv, vec2 p){
   return col + pal(0.85) * beatRings(p, vec2(0.0, 0.3), 0.5) * 0.2;
 }`,
 };
+// Roulette's and Hold'em's rooms are the Blackjack table's: the same lamp over a different table (renderer/roulette.js, renderer/poker.js)
+SCENE_SRC.roulette = SCENE_SRC.poker = SCENE_SRC.sketch = SCENE_SRC.blackjack;       // (Sketch & Guess too: its drawing board under the same lamp)

@@ -30,6 +30,7 @@
   const MARK_BODY = `<path class="w1" d="${WAVES[0]}"/><path class="w1 lo" d="${WAVES[1]}"/><path class="w2" d="${WAVES[2]}"/><path class="w2 lo" d="${WAVES[3]}"/>`;
   const MARK_BOX = '10 160 492 190';       // (where the waves are in the icon)
   const MARK = `<svg class="bjMark" viewBox="${MARK_BOX}" aria-hidden="true">${MARK_BODY}</svg>`;
+  window.driftMark = MARK;       // (the other tables' card backs and felts wear it too: renderer/poker.js, renderer/roulette.js)
   // The felt's printing, drawn on a 200 x 100 box (the felt is twice as wide as it's tall): its lower half is a circle round
   // the top middle, radius 100, so every curve here is a part of a circle round (100, 0), the way a real layout follows the
   // table's edge. From the dealer outwards: the mark and the name, "Blackjack pays 3 to 2", the dealer's rule, and the

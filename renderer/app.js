@@ -120,6 +120,7 @@
   let shown = sceneFor(S), fading = false;
   let webUp = false;       // a Surf page covers this screen (syncWeb): the scene under it isn't drawn
   let bjOn = false;        // the Blackjack table is up on this screen (bjSync)
+  let gmOn = '';           // Roulette's or Hold'em's table is up on this screen: which (gmSync)
   const audio = [0, 0, 0], audioTarget = [0, 0, 0];
   const specTarget = new Float32Array(128).fill(0), specNow = new Float32Array(128).fill(0);
   for (let i = 64; i < 128; i++) specTarget[i] = specNow[i] = 128;
@@ -1049,7 +1050,7 @@
     const surfUp = document.body.classList.contains('web');
     if (surfUp) screenTab = 'surf'; else if (bcHere()) screenTab = 'broadcast';       // (put up some other way: a link, a friend's broadcast)
     else if (screenTab === 'surf' || screenTab === 'broadcast') screenTab = tab === 'media' ? 'media' : 'scenes';       // (put away: back to what's under it)
-    const whereNow = screenTab === 'scenes' && bjOn ? 'blackjack' : screenTab;       // (at the table: friends who click you sit down next to you)
+    const whereNow = screenTab === 'scenes' && (bjOn || gmOn) ? (bjOn ? 'blackjack' : gmOn) : screenTab;       // (at a table: friends who click you sit down next to you)
     if (whereNow !== whereSent) { whereSent = whereNow; api.chat('where', whereNow).catch(() => {}); }       // friends' hub bars jump here when they click you (chat.js drawCall)
     const on = screenTab === 'media' && !videoOn() && !surfUp && !bcHere();
     if (on !== mbOn) { mbOn = on; mbEl.classList.toggle('on', on); }
@@ -1172,7 +1173,7 @@
     const dA = aTime - mbAT; mbAT = aTime;
     if (playing && !stillMotion.matches) { mbSpin = (mbSpin + dt * 200 + Math.max(0, Math.min(1, dA)) * 140) % 360; mbLabel.style.setProperty('--spin', mbSpin.toFixed(1) + 'deg'); }
   }
-  window.appUI = { toTable: () => { P(S.mode === 'mix' ? { perDisplay: { [me.key]: 'blackjack' } } : { scene: 'blackjack' }); window.appUI.setTab('scenes'); }, tab: () => tab, setTab: (t) => { if (panel.classList.contains('open')) setTab(t); else { tab = t; if (!SIDE_TABS.includes(t)) screenTab = t; pickScreen(t); tellTab(); syncUI(); } }, open: () => panel.classList.contains('open'), key: me.key };       // (a closed panel stays closed)       // (broadcast.js: its tab comes and goes)
+  window.appUI = { toTable: (g) => { g = ['roulette', 'poker', 'sketch'].includes(g) ? g : 'blackjack'; P(S.mode === 'mix' ? { perDisplay: { [me.key]: g } } : { scene: g }); window.appUI.setTab('scenes'); }, tab: () => tab, setTab: (t) => { if (panel.classList.contains('open')) setTab(t); else { tab = t; if (!SIDE_TABS.includes(t)) screenTab = t; pickScreen(t); tellTab(); syncUI(); } }, open: () => panel.classList.contains('open'), key: me.key };       // (a closed panel stays closed)       // (broadcast.js: its tab comes and goes)
   panel.addEventListener('mouseenter', () => { overPanel = true; });
   panel.addEventListener('mouseleave', () => { overPanel = false; armHide(); });
   let lastMove = [0, 0];
@@ -1186,7 +1187,7 @@
     if (e.target === vidEl || e.target === mirEl || (gpuEl && e.target === gpuEl) || surfBar.contains(e.target)) return;
     if ($('#bcView').contains(e.target)) { panel.classList.remove('open'); return; }       // the Broadcast scene's tiles and bar: a click is for them (it only puts the panel's page away)
     if (e.target.closest('#mediaBack a, #mediaBack button')) return;       // the Media screen's links and arrows (mbPan)
-    if (e.target.closest('#bjTable .bjFelt, #bjTable .bjBar')) return;       // the Blackjack table and its buttons (the room around it still brings the panel)
+    if (e.target.closest('#bjTable .bjFelt, #bjTable .bjBar, #rlTable .rlFelt, #rlTable .bjBar, #pkTable .pkFelt, #pkTable .bjBar, #skTable .skFelt, #skTable .bjBar')) return;       // a game's table and its buttons (the room around it still brings the panel)
     if (!panel.contains(e.target) && !confirmEl.contains(e.target) && !$('#mixer').contains(e.target)) { if (panel.classList.contains('open')) { panel.classList.remove('open'); } else showPanel(); } });
 
   const fill = (el) => el.style.setProperty('--fill', ((el.value - el.min) / (el.max - el.min)) * 100 + '%');
@@ -1571,8 +1572,10 @@
     bjColKey = key;
     const [h, s] = rgbToHsl(pc[1]), dh = ((0.44 - h + 1.5) % 1) - 0.5, fh = h + dh * 0.25, fs = Math.max(0.3, Math.min(0.65, s));
     const lamp = toHex(hex(a).map((v, i) => v * 0.7 + [1, 0.91, 0.78][i] * 0.3));
-    bjT.colors({ colorOf: (n) => window.driftPtrColor(n, a), self: window.driftSelfColor(a),
-      vars: { '--bjAccent': a, '--bjFelt': hslToHex(fh, fs, 0.2), '--bjFeltDeep': hslToHex(fh, fs, 0.075), '--bjHi': toHex(pc[3]), '--bjDark': toHex(pc[0]), '--bjLamp': lamp } });
+    const look = { colorOf: (n) => window.driftPtrColor(n, a), self: window.driftSelfColor(a),
+      vars: { '--bjAccent': a, '--bjFelt': hslToHex(fh, fs, 0.2), '--bjFeltDeep': hslToHex(fh, fs, 0.075), '--bjHi': toHex(pc[3]), '--bjDark': toHex(pc[0]), '--bjLamp': lamp } };
+    bjT.colors(look);
+    for (const x of Object.values(GM)) x.t.colors(look);       // (Roulette's and Hold'em's tables: the same room)
   }
   addEventListener('resize', () => { if (bjPtrEls.size) drawPtrs(bjPtrBox, bjPtrEls, bjOn ? bjT.box() : null, bjPtrList); });
   addEventListener('mousemove', (e) => {       // your pointer over the table, for the others at it (main.js sends it only online, with cursor sharing on)
@@ -1585,6 +1588,51 @@
     api.cmd({ type: 'bj', op: 'ptr', x: +x.toFixed(4), y: +y.toFixed(4) });
   });
   setInterval(() => { for (const q of bjPtrEls.values()) q.el.classList.toggle('idle', Date.now() - q.at > 6000); }, 1000);
+
+  // ---------- the Games room's other tables: Roulette and Hold'em (renderer/roulette.js, renderer/poker.js; main.js gmMove) ----------
+  // The same as the Blackjack table's above, one holder each: up on this screen while it shows that scene, seated by main.js at
+  // the active hub's table or your own, the others' pointers over the felt and yours to them. The same light from the palette.
+  const gmPtrBox = $('#gmPtrs'), gmPtrEls = new Map();
+  let gmPtrList = [], gmPtrAt = 0, gmPtrOut = false, gmHub = '';
+  const GM = { roulette: { el: $('#rlTable'), make: window.driftRoulette }, poker: { el: $('#pkTable'), make: window.driftPoker }, sketch: { el: $('#skTable'), make: window.driftSketch } };
+  for (const [g, x] of Object.entries(GM)) {
+    x.on = false;
+    x.t = x.make(x.el, (m) => api.cmd({ type: 'game', g, ...m }), { face: (id) => (gmHub && window.chatUI ? window.chatUI.face(gmHub, id, '') : null),
+      me: () => (window.chatUI ? window.chatUI.info().me.id || '' : '') });
+  }
+  const gmHere = (g) => shown === g && sceneFor(S) === g && (S.mode !== 'span' || isCenter) && !webUp && !mbOn && !bcHere();
+  const gmBox = () => (gmOn ? GM[gmOn].t.box() : null);
+  function gmPtrOff() { if (gmPtrOut) { const g = gmPtrOut; gmPtrOut = false; api.cmd({ type: 'game', g, op: 'ptr', x: -1, y: -1 }); } }
+  function gmSync() {
+    for (const [g, x] of Object.entries(GM)) {
+      const on = gmHere(g);
+      if (on === x.on) continue;
+      x.on = on; x.el.classList.toggle('on', on);
+      if (on) gmOn = g; else if (gmOn === g) gmOn = '';
+      if (!on) { x.t.view(null); gmPtrList = []; drawPtrs(gmPtrBox, gmPtrEls, null, []); if (gmPtrOut === g) gmPtrOff(); }
+      api.cmd({ type: 'game', g, op: 'here', on, key: me.key });
+      syncMediaBack();
+    }
+  }
+  setInterval(gmSync, 250);
+  function gmCmd(c) {
+    const x = GM[c.g]; if (!x) return;
+    if (c.note && x.on) x.t.note(c.note);
+    if ('v' in c && x.on) { gmHub = String(c.hub || ''); x.t.view(c.v || null, c.mode); }
+    if (c.ink && x.t.ink) x.t.ink(c.ink);       // (Sketch & Guess: the drawing as it grows)
+    if (Array.isArray(c.ptrs) && gmOn === c.g) { gmPtrList = c.ptrs; drawPtrs(gmPtrBox, gmPtrEls, gmBox(), gmPtrList); }
+  }
+  addEventListener('resize', () => { if (gmPtrEls.size) drawPtrs(gmPtrBox, gmPtrEls, gmBox(), gmPtrList); });
+  addEventListener('mousemove', (e) => {       // your pointer over the table, for the others at it (main.js sends it only online, with cursor sharing on)
+    if (!gmOn) return;
+    const x0 = GM[gmOn], b = x0.t.box(), over = !!b && x0.el.contains(e.target);
+    const x = over ? (e.clientX - b.l) / b.w : -1, y = over ? (e.clientY - b.t) / b.h : -1;
+    if (!(x >= 0 && x <= 1 && y >= 0 && y <= 1)) { gmPtrOff(); return; }
+    if (Date.now() - gmPtrAt < 40) return;       // at most 25 a second
+    gmPtrAt = Date.now(); gmPtrOut = gmOn;
+    api.cmd({ type: 'game', g: gmOn, op: 'ptr', x: +x.toFixed(4), y: +y.toFixed(4) });
+  });
+  setInterval(() => { for (const q of gmPtrEls.values()) q.el.classList.toggle('idle', Date.now() - q.at > 6000); }, 1000);
 
   // ---------- the browser's bar: tabs, back and forward, home and the address. It floats at the top and keeps out of the way ----------
   const surf = (what, more) => api.cmd({ type: 'surf', do: what, ...more });
@@ -3052,6 +3100,7 @@
     else if (c.type === 'ptrs') showPtrs(Array.isArray(c.list) ? c.list : []);
     else if (c.type === 'vptrs') showVptrs(Array.isArray(c.list) ? c.list : []);
     else if (c.type === 'bj') bjCmd(c);
+    else if (c.type === 'game') gmCmd(c);
     else if (c.type === 'web-url') toBar();       // Ctrl+L in the web page
     else if (c.type === 'chat-quick') { if (webEl) webEl.blur(); quickOverSurf(); }       // Enter in a Surf page that wasn't for the page (web.js "Enter")
     else if (c.type === 'web-esc') { if (webEl) webEl.blur(); window.focus(); tab = 'surf'; showPanel(true); syncUI(); }       // Esc in the web page: our controls, and the keys come back to us

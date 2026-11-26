@@ -1,5 +1,5 @@
 /* Drift — Hub sounds: joining and leaving a hub and its voice room, muting, going live, friends coming and going,
-   and new messages; and the Blackjack table's (cards, chips, your turn, how your hand went). They're made here with Web Audio, nothing is a recording, and they play in the hidden audio window
+   and new messages; and the game tables' (cards, chips, the roulette ball, your turn, how your hand went). They're made here with Web Audio, nothing is a recording, and they play in the hidden audio window
    (renderer/audio.html), so a sound never doubles across monitors. They have their own AudioContext: they stay out of the
    visuals' analyser and out of the music sent to friends, and a broadcast never carries them (bc-sound.js leaves out
    Drift's own process). main.js decides when, from what changed in the Hub tab (sfxTick), and sends the names here.
@@ -112,6 +112,23 @@
     bjOut: (a, d, t) => { [N.C5, N.G4, N.C4].forEach((f, i) => mallet(a, d, t + i * 0.1, f, 0.45, 0.5, 3000 - i * 600));
       voice(a, d, t + 0.3, { f: N.C4, f2: N.C4 * 0.94, glide: 0.4, dur: 0.6, level: 0.25, vib: 0.02, cut: 1500 }); },
     bjBack: (a, d, t) => { for (let i = 0; i < 4; i++) chip(a, d, t + i * 0.05, 0.6 + i * 0.1); mallet(a, d, t + 0.24, N.G4, 0.45, 0.5); mallet(a, d, t + 0.31, N.C5, 0.5, 0.6); },
+    // ---- Roulette and Hold'em (main.js GM_SOUNDS; they share the cards and chips above) ----
+    // the ball sent round: a whoosh, then its rattle on the track, ticks spreading out as it slows
+    rlSpin: (a, d, t) => { noise(a, d, t, { f: 700, q: 0.6, dur: 0.35, level: 0.3, atk: 0.08 }); for (let i = 0, at = t + 0.12; i < 14; i++, at += 0.045 + i * 0.012) noise(a, d, at, { f: 5200 - i * 120, q: 4, dur: 0.018, level: 0.28 - i * 0.012 }); },
+    // the ball dropping into a pocket: a few bounces off the frets, quicker and quieter, and a soft settle
+    rlDrop: (a, d, t) => { [0, 0.13, 0.22, 0.28, 0.32].forEach((dt, i) => { noise(a, d, t + dt, { f: 3600, q: 5, dur: 0.025, level: 0.42 - i * 0.07 }); voice(a, d, t + dt, { f: 2400 + i * 90, dur: 0.04, level: 0.06 - i * 0.008, atk: 0.001 }); }); noise(a, d, t + 0.36, { f: 900, q: 1, dur: 0.08, level: 0.2 }); },
+    // a win on the wheel: the win's climb, a bell on top, and chips pushed over
+    rlWin: (a, d, t) => { [N.C5, N.G5, N.C6].forEach((f, i) => mallet(a, d, t + i * 0.07, f, 0.5, 0.5, 6000)); bell(a, d, t + 0.22, N.G6, 0.08, 0.7); for (let i = 0; i < 3; i++) chip(a, d, t + 0.3 + i * 0.05, 0.8 - i * 0.15); },
+    // a check: two knuckles on the table's wood; a fold: cards slid back face down
+    pkCheck: (a, d, t) => { for (const dt of [0, 0.11]) { noise(a, d, t + dt, { f: 260, q: 1.6, dur: 0.07, level: 0.7 }); voice(a, d, t + dt, { f: 140, dur: 0.08, level: 0.22, atk: 0.002 }); } },
+    pkFold: (a, d, t) => { noise(a, d, t, { f: 1800, q: 0.7, dur: 0.16, level: 0.32, atk: 0.04 }); noise(a, d, t + 0.1, { f: 1100, q: 1, dur: 0.07, level: 0.3 }); },
+    // ---- Sketch & Guess (main.js GM_SOUNDS) ----
+    // you guessed it: up C G C with a sparkle on top; someone else did: a small glass clink; one letter off: two notes that
+    // don't resolve (G to D, a question); time's up: a soft low bell
+    skRight: (a, d, t) => { [N.C5, N.G5, N.C6].forEach((f, i) => mallet(a, d, t + i * 0.06, f, 0.5, 0.45, 6500)); bell(a, d, t + 0.2, N.G6, 0.09, 0.7); },
+    skOther: (a, d, t) => { bell(a, d, t, N.C6, 0.13, 0.45); bell(a, d, t + 0.05, N.G6, 0.07, 0.4); },
+    skClose: (a, d, t) => { mallet(a, d, t, N.G4, 0.45, 0.3, 4000); mallet(a, d, t + 0.1, N.D5, 0.45, 0.4, 4000); },
+    skEnd: (a, d, t) => { bell(a, d, t, N.C4 * 2, 0.3, 1.4, 4000); mallet(a, d, t, N.C4, 0.4, 0.9, 2500); },
   };
   // How loud each is against the others (measured, then by ear): your own actions peak around -7 dBFS at full volume, other
   // people's news a few dB under, the clinks lowest because they sit where the ear is keenest, and a dropped connection a
@@ -122,7 +139,11 @@
     // the table: cards and chips (many) as low as the clinks, your turn a nudge like a friend arriving, how your hand went as
     // loud as your own actions (good news a little over bad), out of chips like a dropped connection
     bjCard: 1.15 /* .13-.15 (noise: each a little different) */, bjDeal: 1.1 /* .15 */, bjChip: 1.1 /* .15 */, bjTurn: 0.77 /* .25 */, bjWin: 1 /* .37 */, bjBlackjack: 1 /* .41 */,
-    bjPush: 0.85 /* .25 */, bjLose: 0.95 /* .25 */, bjBust: 1.25 /* .25 */, bjOut: 1.08 /* .33 */, bjBack: 1.15 /* .35 */ };
+    bjPush: 0.85 /* .25 */, bjLose: 0.95 /* .25 */, bjBust: 1.25 /* .25 */, bjOut: 1.08 /* .33 */, bjBack: 1.15 /* .35 */,
+    // Roulette and Hold'em: the ball and the table's knocks as low as the cards, a win on the wheel as loud as a hand won
+    rlSpin: 2.6 /* .15-.17 */, rlDrop: 2.9 /* .17-.19 */, rlWin: 1 /* .37 */, pkCheck: 1.3 /* .12-.18 */, pkFold: 1.4 /* .12-.13 */,
+    // Sketch & Guess: your right guess like a hand won, someone else's like a viewer arriving, the rest in between
+    skRight: 0.95 /* .37 */, skOther: 1.75 /* .15 */, skClose: 1 /* .26 */, skEnd: 0.73 /* .30 */ };
 
   // The way out: a small dark room (1.4 s, low in the mix). No compressor: Chromium's blunts the first few milliseconds of
   // a short sound (it took 60% off the mute click's peak), and the levels here are set by hand to stay well under full scale.

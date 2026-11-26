@@ -12,6 +12,8 @@ const createXcoder = require('./xcode');
 const createP2P = require('./p2p');
 const createChat = require('./chat');
 const { createTable: createBjTable } = require('./blackjack');
+const GAME_RULES = { roulette: require('./roulette').createTable, poker: require('./poker').createTable, sketch: require('./sketch').createTable };       // the Games room's other tables (gmMove)
+const GAME_SOLO = { roulette: true, poker: true, sketch: false };       // can it be played alone (dealt here)? Sketch & Guess needs people: only at a hub
 const createFiles = require('./files');
 const createWeb = require('./web');
 const createUpdater = require('./updater');
@@ -105,6 +107,9 @@ const DEFAULTS = {
   files: { folder: '' },
   // the Blackjack scene played alone (docs/plans/blackjack.md §4): your chips, and when you're back in after crapping out (a hub's table keeps nothing)
   blackjack: { chips: 1000, outUntil: 0 },
+  // Roulette and Texas Hold'em played alone (docs/plans/games-room.md), the same way: each table's chips are its own
+  roulette: { chips: 1000, outUntil: 0 },
+  poker: { chips: 1000, outUntil: 0 },
   // What's new (renderer/whatsnew.js): the newest version whose notes were shown. A newer one starting shows them, once
   notesSeen: '',
   // the Surf stream of the hub this PC hosts (docs/plans/streams.md): its tabs (kept with the hub they belong to), whether every
@@ -187,6 +192,7 @@ function loadSettings() {
     for (const k of Object.keys(state.perDisplay || {})) if (!known(state.perDisplay[k])) delete state.perDisplay[k];
     state.cycleSkip = Array.isArray(state.cycleSkip) ? state.cycleSkip.filter((id) => SCENES.includes(id) && !GAMES.includes(id)) : [];
     state.blackjack = cleanBj(state.blackjack);
+    for (const g of ['roulette', 'poker']) state[g] = cleanBj(state[g]);
     if (state.palette === 'custom' && !Array.isArray(state.customColors)) state.palette = 'aurora';
     state.video.folders = (state.video.folders || []).filter((p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } });
     state.music.playlist = (state.music.playlist || []).filter((p) => { try { return fs.existsSync(p); } catch { return false; } });
@@ -219,7 +225,7 @@ function cleanVoice(q) {
 }
 const cleanDevice = (d) => ({ id: String((d && d.id) || '').replace(/[^\w+/=-]/g, '').slice(0, 128), label: String((d && d.label) || '').replace(/[\x00-\x1f]/g, '').slice(0, 120) });
 const voiceDevices = () => ({ mic: state.voice.mic, out: state.voice.out, ns: state.voice.ns });
-const cleanSfx = (q) => ({ on: q.on !== false, table: q.table !== false, volume: unitVol(q.volume, 0.7) });       // table: the Blackjack table's sounds, switched apart from the hub's
+const cleanSfx = (q) => ({ on: q.on !== false, table: q.table !== false, volume: unitVol(q.volume, 0.7) });       // table: the game tables' sounds, switched apart from the hub's
 const cleanGif = (q) => ({ key: String((q && q.key) || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 64) });
 const unitVol = (v, d) => (isFinite(v) && v !== null && v !== '' ? Math.max(0, Math.min(1, +v)) : d);
 const cleanMixer = (q) => ({ master: unitVol(q.master, 1), mute: !!q.mute, surf: unitVol(q.surf, 1), surfMute: !!q.surfMute, ambientMute: !!q.ambientMute, mediaMute: !!q.mediaMute });
@@ -1879,6 +1885,168 @@ function bjFromHub(hub, m) {
     bjSend({ ptrs: ptrClean(m.list).filter((q) => !blocked.has(q.id)) });
   }
 }
+
+// ---- the Games room's other tables: Roulette, Texas Hold'em and Sketch & Guess (docs/plans/games-room.md) ----
+// The same as the Blackjack table's above, for each game in GAME_RULES (gm[g]): a screen showing the table says so, and
+// while any does this PC is at that table, the active hub's when online in one (moves up with chat.game, the table and
+// pointers down as game-view and game-ptrs), otherwise its own, dealt here with the chips kept in the settings (state[g]).
+// Hold'em alone fills the table with three computer players. Sketch & Guess has no game alone ('alone': the screen says to go
+// online), and its drawing comes down apart from the views (game-ink), kept here too for a screen that comes to it later.
+// The screens get { type: 'game', g, v, mode, hub }, { ptrs }, { ink: { rev, from, list } } and { note }.
+const GAME_FAST = process.env.DRIFT_BJ_FAST ? { roulette: { bet: 8000, spin: 1200, done: 1500, out: 3000 }, poker: { turn: 6000, think: [150, 300], street: 250, show: 1500, fold: 800, out: 3000, start: 300 },
+  sketch: { start: 500, choose: 4000, draw: 25000, reveal: 1500, over: 2000 } } : undefined;       // tests: rounds in seconds
+const gm = Object.fromEntries(Object.keys(GAME_RULES).map((g) => [g, { local: null, timer: null, sent: -1, at: '', last: null, standing: false, screens: new Set(), ink: { rev: -1, list: [] } }]));       // at: '' (not at the table), 'local', 'alone' (a game that needs a hub, without one), or the hub's id
+const gmOnHub = (x) => !!x.at && x.at !== 'local' && x.at !== 'alone';
+const gmHeard = [];       // (tests: every sound the tables asked for)
+function gmSend(g, m) { for (const v of visWins) if (!v.win.isDestroyed() && gm[g].screens.has(v.key)) v.win.webContents.send('cmd', { type: 'game', g, ...m }); }
+const gmNote = (g, text) => gmSend(g, { note: String(text || '').slice(0, 200) });
+function gmShow(g, v, mode) {
+  const x = gm[g];
+  if (v && mode === 'hub') {       // someone you've blocked still plays (it's the hub's table), but not by name or face
+    const blocked = new Set(chat.info().blocked || []), hide = (s) => (s && blocked.has(s.id) ? { ...s, name: 'Someone', blocked: true } : s);
+    v = { ...v, board: (Array.isArray(v.board) ? v.board : []).slice(0, 5).map(hide) };
+    if (Array.isArray(v.seats)) v.seats = v.seats.map(hide);
+    if (Array.isArray(v.players)) v.players = v.players.map(hide);       // (Sketch & Guess: the players, the final scores, and what they type)
+    if (Array.isArray(v.standings)) v.standings = v.standings.map(hide);
+    if (Array.isArray(v.feed)) v.feed = v.feed.filter((e) => !(blocked.has(e.pid) && (e.kind === 'guess' || e.kind === 'chat'))).map((e) => (blocked.has(e.pid) ? { ...e, who: 'Someone', text: String(e.text).split(e.who).join('Someone') } : e));
+  }
+  const was = x.last && x.last.mode === mode ? x.last.v : null, hub = mode === 'hub' ? x.at : '';
+  x.last = v ? { v, mode, hub, at: Date.now() } : null;
+  gmSend(g, { v, mode, hub });
+  if (was && v) { const s = (GM_SOUNDS[g] || (() => []))(was, v); if (s.length) { sfxPlay(s); if (SHOT_DIR) gmHeard.push(...s); } }
+}
+// Each table's sounds, from what changed between two views of it (the Blackjack table's cards and chips, and a few of their
+// own: the ball going round and dropping, a win on the wheel, a check's knock, a fold). Two at most, the one that matters first.
+const GM_SOUNDS = {
+  roulette(a, b) {
+    const out = [], me = b.you >= 0 ? b.seats[b.you] : null, was = a.you >= 0 ? a.seats[a.you] : null;
+    if (b.phase === 'spinning' && a.phase !== 'spinning') out.push('rlSpin');
+    if (b.phase === 'done' && a.phase !== 'done') { out.push('rlDrop'); if (me && me.played) out.push(me.net > 0 ? 'rlWin' : me.net < 0 ? 'bjLose' : 'bjPush'); }
+    if (me && was && me.outMs && !was.outMs) out.push('bjOut');
+    if (me && was && !me.outMs && was.outMs) out.push('bjBack');
+    const staked = (v) => v.seats.reduce((n, s) => n + (s ? s.staked : 0), 0);
+    if (a.round === b.round && b.phase === 'betting' && staked(b) > staked(a) && !(me && was && me.staked > was.staked)) out.push('bjChip');       // someone else's chips going down (yours click as you place them)
+    return [...new Set(out)].slice(0, 2);
+  },
+  poker(a, b) {
+    const out = [], me = b.you >= 0 ? b.seats[b.you] : null;
+    if (b.hand !== a.hand && b.phase === 'preflop') out.push('bjDeal');
+    else if (b.board.length > a.board.length) out.push('bjCard');
+    if (b.phase === 'showdown' && a.phase !== 'showdown' && me && me.inHand && !me.folded) out.push(me.net > 0 ? 'bjWin' : me.net < 0 ? 'bjLose' : 'bjPush');
+    if (b.turn === b.you && b.turn >= 0 && (a.turn !== a.you || a.hand !== b.hand)) out.push('bjTurn');
+    if (b.hand === a.hand) {
+      b.seats.forEach((s, i) => {
+        const o = a.seats[i]; if (!s || !o || s.id !== o.id || s.last === o.last) return;
+        if (s.last === 'Fold') out.push('pkFold'); else if (s.last === 'Check') out.push('pkCheck'); else if (s.put > o.put) out.push('bjChip');
+      });
+    }
+    if (me && a.you >= 0 && a.seats[a.you]) { const w = a.seats[a.you]; if (me.outMs && !w.outMs) out.push('bjOut'); if (!me.outMs && w.outMs) out.push('bjBack'); }
+    return [...new Set(out)].slice(0, 2);
+  },
+  sketch(a, b) {       // your turn to draw; you got it (or someone did); so close; the word shown; the winner at the end
+    const out = [], me = b.you >= 0 ? b.players[b.you] : null, was = a.you >= 0 ? a.players[a.you] : null;
+    if (b.phase === 'choosing' && b.drawer === b.you && b.drawer >= 0 && (a.phase !== 'choosing' || a.drawer !== a.you)) out.push('bjTurn');
+    if (me && was && me.guessed && !was.guessed) out.push('skRight');
+    else if (b.players.filter((p) => p.guessed).length > a.players.filter((p) => p.guessed).length) out.push('skOther');
+    const seen = new Set(a.feed.map((e) => e.n));
+    if (b.feed.some((e) => e.kind === 'close' && !seen.has(e.n))) out.push('skClose');
+    if (b.phase === 'reveal' && a.phase === 'drawing') out.push('skEnd');
+    if (b.phase === 'over' && a.phase !== 'over' && b.standings && me) out.push(b.standings[0] && b.standings[0].id === me.id ? 'bjBlackjack' : 'bjPush');
+    return [...new Set(out)].slice(0, 2);
+  },
+};
+function gmSync(g) {
+  const x = gm[g];
+  for (const k of [...x.screens]) if (!visWins.some((v) => v.key === k && !v.win.isDestroyed())) x.screens.delete(k);
+  const want = x.screens.size ? bjHub() || (GAME_SOLO[g] ? 'local' : 'alone') : '';
+  if (want === x.at) return;
+  const was = x.at; x.at = want; x.standing = false;
+  if (was === 'local') gmLocalStop(g); else if (gmOnHub({ at: was }) && chat) chat.game(was, { t: 'game-leave', g });
+  gmShow(g, null, ''); gmSend(g, { ptrs: [] });
+  x.ink = { rev: -1, list: [] }; gmSend(g, { ink: { rev: -1, from: 0, list: [] } });
+  if (want === 'alone') gmSend(g, { v: null, mode: 'alone' });
+  else if (want === 'local') gmLocalStart(g);
+  else if (want) chat.game(want, { t: 'game-sit', g }).then((r) => { if (r && r.error && x.at === want) gmNote(g, r.error); });
+}
+setInterval(() => { for (const g of Object.keys(gm)) gmSync(g); }, 1000);       // (the hub came or went)
+function gmLocalStart(g) {
+  const x = gm[g];
+  x.local = GAME_RULES[g]({ times: (GAME_FAST || {})[g], fill: 4 });
+  x.local.sit(BJ_ME, 'You', state[g]);
+  x.sent = -1; gmLocalPush(g);
+  clearInterval(x.timer);
+  x.timer = setInterval(() => { if (x.local) { x.local.tick(); gmLocalPush(g); } }, 200);
+}
+function gmKeep(g) {
+  const k = gm[g].local && gm[g].local.mine(BJ_ME);
+  if (k && (k.chips !== state[g].chips || k.outUntil !== state[g].outUntil)) { state[g] = k; saveSoon(); }
+}
+function gmLocalPush(g) {
+  const x = gm[g];
+  if (!x.local || x.local.version === x.sent) return;
+  x.sent = x.local.version;
+  gmShow(g, x.local.view(BJ_ME), 'local');
+  gmKeep(g);
+}
+function gmLocalStop(g) {
+  const x = gm[g];
+  clearInterval(x.timer); x.timer = null;
+  gmKeep(g);
+  x.local = null;
+}
+function gmMove(c) {
+  const g = String(c.g || ''); if (!Object.hasOwn(gm, g)) return;
+  const x = gm[g], op = String(c.op || '');
+  if (op === 'here') {
+    const key = String(c.key || '');
+    if (c.on) x.screens.add(key); else x.screens.delete(key);
+    gmSync(g);
+    const w = c.on && visWins.find((v) => v.key === key), to = (m) => { if (w && !w.win.isDestroyed()) w.win.webContents.send('cmd', { type: 'game', g, ...m }); };
+    if (x.last) to({ v: x.last.v, mode: x.last.mode, hub: x.last.hub });
+    else if (x.at === 'alone') to({ v: null, mode: 'alone' });
+    if (x.ink.rev >= 0) to({ ink: { rev: x.ink.rev, from: 0, list: x.ink.list } });       // (the drawing so far)
+    return;
+  }
+  if (op === 'ptr') {
+    if (gmOnHub(x) && state.share.cursor) chat.game(x.at, { t: 'game-ptr', g, x: c.x >= 0 ? +c.x : -1, y: c.y >= 0 ? +c.y : -1 });
+    return;
+  }
+  if (op === 'ink') { if (gmOnHub(x) && c.o && typeof c.o === 'object') chat.game(x.at, { t: 'game-ink', g, op: c.o }); return; }       // a piece of your drawing (Sketch & Guess)
+  if (op === 'tap') { if (x.at && x.at !== 'alone') { sfxPlay(['bjChip']); if (SHOT_DIR) gmHeard.push('bjChip'); } return; }
+  if (x.at === 'alone') return;
+  if ((op === 'stand' || op === 'sit') && x.at) {       // up from your place (bets not played yet come back; a hand in play folds), or back down
+    x.standing = op === 'stand';
+    if (x.at === 'local') {
+      if (op === 'stand') { gmKeep(g); x.local.leave(BJ_ME); } else x.local.sit(BJ_ME, 'You', state[g]);
+      x.local.tick(); gmLocalPush(g);
+    } else { const hub = x.at; chat.game(hub, { t: 'game-' + op, g }).then((r) => { if (r && r.error && x.at === hub) gmNote(g, r.error); }); }
+    return;
+  }
+  if (op !== 'move' || !x.at) return;
+  const mv = c.m && typeof c.m === 'object' ? c.m : {}, m = { do: String(mv.do || '').slice(0, 12), key: String(mv.key || '').slice(0, 24), amount: +mv.amount || 0, text: String(mv.text || '').slice(0, 80) };
+  if (x.at === 'local') {
+    const r = x.local.move(BJ_ME, m);
+    x.local.tick(); gmLocalPush(g);
+    if (r.error) gmNote(g, r.error);
+    return;
+  }
+  const hub = x.at;
+  chat.game(hub, { t: 'game-move', g, m }).then((r) => { if (r && r.error && x.at === hub) gmNote(g, r.error); });
+}
+function gmFromHub(hub, m) {
+  const g = String(m.g || ''); if (!Object.hasOwn(gm, g) || hub !== gm[g].at) return;
+  if (m.t === 'game-view') { if (m.v) gmShow(g, m.v, 'hub'); else { gmShow(g, null, ''); gmNote(g, 'You sat down at this table on another PC.'); } }
+  else if (m.t === 'game-ptrs') {
+    const blocked = new Set(chat.info().blocked || []);
+    gmSend(g, { ptrs: ptrClean(m.list).filter((q) => !blocked.has(q.id)) });
+  } else if (m.t === 'game-ink' && Array.isArray(m.list)) {       // the drawing growing: kept, and passed on to the screens (they draw it)
+    const x = gm[g], rev = +m.rev || 0, from = Math.max(0, Math.floor(+m.from || 0)), list = m.list.slice(0, 7000);
+    if (rev !== x.ink.rev || from === 0) x.ink = { rev, list: list.slice() };
+    else if (from === x.ink.list.length) x.ink.list.push(...list);
+    else return;       // (out of step: the next new sheet puts it right)
+    gmSend(g, { ink: { rev, from, list } });
+  }
+}
 // The mouse moving over one of Drift's screens, told to that screen (at most 5 times a second, only while it moves): over a
 // web page the window can't see it, and the chat button over Surf (renderer/chat.js coWake) shows while it moves.
 let lastCursor = '';
@@ -1968,6 +2136,8 @@ function startChat() {
       if (String(m.t).startsWith('ft-')) { onFtEvent(hub, m); return; }       // file transfers': for the transfer window (the panels get ftState)
       if (String(m.t).startsWith('bj-')) { bjFromHub(hub, m); return; }       // the blackjack table's: for the screens showing it
       if (m.t === 'ready' && hub === bjAt) chat.bj(hub, { t: bjStanding ? 'bj-watch' : 'bj-sit' });       // back after a reconnect: at the table again (with fresh chips), standing if you were
+      if (String(m.t).startsWith('game-')) { gmFromHub(hub, m); return; }       // Roulette's and Hold'em's, the same
+      if (m.t === 'ready') for (const g of Object.keys(gm)) if (gm[g].at === hub) chat.game(hub, { t: gm[g].standing ? 'game-watch' : 'game-sit', g });
       if (m.t === 'media-vote') onMediaVote(hub, m.vote);
       if (m.t === 'live-no' && p2p.role() === 'host' && liveHub === hub) { mediaRefused(hub, m); return; }
       if ((m.t === 'bc-off' || m.t === 'bc-watch-off') && m.why && m.why !== 'ended') say(m.why);       // e.g. the host stopped your broadcast
@@ -1987,10 +2157,11 @@ function startChat() {
     },
     log: chatLog,
     bjTimes: BJ_FAST,       // (tests: the hub's blackjack table plays fast too)
+    gameTimes: GAME_FAST,       // (and its other tables)
     connectOnStart: false,       // online in a hub means on its stream (and sharing what you pick): only once you click it
   });
   chat.setName(shareName());
-  if (!SHOT_DIR || process.env.DRIFT_TESTCHAT || process.env.DRIFT_TESTSTREAM || process.env.DRIFT_TESTSS || process.env.DRIFT_TESTPICS || process.env.DRIFT_TESTFT || process.env.DRIFT_TESTBJ) chat.start().catch((e) => console.log('chat: ' + e.message));
+  if (!SHOT_DIR || process.env.DRIFT_TESTCHAT || process.env.DRIFT_TESTSTREAM || process.env.DRIFT_TESTSS || process.env.DRIFT_TESTPICS || process.env.DRIFT_TESTFT || process.env.DRIFT_TESTBJ || process.env.DRIFT_TESTGAMES) chat.start().catch((e) => console.log('chat: ' + e.message));
   publicIp().then((ip) => { chatPub = ip; }).catch(() => {});
 }
 // ---- Hub sounds (renderer/sfx.js makes them, in the hidden audio window, so they never double across monitors) ----
@@ -1998,11 +2169,13 @@ function startChat() {
 // compared with the last one. The first picture only sets the scene, so starting Drift is quiet.
 const SFX_NAMES = new Set(['join', 'leave', 'peerJoin', 'peerLeave', 'mute', 'unmute', 'connect', 'disconnect', 'lost',
   'liveOn', 'liveOff', 'viewerJoin', 'viewerLeave', 'bcStart', 'shareOn', 'shareOff', 'message',
-  'bjCard', 'bjDeal', 'bjChip', 'bjTurn', 'bjWin', 'bjBlackjack', 'bjPush', 'bjLose', 'bjBust', 'bjOut', 'bjBack']);       // (the Blackjack table's: bjSounds)
+  'bjCard', 'bjDeal', 'bjChip', 'bjTurn', 'bjWin', 'bjBlackjack', 'bjPush', 'bjLose', 'bjBust', 'bjOut', 'bjBack',       // (the Blackjack table's: bjSounds)
+  'rlSpin', 'rlDrop', 'rlWin', 'pkCheck', 'pkFold',       // (Roulette's and Hold'em's, with the Blackjack table's cards and chips: GM_SOUNDS)
+  'skRight', 'skOther', 'skClose', 'skEnd']);       // (Sketch & Guess's)
 let sfxWas = null, sfxJoinedAt = 0;
 function sfxPlay(names, preview = false) {
-  // the Blackjack table's sounds have their own switch (Sounds → Blackjack table sounds): hub sounds off needn't hush the cards
-  const on = names.every((n) => String(n).startsWith('bj')) ? state.sfx.table !== false : state.sfx.on;
+  // the game tables' sounds have their own switch (Sounds → Game table sounds): hub sounds off needn't hush the cards
+  const on = names.every((n) => /^(bj|rl|pk|sk)[A-Z]/.test(String(n))) ? state.sfx.table !== false : state.sfx.on;
   if ((!on && !preview) || !audioWin || audioWin.isDestroyed()) return;
   const vol = mixGain().master * state.sfx.volume * state.sfx.volume;       // (squared, like the mixer's sliders: the slider feels even)
   if (vol > 0) { audioWin.webContents.send('cmd', { type: 'sfx', names, vol }); if (SHOT_DIR) sfxSent.push(...names); }
@@ -3347,10 +3520,10 @@ const SCENES = ['aurora', 'nebula', 'silk', 'water', 'stars', 'lava', 'ridges', 
   'sierpinski', 'sorting', 'life', 'maze', 'julia', 'hilbert', 'voronoi',
   'polyhedra', 'globe', 'tunnel', 'cubes', 'lattice', 'menger',
   'quasi', 'hyperbolic', 'apollonian', 'phyllotaxis', 'rose', 'chladni',
-  'lake', 'pines', 'dunes', 'seaside', 'meadow', 'canyon', 'blackjack'];
+  'lake', 'pines', 'dunes', 'seaside', 'meadow', 'canyon', 'blackjack', 'roulette', 'poker', 'sketch'];
 // The Games room's scenes (docs/plans/blackjack.md §1): picked from their tile only. Neither the automatic changes nor Next /
 // Previous land on one, and an automatic change never takes you away from one (you may be in the middle of a hand).
-const GAMES = ['blackjack'];
+const GAMES = ['blackjack', 'roulette', 'poker', 'sketch'];
 function stepScene(dir, shuffle, auto) {
   // automatic changes only pick the scenes ticked for rotation; Next / Previous still go through all of them (but the games)
   const pool = (auto ? SCENES.filter((id) => !state.cycleSkip.includes(id)) : SCENES).filter((id) => !GAMES.includes(id));
@@ -3774,6 +3947,7 @@ ipcMain.on('cmd', async (e, c) => {
       break;
     case 'web-ptr': if (surfMode() === 'stream') ssOut(state.share.cursor ? { t: 'ptr', x: +c.x, y: +c.y } : { t: 'ptr', x: -1, y: -1 }); break;       // where this PC's mouse is over the Surf stream (-1: off it, or cursor sharing is off)
     case 'bj': bjMove(c); break;       // the Blackjack table: a screen showing it or not, a move, the pointer over it
+    case 'game': gmMove(c); break;       // Roulette and Hold'em, the same
     case 'vid-ptr': {       // where this PC's mouse is over the shared video, while it's paused (-1: off it, or cursor sharing is off)
       const at = c.x >= 0 && state.share.cursor ? { x: +c.x, y: +c.y } : null;
       if (p2p.role() === 'host') vptrSet('host', shareName(), at);
@@ -5589,6 +5763,234 @@ async function runShots() {
         scene('aurora');
         tl('leaving: no longer at the table', await until(() => bjAt === '', 5000));
       } else tl('the guest leaves: their seat goes', await until(() => V() && V().seats.filter(Boolean).length === 1, 15000));
+      await step('done');
+    } catch (e) {
+      if (!/^stopped early/.test(e && e.message)) { tl('failed: ' + (e && e.stack || e), false); abort('crashed'); }
+      if (aborted()) res.stopped = fs.readFileSync(abortFile, 'utf8');
+    }
+    fs.writeFileSync(path.join(outDir, role + '.json'), JSON.stringify(res, null, 1));
+    await step('end', 20000);
+  }
+  if (process.env.DRIFT_TESTGAMES) {     // Roulette and Hold'em (docs/plans/games-room.md), two copies of Drift (scripts/test-games.js): =host or =guest.
+    // Alone first: a bet clicked onto the roulette layout, the spin, the payout kept in the settings; a few hands of Hold'em
+    // against the computer players, their cards hidden till a showdown. Then the host makes a hub and the guest joins: both at
+    // the hub's roulette table (each other's chips on the layout, the same number for both, the board of biggest wins), then
+    // at its Hold'em table (the computer player gives way to the second person, your cards only yours, a hand played out).
+    // DRIFT_TESTCODE = a file for the invite, DRIFT_TESTGAMES_OUT = a folder for each step's marker and what each saw (<role>.json).
+    const role = process.env.DRIFT_TESTGAMES, codeFile = process.env.DRIFT_TESTCODE, outDir = process.env.DRIFT_TESTGAMES_OUT, other = role === 'host' ? 'guest' : 'host';
+    const name = role === 'host' ? 'Hosty' : 'Guesty', theirName = role === 'host' ? 'Guesty' : 'Hosty', wc = visWins[0].win.webContents, js = (c) => pageJs(wc, c);
+    const abortFile = path.join(outDir, 'abort'), aborted = () => fs.existsSync(abortFile);
+    const abort = (why) => { try { fs.writeFileSync(abortFile, `${role}: ${why}`); } catch { /* fine */ } };
+    const until = async (f, ms = 30000) => { for (let t = 0; t < ms && !aborted(); t += 250) { if (await f()) return true; await wait(250); } return !!(await f()); };
+    const step = async (s, ms = 120000) => { fs.writeFileSync(path.join(outDir, `${role}-${s}`), ''); log.push(`games ${role}: at ${s}`); return until(() => fs.existsSync(path.join(outDir, `${other}-${s}`)), ms); };
+    const res = { role, name }, tl = (k, v) => { res[k] = v; log.push(`games ${role}: ${k} ${JSON.stringify(v)}`); };
+    const need = (k, v) => { tl(k, v); if (!v) { abort(k); throw new Error('stopped early: ' + k); } };
+    const hubNow = () => chat.info().hubs.find((h) => h.status === 'connected');
+    const V = (g) => (gm[g].last ? gm[g].last.v : null), mine = (g) => { const v = V(g); return v && v.you >= 0 ? v.seats[v.you] : null; };
+    const tw = (g) => { const x = visWins.find((y) => gm[g].screens.has(y.key) && !y.win.isDestroyed()); return x ? x.win.webContents : wc; };
+    const ID = { roulette: '#rlTable', poker: '#pkTable' };
+    const page = (g) => pageRun(tw(g), (sel) => {       // the table as it's drawn
+      const t = document.querySelector(sel), q = (s) => t.querySelector(s);
+      const felt = q('.rlFelt, .pkFelt');
+      return { on: t.classList.contains('on') && t.classList.contains('live'), mode: (q('.bjMode') || {}).textContent || '', status: q('.bjStatus').innerText.replace(/\n+/g, ' '),
+        bar: q('.bjBar').innerText.replace(/\n+/g, ' | '), btns: [...t.querySelectorAll('.bjBar button')].map((b) => b.textContent + (b.disabled ? ' (off)' : '')),
+        board: q('.bjBoard').classList.contains('on') ? q('.bjBoard').innerText.replace(/\n+/g, ' | ') : null, felt: felt.getBoundingClientRect().width,
+        ptrs: [...document.querySelectorAll('#gmPtrs .ptr')].map((p) => p.lastChild.textContent),
+        cells: t.querySelectorAll('.rlCell').length, chips: t.querySelectorAll('.rlChip').length, hist: [...t.querySelectorAll('.rlHist .h')].map((h) => h.textContent),
+        names: [...t.querySelectorAll('.rlTag .nm, .pkSeat:not(.empty) .bjTag .nm')].map((n) => n.textContent),
+        myCards: [...t.querySelectorAll('.pkSeat.me .bjCard')].map((c) => (c.classList.contains('back') ? 'back' : c.querySelector('b').textContent)),
+        backs: t.querySelectorAll('.pkSeat:not(.me) .bjCard.back').length, faces: t.querySelectorAll('.pkSeat:not(.me) .bjCard:not(.back)').length };
+    }, ID[g]);
+    const press = (g, test) => pageRun(tw(g), (sel, src) => { const re = new RegExp(src); const b = [...document.querySelectorAll(sel + ' .bjBar button')].find((x) => re.test(x.textContent) && !x.disabled); if (b) b.click(); return b ? b.textContent : ''; }, ID[g], test);
+    const scene = (id) => patch({ scene: id });
+    const shot = async (g, label) => { if (!process.env.DRIFT_GAMESHOTS) return; const img = await Promise.race([tw(g).capturePage(), wait(4000)]); if (img) fs.writeFileSync(path.join(outDir, `${role}-${label}.png`), img.toPNG()); };       // (to look at by eye: DRIFT_GAMESHOTS=1)
+    // a click on the roulette layout at (ux, uy) in its units (14 across, 5 down), as the mouse would
+    const clickLayout = (ux, uy) => pageRun(tw('roulette'), (x, y) => {
+      const l = document.querySelector('#rlTable .rlLayout'), r = l.getBoundingClientRect(), o = { bubbles: true, clientX: r.left + x / 14 * r.width, clientY: r.top + y / 5 * r.height };
+      l.dispatchEvent(new MouseEvent('mousemove', o)); l.dispatchEvent(new MouseEvent('click', o));
+      return document.querySelector('#rlTable .rlGhost').classList.contains('on');
+    }, ux, uy);
+    // Hold'em: on your turn, check if you can, call if not (or fold, to finish a hand fast); true once the hand is over
+    const pokerPlay = async (how = 'call') => {
+      const v = V('poker'); if (!v) return false;
+      if (v.phase === 'showdown') return true;
+      if (v.can) await press('poker', how === 'fold' ? '^Fold$' : '^(Check|Call)');
+      return false;
+    };
+    fs.mkdirSync(outDir, { recursive: true });
+    patch({ music: { source: 'off' }, share: { internet: false, name, wait: false, cursor: true }, voice: { talk: false, deaf: true, direct: false, pin: '' }, autoCycle: 0, sfx: { on: false, table: true } });
+    try {
+      // ---- Roulette, alone ----
+      scene('roulette');
+      need('the roulette table comes up, dealt here', await until(() => gm.roulette.at === 'local' && !!V('roulette') && V('roulette').phase === 'betting', 15000));
+      let p = await page('roulette');
+      tl('it shows: the wheel, the layout (37 numbers and 12 outside bets), just you', await until(async () => { p = await page('roulette'); return p.on && p.mode === 'Just you' && p.cells === 49 && p.names.join() === 'You' && p.felt > 400; }, 5000));
+      const c0 = mine('roulette').chips;
+      await press('roulette', '^25$');       // the 25 chip
+      tl('a click on 17 bets on 17', await clickLayout(1 + 5 + 0.5, 1.5) && await until(() => mine('roulette').bets.some(([k, a]) => k === '17' && a === 25), 3000));
+      await clickLayout(1 + 5 + 0.98, 1.5);       // the line between 17 and 20: a split
+      await clickLayout(1 + 5.98, 1.98);       // the corner of 16, 17, 19, 20
+      await clickLayout(1 + 0.5, 2.98);       // the outside edge under 1, 2, 3: a street
+      await clickLayout(6, 4.5);       // the red diamond
+      await until(() => mine('roulette').bets.length === 5, 3000);
+      tl('the edges: a split, a corner, a street, red', JSON.stringify(mine('roulette').bets.map(([k]) => k).sort()) === JSON.stringify(['16-17-19-20', '17', '17-20', '1-2-3', 'red'].sort()), mine('roulette').bets);
+      p = await page('roulette');
+      tl('...each with its chip on the layout', p.chips === 5);
+      tl('...taken from the chips', mine('roulette').chips === c0 - 125);
+      need('Spin spins (alone, at once)', !!(await press('roulette', '^Spin$')) && await until(() => V('roulette').phase === 'spinning', 3000));
+      tl('the number isn\'t known on this side while it spins', V('roulette').number === null);
+      await wait(500); await shot('roulette', 'rl-spinning');
+      need('it lands', await until(() => V('roulette').phase === 'done', 8000));
+      const n0 = V('roulette').number, net0 = mine('roulette').net;
+      p = await page('roulette');
+      tl(`the number shows, and the payout (${n0}: ${net0 >= 0 ? '+' : ''}${net0})`, /^\d+ (Red|Black|Green)/.test(p.status) && p.hist[0] === String(n0) && mine('roulette').chips === c0 - 125 + 125 + net0);
+      await wait(700); await shot('roulette', 'rl-landed');       // (the ball settling: 1.4 s; here the result shows for 1.5 s)
+      await wait(400);
+      tl('...kept in the settings', state.roulette.chips === mine('roulette').chips);
+      need('the next spin', await until(() => V('roulette').phase === 'betting', 8000));
+      tl('Same again puts last spin\'s bets back', !!(await press('roulette', '^Same again$')) && await until(() => mine('roulette').staked === 125, 3000));
+      await press('roulette', '^Clear$');
+      tl('Clear takes them back', await until(() => mine('roulette').staked === 0, 3000));
+
+      // ---- Hold'em, alone, against the computer players ----
+      scene('poker');
+      need('the Hold\'em table comes up, with three computer players', await until(() => gm.poker.at === 'local' && !!V('poker') && V('poker').seats.filter((s) => s && s.bot).length === 3, 15000));
+      need('a hand is dealt', await until(() => !!mine('poker') && mine('poker').cards.length === 2, 10000));
+      p = await page('poker');
+      tl('your two cards, face up; theirs face down', await until(async () => { p = await page('poker'); return p.myCards.length === 2 && !p.myCards.includes('back') && p.backs >= 2 && p.faces === 0; }, 5000) || V('poker').phase === 'showdown');
+      tl('nobody else\'s cards are in what this PC is sent', V('poker').phase === 'showdown' || V('poker').seats.every((s, i) => !s || i === V('poker').you || s.cards.every((c) => c === null)));
+      let hands = 0, sawShow = false, lastHand = V('poker').hand, leaks = 0;
+      await until(async () => {
+        const v = V('poker');
+        if (v.hand !== lastHand) { hands++; lastHand = v.hand; }
+        if (v.phase === 'showdown' && v.seats.some((s, i) => s && i !== v.you && s.best && s.cards.every(Boolean))) { if (!sawShow) await shot('poker', 'pk-showdown'); sawShow = true; }
+        if (v.phase !== 'showdown' && v.seats.some((s, i) => s && i !== v.you && s.cards.some(Boolean))) leaks++;
+        if (v.can) await press('poker', '^(Check|Call)');
+        return hands >= 3 && sawShow;
+      }, 90000);
+      tl(`hands play out against them (${hands}), cards shown at a showdown`, hands >= 3 && sawShow);
+      tl('...and never before one', leaks === 0);
+      await until(() => V('poker').phase !== 'showdown' && !V('poker').can, 8000);
+      await wait(400);
+      tl('your chips are kept in the settings', Math.abs(state.poker.chips - (mine('poker').chips + (mine('poker').inHand && !mine('poker').folded ? mine('poker').put : 0))) === 0);
+      log.push('games: sounds ' + gmHeard.join(' '));
+      tl('the tables\' sounds: the wheel, the drop, chips, the deal, cards, your turn', ['rlSpin', 'rlDrop', 'bjChip', 'bjDeal', 'bjCard', 'bjTurn'].every((n) => gmHeard.includes(n)));
+      // ---- Sketch & Guess, alone: there's no game without people, and it says so ----
+      scene('sketch');
+      tl('Sketch & Guess alone says to go online in a hub', await until(async () => gm.sketch.at === 'alone' && /for friends/.test(await pageRun(tw('sketch'), () => { const c = document.querySelector('#skTable .skCard'); return c.classList.contains('on') ? c.textContent : ''; })), 10000));
+      scene('poker');       // (back to Hold'em: the hub's table is the first one tried together)
+
+      // ---- at the hub ----
+      if (role === 'host') {
+        wc.send('cmd', { type: 'show-panel', tab: 'hub' }); await wait(800);
+        await js("document.querySelector('#chHost').click()");
+        need('hub up', await until(() => !!hubNow()));
+        fs.writeFileSync(codeFile, (await chat.invite(hubNow().id)).code || '');
+      } else {
+        need('the host\'s invite', await until(() => fs.existsSync(codeFile) && !!fs.readFileSync(codeFile, 'utf8'), 120000));
+        wc.send('cmd', { type: 'show-panel', tab: 'hub' }); await wait(800);
+        await js(`document.querySelector('#chCode').value = ${JSON.stringify(fs.readFileSync(codeFile, 'utf8'))}; document.querySelector('#chJoin').click()`);
+        need('joined the hub', await until(() => !!hubNow(), 60000));
+      }
+      // Hold'em first (it's up): the hub's table, a computer player till the other sits, then the two of us
+      need('at the hub\'s Hold\'em table now', await until(() => hubNow() && gm.poker.at === hubNow().id && !!V('poker') && V('poker').you >= 0, 15000));
+      tl('the hub bar says the other is at the Hold\'em table', await until(() => { const h = hubNow(), m = h && h.members.find((x) => x.name === theirName); return !!m && m.at === 'poker'; }, 20000));
+      await step('poker-seated');
+      need('the two of us, and the computer player gone', await until(async () => { const v = V('poker'); await pokerPlay('fold'); return v.seats.filter((s) => s && !s.bot).length === 2 && !v.seats.some((s) => s && s.bot) && ['preflop', 'flop', 'turn', 'river'].includes(v.phase) && v.seats.filter((s) => s && s.inHand).length === 2; }, 60000));
+      p = await page('poker');
+      tl('the table says it\'s the hub\'s, with both of us', await until(async () => { p = await page('poker'); return p.mode === 'Hub table' && p.names.includes('You') && p.names.includes(theirName); }, 5000));
+      tl('fresh chips at the hub', mine('poker').chips + mine('poker').put === 1000 || V('poker').hand > 1);
+      tl('my cards face up, theirs face down (and not sent)', p.myCards.length === 2 && !p.myCards.includes('back') && V('poker').seats.every((s, i) => !s || i === V('poker').you || s.cards.every((c) => c === null)));
+      gmMove({ g: 'poker', op: 'ptr', x: 0.4, y: 0.5 });
+      await step('poker-ptr');
+      tl('their pointer shows over my table, by name', await until(async () => (await page('poker')).ptrs.includes(theirName), 8000));
+      await step('poker-ptrs-seen');
+      const handNo = V('poker').hand;
+      need('a hand played out between us (checked and called down)', await until(async () => { await pokerPlay('call'); const v = V('poker'); return v.hand !== handNo || (v.phase === 'showdown' && v.hand === handNo); }, 60000));
+      fs.writeFileSync(path.join(outDir, `${role}-hand.json`), JSON.stringify({ hand: V('poker').hand, board: V('poker').board }));
+      await step('poker-played');
+      await step('poker-played');       // (both files written)
+      // ---- the hub's roulette table ----
+      scene('roulette');
+      need('at the hub\'s roulette table', await until(() => hubNow() && gm.roulette.at === hubNow().id && !!V('roulette') && V('roulette').you >= 0, 15000));
+      need('both of us at it', await until(() => V('roulette').seats.filter(Boolean).length === 2, 30000));
+      tl('fresh chips at the hub\'s wheel', mine('roulette').chips === 1000);
+      await step('rl-seated');
+      need('a betting round', await until(() => V('roulette').phase === 'betting', 15000));
+      gmMove({ g: 'roulette', op: 'move', m: { do: 'bet', key: role === 'host' ? 'red' : 'black', amount: 100 } });
+      gmMove({ g: 'roulette', op: 'move', m: { do: 'bet', key: role === 'host' ? '7' : '0', amount: 25 } });
+      need('each sees the other\'s chips on the layout', await until(async () => { const v = V('roulette'); p = await page('roulette'); return v.seats.filter((s) => s && s.staked > 0).length === 2 && p.chips === 4; }, 10000));
+      await shot('roulette', 'rl-hub');
+      if (role === 'host') tl('the ball waits for both to say Spin', V('roulette').phase === 'betting');
+      await step('rl-bets');
+      await press('roulette', '^Spin$');
+      need('it spins once both have', await until(() => V('roulette').phase !== 'betting', 10000));
+      need('it lands', await until(() => V('roulette').phase === 'done', 10000));
+      fs.writeFileSync(path.join(outDir, `${role}-number`), String(V('roulette').number));
+      await step('rl-landed');
+      tl('the same number for both', fs.readFileSync(path.join(outDir, 'host-number'), 'utf8') === fs.readFileSync(path.join(outDir, 'guest-number'), 'utf8'));
+      {       // the board of biggest wins: this spin's winners, with what they won
+        const won = V('roulette').seats.filter((s) => s && s.net > 0).map((s) => ({ name: s.name, net: s.net }));
+        let b = [];
+        tl(`the biggest wins: the spin's winners on the hub's board (${won.length ? won.map((w) => w.name + ' +' + w.net).join(', ') : 'nobody won'})`,
+          await until(async () => { b = V('roulette').board || []; p = await page('roulette'); return b.length === won.length && won.every((w) => b.some((x) => x.name === w.name && x.win === w.net)) && p.board !== null; }, 5000));
+      }
+      await step('rl-done');
+      // ---- Sketch & Guess at the hub: one draws (a pen stroke and a rectangle, with the real tools), the other guesses ----
+      scene('sketch');
+      const SV = () => V('sketch');
+      need('at the hub\'s Sketch & Guess', await until(() => hubNow() && gm.sketch.at === hubNow().id && !!SV() && SV().you >= 0, 15000));
+      need('a game starts with the two of us', await until(() => SV().players.length === 2 && ['choosing', 'drawing'].includes(SV().phase), 20000));
+      const skPage = () => pageRun(tw('sketch'), () => {
+        const t = document.querySelector('#skTable'), c = t.querySelector('.skBase'), d = c.width ? c.getContext('2d').getImageData(0, 0, c.width, c.height).data : [];
+        let ink = 0; for (let i = 3; i < d.length; i += 28) if (d[i] > 0) ink++;
+        const txt = (s) => [...t.querySelector(s).children].map((e) => e.textContent).join(' | ');       // (textContent: a hidden window may not have laid it out yet)
+        return { top: txt('.skTop'), card: t.querySelector('.skCard').classList.contains('on') ? txt('.skCard') : '', feed: txt('.skFeed'), players: txt('.skPlayers'), ink, tools: [...t.querySelectorAll('.skTool')].filter((b) => !b.disabled).length, input: !t.querySelector('.skInput').disabled };
+      });
+      const firstDrawer = SV().players[SV().drawer].id, iDraw = SV().drawer === SV().you;
+      let sp = await skPage();
+      if (iDraw) {
+        tl('the drawer gets three words to pick from; the tools wake up', sp.card.includes('Pick a word') && SV().choices.length === 3);
+        need('picking one starts the drawing', await pageRun(tw('sketch'), () => { const b = document.querySelector('#skTable .skChoices button'); if (b) b.click(); return !!b; }) && await until(() => SV().phase === 'drawing', 5000));
+        const w = SV().word;
+        fs.writeFileSync(path.join(outDir, 'word'), w);
+        sp = await skPage();
+        tl('the drawer sees the word, the tools, and no guess box', sp.top.includes(w) && sp.tools === 10 && !sp.input);
+        await pageRun(tw('sketch'), () => {
+          const c = document.querySelector('#skTable .skLive'), r = c.getBoundingClientRect();
+          const ev = (type, x, y) => c.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 7, button: 0, clientX: r.left + x * r.width, clientY: r.top + y * r.height }));
+          ev('pointerdown', 0.2, 0.3); for (let i = 1; i <= 20; i++) ev('pointermove', 0.2 + i * 0.02, 0.3 + Math.sin(i / 3) * 0.1); ev('pointerup', 0.6, 0.3);
+          document.querySelector('#skTable .skTool[data-tool="rect"]').click();
+          document.querySelectorAll('#skTable .skSwatch')[4].click();
+          ev('pointerdown', 0.3, 0.5); ev('pointermove', 0.5, 0.8); ev('pointerup', 0.5, 0.8);
+        });
+        need('the drawing goes to the hub and back', await until(() => gm.sketch.ink.list.some((o) => o.k === 'rect' && o.c === 4) && gm.sketch.ink.list.some((o) => o.k === 'pen'), 5000));
+        tl('...and is on my sheet', (await skPage()).ink > 50);
+        await shot('sketch', 'sk-drawer');
+      } else {
+        need('the drawer\'s word (for the test to guess)', await until(() => fs.existsSync(path.join(outDir, 'word')), 20000));
+        const w = fs.readFileSync(path.join(outDir, 'word'), 'utf8');
+        await until(() => SV().phase === 'drawing', 5000);
+        tl('the guesser sees blanks, never the word', SV().word === '' && SV().hint.length === w.length && SV().hint.every((c) => c === null || c === ' ') && !(await skPage()).top.toLowerCase().includes(w));
+        tl('...and has no tools, but a guess box', (sp = await skPage()).tools === 0 && sp.input);
+        need('the drawing arrives as it\'s drawn: a stroke and a red rectangle', await until(async () => gm.sketch.ink.list.some((o) => o.k === 'rect' && o.c === 4) && (await skPage()).ink > 50, 10000));
+        const guess = (text) => pageRun(tw('sketch'), (s) => { const i = document.querySelector('#skTable .skInput'); i.value = s; i.form.requestSubmit(); }, text);
+        await guess('definitely not it');
+        tl('a wrong guess shows in the guesses', await until(async () => (await skPage()).feed.includes('definitely not it'), 5000));
+        await shot('sketch', 'sk-guesser');
+        await guess(w.toUpperCase());
+        need('the right guess', await until(() => SV().players[SV().you].guessed || SV().phase !== 'drawing', 5000));
+        tl('you score, more for sooner', SV().players[SV().you].score >= 50 + 10);
+        tl('the feed says you got it', (await skPage()).feed.includes('You guessed it!'));
+      }
+      await step('sk-turn');
+      tl('scores: the drawer 25 for the guess, the guesser more', await until(() => { const ps = SV().players, d = ps.find((p) => p.id === firstDrawer), g = ps.find((p) => p.id !== firstDrawer); return d.score === 25 && g.score > 50; }, 8000));
+      tl('the next turn: the other one draws, on a clean sheet', await until(async () => SV().phase === 'choosing' && SV().players[SV().drawer].id !== firstDrawer && (await skPage()).ink === 0, 10000));
+      log.push('games: sketch sounds ' + gmHeard.join(' '));
+      tl(iDraw ? 'sounds: your turn, and someone guessing your drawing' : 'sounds: your right guess', iDraw ? gmHeard.includes('bjTurn') && gmHeard.includes('skOther') : gmHeard.includes('skRight'));
+      await step('sk-done');
+      if (role === 'guest') { scene('aurora'); tl('leaving: no longer at the table', await until(() => gm.sketch.at === '', 5000)); }
+      else tl('the guest leaves: the game stops for want of players', await until(() => SV() && SV().players.length === 1 && SV().phase === 'waiting', 15000));
       await step('done');
     } catch (e) {
       if (!/^stopped early/.test(e && e.message)) { tl('failed: ' + (e && e.stack || e), false); abort('crashed'); }

@@ -33,7 +33,8 @@
     cursorOff: '<path d="M5 3l14 7.5-6.2 1.7L10 19 5 3Z"/><path d="M3 21L21 3"/>',
     screen: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
     sparkle: '<path d="M10 3.5l1.6 4.6 4.6 1.6-4.6 1.6L10 15.9l-1.6-4.6L3.8 9.7l4.6-1.6z"/><path d="M17.5 13.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/>',
-    cards: '<rect x="3.5" y="6" width="10" height="14" rx="1.6" transform="rotate(-12 8.5 13)"/><rect x="10" y="4" width="10" height="14" rx="1.6" transform="rotate(10 15 11)"/>',  };
+    cards: '<rect x="3.5" y="6" width="10" height="14" rx="1.6" transform="rotate(-12 8.5 13)"/><rect x="10" y="4" width="10" height="14" rx="1.6" transform="rotate(10 15 11)"/>',
+    pencil: '<path d="M4 20l1-5L16 4l4 4L9 19z"/><path d="M13.5 6.5l4 4"/>',  };
   function icon(name) {
     const el = h('span.ico');
     el.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
@@ -690,7 +691,8 @@
   // ---- who's online in a hub, for the hub bar: in voice or not, what they share, and what they're looking at ----
   // share: their broadcast, or their watch-together. sees: someone's broadcast or watch-together they're watching, else the
   // screen their Drift shows (hub.js 'where': Scenes, Media, Surf, which in a hub is its shared browser, or Share).
-  const SCREEN_NAMES = { scenes: 'Scenes', media: 'Media', surf: 'Surf', broadcast: 'Share', blackjack: 'the Blackjack table' };
+  const SCREEN_NAMES = { scenes: 'Scenes', media: 'Media', surf: 'Surf', broadcast: 'Share', blackjack: 'the Blackjack table', roulette: 'the Roulette table', poker: 'the Hold\'em table', sketch: 'Sketch & Guess' };
+  const AT_TABLE = new Set(['blackjack', 'roulette', 'poker', 'sketch']);       // the Games room's tables ("At", and a click sits you down there)
   function presence(x) {
     const bcs = x.bcs || [], lives = x.lives || [];
     return x.members.filter((m) => m.online).map((m) => {
@@ -705,7 +707,7 @@
   function presenceText(x, p) {
     const bits = [p.who + (p.voice ? (p.muted ? ' · in voice, muted' : ' · in voice') : '')];
     if (p.share) bits.push(p.share.kind === 'bc' ? `Live: ${p.share.b.title || 'a broadcast'}` : `Sharing to watch together${p.share.l.title ? ': ' + p.share.l.title : ''}`);
-    if (p.sees && !p.share) bits.push(p.sees.kind === 'bc' ? `Watching ${p.sees.b.from === info.me.id ? 'your' : nameOf(x, p.sees.b.from) + '\'s'} broadcast` : p.sees.kind === 'live' ? `Watching with ${nameOf(x, p.sees.l.from)}` : `${p.sees.at === 'blackjack' ? 'At' : 'On'} ${SCREEN_NAMES[p.sees.at]}`);
+    if (p.sees && !p.share) bits.push(p.sees.kind === 'bc' ? `Watching ${p.sees.b.from === info.me.id ? 'your' : nameOf(x, p.sees.b.from) + '\'s'} broadcast` : p.sees.kind === 'live' ? `Watching with ${nameOf(x, p.sees.l.from)}` : `${AT_TABLE.has(p.sees.at) ? 'At' : 'On'} ${SCREEN_NAMES[p.sees.at]}`);
     if (p.lock) bits.push(p.lock.text);
     if (!p.isMe && (p.share || p.sees)) bits.push('Click to go there');
     return bits.join('\n');
@@ -723,7 +725,7 @@
       p.muted ? h('b.cbMuted', {}, icon('micOff')) : p.sees && SEES_ICON(p.sees) ? h('b.cbWhere', {}, icon(SEES_ICON(p.sees))) : null);
   }
   // the little icon in the corner the mute badge takes (muted wins): the tab they're on, or what they're watching
-  const TAB_ICONS = { scenes: 'sparkle', media: 'film', surf: 'globe', broadcast: 'screen', blackjack: 'cards' };
+  const TAB_ICONS = { scenes: 'sparkle', media: 'film', surf: 'globe', broadcast: 'screen', blackjack: 'cards', roulette: 'cards', poker: 'cards', sketch: 'pencil' };
   const SEES_ICON = (s) => (s.kind === 'bc' ? 'screen' : s.kind === 'live' ? 'film' : TAB_ICONS[s.at]);
   async function jumpTo(x, p) {
     if (p.isMe) return;
@@ -737,7 +739,7 @@
       if (t.l.from === info.me.id) return toast(`${p.who} is watching what you share.`);
       if (p2p.role === 'guest' && joined === t.l.code) { if (ui) ui.setTab('media'); return; }       // (already watching it with them)
       joinLive(x, t.l);
-    } else if (t.at === 'blackjack') { if (ui) ui.toTable(); }       // a seat next to them (the hub's table)
+    } else if (AT_TABLE.has(t.at)) { if (ui) ui.toTable(t.at); }       // a seat next to them (the hub's table)
     else if (ui) ui.setTab(t.at);       // Scenes, Media, Share, or Surf (the hub's shared browser)
   }
   // ---- the hub bar over the scenes, on every screen while you're online in a hub's voice room or watching together ----
@@ -926,7 +928,9 @@
   const SFX_TRY = [['connect', 'Online'], ['disconnect', 'Offline'], ['lost', 'Dropped'], ['join', 'Join voice'], ['leave', 'Leave voice'],
     ['peerJoin', 'Friend joins'], ['peerLeave', 'Friend leaves'], ['mute', 'Mute'], ['unmute', 'Unmute'], ['liveOn', 'Go live'], ['liveOff', 'Stop live'],
     ['viewerJoin', 'Viewer joins'], ['viewerLeave', 'Viewer leaves'], ['bcStart', 'Friend goes live'], ['shareOn', 'Watch together'], ['shareOff', 'Stop watching'], ['message', 'Message'],
-    ['bjDeal', 'Deal'], ['bjChip', 'Chips'], ['bjTurn', 'Your turn'], ['bjWin', 'Win'], ['bjBlackjack', 'Blackjack'], ['bjPush', 'Push'], ['bjLose', 'Lose'], ['bjBust', 'Bust'], ['bjOut', 'Out of chips'], ['bjBack', 'Back in']];
+    ['bjDeal', 'Deal'], ['bjChip', 'Chips'], ['bjTurn', 'Your turn'], ['bjWin', 'Win'], ['bjBlackjack', 'Blackjack'], ['bjPush', 'Push'], ['bjLose', 'Lose'], ['bjBust', 'Bust'], ['bjOut', 'Out of chips'], ['bjBack', 'Back in'],
+    ['rlSpin', 'Wheel spins'], ['rlDrop', 'Ball drops'], ['rlWin', 'Wheel win'], ['pkCheck', 'Check'], ['pkFold', 'Fold'],
+    ['skRight', 'You guessed it'], ['skOther', 'Someone guessed'], ['skClose', 'So close'], ['skEnd', 'Time\'s up']];
   $('#sfxTry').replaceChildren(...SFX_TRY.map(([name, label]) => h('button.mini', { title: 'Play this sound', onclick: () => api.cmd({ type: 'sfx', name, preview: true }) }, '▶ ' + label)));
   function drawSfxOpts() {
     const r = $('#sfxVol');

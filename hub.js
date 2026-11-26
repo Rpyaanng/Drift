@@ -34,6 +34,7 @@ const crypto = require('crypto');
 const { wire, ipBytes, ipText, localAddrs } = require('./p2p');
 const createTurn = require('./turn');
 const { createTable } = require('./blackjack');
+const GAME_RULES = { roulette: require('./roulette').createTable, poker: require('./poker').createTable, sketch: require('./sketch').createTable };       // the Games room's other tables (hub `games`)
 
 const VERSION = 1;
 const LIMITS = { line: 256 * 1024, text: 4000, name: 24, channel: 32, channels: 50, page: 100, actions: 10, perSecs: 10, connections: 64, avatar: 14000, voice: 16, talkers: 8, signals: 200, broadcasts: 4, viewers: 7, bcTitle: 80, bcThumb: 200000, surfWatchers: 7,
@@ -178,6 +179,7 @@ module.exports = function createHub(opts) {
     CREATE TABLE IF NOT EXISTS reactions (msg INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE, who TEXT NOT NULL, emoji TEXT NOT NULL,
       at INTEGER NOT NULL, PRIMARY KEY (msg, who, emoji));
     CREATE TABLE IF NOT EXISTS bj_pots (member TEXT PRIMARY KEY, win INTEGER NOT NULL, blackjack INTEGER NOT NULL DEFAULT 0, at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS game_records (game TEXT NOT NULL, member TEXT NOT NULL, value INTEGER NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (game, member));
   `);
   for (const col of ['avatar TEXT', 'av TEXT']) { try { db.exec(`ALTER TABLE members ADD COLUMN ${col}`); } catch { /* there already */ } }       // added after the first hubs were made
   const q = (sql) => db.prepare(sql);
@@ -239,6 +241,9 @@ module.exports = function createHub(opts) {
     // the blackjack table's biggest pots: each member's best round (kept, unlike their chips), and the top five
     bjPot: q('INSERT INTO bj_pots (member, win, blackjack, at) VALUES (?, ?, ?, ?) ON CONFLICT (member) DO UPDATE SET win = excluded.win, blackjack = excluded.blackjack, at = excluded.at WHERE excluded.win > bj_pots.win'),
     bjBoard: q('SELECT p.member, p.win, p.blackjack, p.at FROM bj_pots p JOIN members m ON m.id = p.member WHERE m.banned = 0 ORDER BY p.win DESC, p.at ASC LIMIT 5'),
+    // the other tables' records (Roulette: the biggest win on one spin; Hold'em: the biggest pot won), each member's best, the top five
+    gameRecord: q('INSERT INTO game_records (game, member, value, at) VALUES (?, ?, ?, ?) ON CONFLICT (game, member) DO UPDATE SET value = excluded.value, at = excluded.at WHERE excluded.value > game_records.value'),
+    gameBoard: q('SELECT r.member, r.value, r.at FROM game_records r JOIN members m ON m.id = r.member WHERE r.game = ? AND m.banned = 0 ORDER BY r.value DESC, r.at ASC LIMIT 5'),
   });
   // Reactions on a message, in the order they were first given: [{ e, who: [member ids] }]
   function reactsOf(id) {
@@ -272,7 +277,7 @@ module.exports = function createHub(opts) {
   // ---- connections ----
   const online = new Map();       // member id -> Set of sessions (a member may be on two PCs)
   const mics = new Map();         // member id -> does their PC have a microphone (only while online)
-  const wheres = new Map();       // member id -> the screen their Drift shows ('scenes' | 'media' | 'surf' | 'broadcast' | 'blackjack'), for the hub bar's jump to it (only while online)
+  const wheres = new Map();       // member id -> the screen their Drift shows ('scenes' | 'media' | 'surf' | 'broadcast' | 'blackjack' | 'roulette' | 'poker'), for the hub bar's jump to it (only while online)
   const lives = new Map();        // member id -> what they're sharing right now: { from, code, title, watching, since, reach, place }. Never stored.
   const liveList = () => [...lives.values()].map(({ place: _p, ...l }) => l);
   // ---- reach: can everyone online get to a share? ----
@@ -372,6 +377,103 @@ module.exports = function createHub(opts) {
     bj.tick(); bjNews();
     return reply(s, m, r.error ? { error: r.error } : {});
   }
+
+  // ---- the Games room's other tables (docs/plans/games-room.md): Roulette and Texas Hold'em, one of each per hub ----
+  // The same as the blackjack table above, for any game in GAME_RULES: each message names its game (g). Up: game-sit,
+  // game-watch, game-stand, game-leave, game-move ({ m: the move, for the rules to judge }), game-ptr. Down: game-view
+  // (the table as that member sees it, with the game's board of records) and game-ptrs. A table is made when first sat at,
+  // and ticks only while anyone is at it or a round is still settling. Hold'em seats a computer player when only one
+  // person is there (fill: 2), so they're never left with nobody to play.
+  const games = new Map();       // game id -> { t: its table, at: member id -> session, ptrs, sent, timer, ptrTimer }
+  function gameOf(g) {
+    if (!Object.hasOwn(GAME_RULES, g)) return null;
+    let x = games.get(g);
+    if (!x) {
+      x = { g, at: new Map(), ptrs: new Map(), sent: -1, timer: null, ptrTimer: null };
+      x.t = GAME_RULES[g]({ times: (opts.gameTimes || {})[g], fill: 2, onSettle: (list) => { const now = Date.now(); for (const r of list) if (r.score > 0 && !r.bot && S.member.get(r.id)) S.gameRecord.run(g, r.id, Math.floor(r.score), now); } });
+      games.set(g, x);
+    }
+    return x;
+  }
+  const gameBoard = (g) => { const now = Date.now(); return S.gameBoard.all(g).map((r) => ({ id: r.member, name: nameOf(r.member), win: r.value, ago: Math.max(0, now - r.at) })); };
+  // A drawing game's sheet (sketch.js: ink, inkRev, inkLen) goes out apart from the views, as it grows: each session gets what
+  // it hasn't had yet (game-ink { rev, from, list }), all of it when the sheet is new or the session is
+  function gameInk(x) {
+    if (typeof x.t.ink !== 'function') return;
+    const rev = x.t.inkRev, len = x.t.inkLen;
+    for (const s of x.at.values()) {
+      const had = (s.gInk = s.gInk || {})[x.g];
+      if (!had || had.rev !== rev) { s.wire.send({ t: 'game-ink', g: x.g, rev, from: 0, list: x.t.ink(0) }); s.gInk[x.g] = { rev, n: len }; }
+      else if (had.n < len) { s.wire.send({ t: 'game-ink', g: x.g, rev, from: had.n, list: x.t.ink(had.n) }); had.n = len; }
+    }
+  }
+  function gameNews(x, force) {
+    gameInk(x);
+    if (!force && x.t.version === x.sent) return;
+    x.sent = x.t.version;
+    const board = gameBoard(x.g);
+    for (const [id, s] of x.at) s.wire.send({ t: 'game-view', g: x.g, v: { ...x.t.view(id), board } });
+  }
+  function gameRun(x) {
+    if (x.timer) return;
+    x.timer = setInterval(() => {
+      x.t.tick(); gameNews(x);
+      if (!x.at.size && x.t.phase === 'idle') { clearInterval(x.timer); x.timer = null; }
+    }, 200);
+  }
+  function gamePtrNews(x) {
+    if (x.ptrTimer) return;
+    x.ptrTimer = setTimeout(() => {
+      x.ptrTimer = null;
+      const all = [...x.ptrs].filter(([id]) => x.at.has(id)).map(([id, q]) => ({ id, name: nameOf(id), x: q.x, y: q.y }));
+      for (const [id, s] of x.at) s.wire.send({ t: 'game-ptrs', g: x.g, list: all.filter((q) => q.id !== id) });
+    }, 40);
+  }
+  function gameLeave(x, id) {
+    if (!x.at.delete(id)) return;
+    x.t.leave(id);
+    if (x.ptrs.delete(id)) gamePtrNews(x);
+    x.t.tick(); gameNews(x);
+  }
+  function gameMessage(s, m) {
+    const x = gameOf(String(m.g || ''));
+    if (m.t === 'game-ptr') {       // mouse moves: many, small, and dropped past 30 a second
+      if (!x) return;
+      const now = Date.now();
+      if (now - (s.gamePtrAt || 0) >= 1000) { s.gamePtrAt = now; s.gamePtrN = 0; }
+      if (++s.gamePtrN > 30 || x.at.get(s.id) !== s) return;
+      const ok = +m.x >= 0 && +m.x <= 1 && +m.y >= 0 && +m.y <= 1;
+      if (ok) x.ptrs.set(s.id, { x: +(+m.x).toFixed(4), y: +(+m.y).toFixed(4) }); else if (!x.ptrs.delete(s.id)) return;
+      gamePtrNews(x);
+      return;
+    }
+    if (m.t === 'game-ink') {       // a piece of the drawing: many, small, no answer, at most 40 a second
+      if (!x) return;
+      const now = Date.now();
+      if (now - (s.gameInkAt || 0) >= 1000) { s.gameInkAt = now; s.gameInkN = 0; }
+      if (++s.gameInkN > 40 || x.at.get(s.id) !== s || !m.op || typeof m.op !== 'object' || JSON.stringify(m.op).length > 4000) return;
+      if (!x.t.move(s.id, { do: 'ink', op: m.op }).error) gameInk(x);
+      return;
+    }
+    if (!x) return reply(s, m, { error: 'There\'s no such table.' });
+    if (slow(s, 'game', 60)) return reply(s, m, { error: 'Slow down a little.' });
+    let r = { ok: true };
+    if (m.t === 'game-sit' || m.t === 'game-watch') {       // at the table: sitting down (or in line for a place), or only looking on
+      const was = x.at.get(s.id);
+      if (was && was !== s) was.wire.send({ t: 'game-view', g: x.g, v: null });       // came to the table from another PC: this one takes it
+      x.at.set(s.id, s);
+      if (m.t === 'game-sit') r = x.t.sit(s.id, nameOf(s.id));
+      gameRun(x); x.t.tick(); gameNews(x, true);
+      return reply(s, m, r);
+    }
+    if (m.t === 'game-leave') { if (x.at.get(s.id) === s) gameLeave(x, s.id); return reply(s, m, {}); }
+    if (x.at.get(s.id) !== s) return reply(s, m, { error: 'Sit down at the table first.' });
+    if (m.t === 'game-stand') { x.t.leave(s.id); x.t.tick(); gameNews(x, true); return reply(s, m, {}); }       // up from the seat (or out of the line), still looking on
+    const mv = m.m && typeof m.m === 'object' ? m.m : {};
+    r = x.t.move(s.id, { do: String(mv.do || '').slice(0, 12), key: String(mv.key || '').slice(0, 24), amount: +mv.amount || 0, text: String(mv.text || '').slice(0, 80) });
+    x.t.tick(); gameNews(x);
+    return reply(s, m, r.error ? { error: r.error } : {});
+  }
   // ---- the media stream: one share at a time, changed by a vote ----
   // While someone is sharing, nobody else's share is listed unless they won a vote: more than half of the people online
   // when it was asked (the asker counts as a yes) agree within VOTE_MS. Whoever goes offline drops out of the count.
@@ -410,7 +512,7 @@ module.exports = function createHub(opts) {
 
   function onConnection(sock) {
     if (sessions.size >= LIMITS.connections) { sock.destroy(); return; }
-    const s = { id: null, nonce: crypto.randomBytes(24).toString('base64url'), wire: null, acts: { msg: [], other: [], live: [], sig: [], bc: [], react: [], part: [], offer: [], ft: [], bj: [] }, typed: 0, upload: null, place: placeOf(sock.remoteAddress) };
+    const s = { id: null, nonce: crypto.randomBytes(24).toString('base64url'), wire: null, acts: { msg: [], other: [], live: [], sig: [], bc: [], react: [], part: [], offer: [], ft: [], bj: [], game: [] }, typed: 0, upload: null, place: placeOf(sock.remoteAddress) };
     sessions.add(s);
     const login = setTimeout(() => { if (!s.id) s.wire.close(); }, 15000);
     s.wire = wire(sock, null, (m) => { try { onMessage(s, m); } catch (e) { reply(s, m, { error: 'Something went wrong on the hub.' }); if (opts.log) opts.log('hub: ' + (e && e.stack || e)); } }, () => {
@@ -424,6 +526,7 @@ module.exports = function createHub(opts) {
       if (s.id && voice.get(s.id) && voice.get(s.id).s === s) leaveRoom(s.id);
       ftSessionGone(s);
       if (s.id && bjAt.get(s.id) === s) bjLeave(s.id);
+      if (s.id) for (const x of games.values()) if (x.at.get(s.id) === s) gameLeave(x, s.id);
     }, LIMITS.line);
     s.wire.send({ t: 'hello', v: VERSION, nonce: s.nonce, name: hubName, still: LIMITS.bcThumb });       // (still: the largest broadcast still it takes; a hub from before says nothing, and takes 14000 characters)
   }
@@ -669,7 +772,7 @@ module.exports = function createHub(opts) {
         return;
       }
       case 'where': {       // which screen this member's Drift shows: the hub bar jumps there when someone clicks them
-        const at = ['scenes', 'media', 'surf', 'broadcast', 'blackjack'].includes(m.at) ? m.at : '';
+        const at = ['scenes', 'media', 'surf', 'broadcast', 'blackjack', 'roulette', 'poker', 'sketch'].includes(m.at) ? m.at : '';
         if ((wheres.get(s.id) || '') === at) return;
         wheres.set(s.id, at);
         membersNews();
@@ -721,6 +824,7 @@ module.exports = function createHub(opts) {
       case 'bc-thumb': return bcThumb(s, m);
       case 'surf-watch': return surfWatchMsg(s, m);
       case 'bj-sit': case 'bj-watch': case 'bj-stand': case 'bj-leave': case 'bj-bet': case 'bj-insure': case 'bj-act': case 'bj-ptr': return bjMessage(s, m);
+      case 'game-sit': case 'game-watch': case 'game-stand': case 'game-leave': case 'game-move': case 'game-ptr': case 'game-ink': return gameMessage(s, m);
       case 'surf-signal': {       // a watcher's setup message for the host, passed on as it is (signed by them)
         const d = m.d;
         if (surfWatch.get(s.id) !== s || !surf || String(m.to || '') !== ownerId || !svc || !d || typeof d !== 'object') return;
@@ -1067,6 +1171,7 @@ module.exports = function createHub(opts) {
     stop: () => new Promise((resolve) => {
       if (opts.log) opts.log('hub: stopping');
       clearInterval(bjTimer); bjTimer = null; clearTimeout(bjPtrTimer);
+      for (const x of games.values()) { clearInterval(x.timer); x.timer = null; clearTimeout(x.ptrTimer); }
       for (const s of sessions) { s.wire.send({ t: 'bye' }); s.wire.close(); }
       if (turn) { try { turn.close(); } catch { /* closed */ } turn = null; }
       if (!server) { db.close(); resolve(); return; }
