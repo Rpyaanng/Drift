@@ -6,8 +6,11 @@ body.idle { cursor: none; }
 #stage { position: fixed; inset: 0; overflow: hidden; background: #000; transition: opacity .7s ease; }
 /* Media's own screen, while it's picked here with no video up (app.js syncMediaBack): the palette's colours, two slow soft lights
    and a fine grain, with what's playing (or how to start) in the middle and the music's spectrum under it */
+/* The film grain is the first of its backgrounds (its faintness in the picture itself, the rect's opacity), not a layer of its own
+   over the lights: a full-screen layer is drawn again whole every frame anything on the screen moves. */
 #mediaBack { position: fixed; inset: 0; overflow: hidden; display: none; color: #eef1f6;
-  background: radial-gradient(130% 90% at 50% 115%, color-mix(in srgb, var(--mb1, #0b3a52) 85%, transparent) 0%, transparent 62%), linear-gradient(165deg, var(--mb0, #040816) 0%, #05060a 100%); }
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.035'/%3E%3C/svg%3E"),
+    radial-gradient(130% 90% at 50% 115%, color-mix(in srgb, var(--mb1, #0b3a52) 85%, transparent) 0%, transparent 62%), linear-gradient(165deg, var(--mb0, #040816) 0%, #05060a 100%); }
 #mediaBack.on { display: block; }
 /* How much colour it has: muted with nothing playing, halfway while paused, the full palette while playing, eased between them.
    app.js sets the palette as --mbr0..3; everything here wears --mb0..3, the same colours with their chroma and lightness scaled. */
@@ -19,23 +22,96 @@ body.idle { cursor: none; }
   --mb3: oklch(from var(--mbr3, #b58cff) calc(l * (.8 + .2 * var(--vivid))) calc(c * (.2 + .8 * var(--vivid))) h); }
 #mediaBack.music { --vivid: .55; }
 #mediaBack.music.playing { --vivid: 1; }
-/* app.js (tickMediaBack) swells them with the music: the bass, and the mids and highs. No blur filter: the gradient's eased stops
-   make them as soft, and as their own layers (will-change) they're drawn once and only moved, not blurred again every frame. */
+/* app.js (tickMediaBack) swells them with the music: the bass, and the mids and highs, and drifts them slowly about (in its frame
+   loop rather than a CSS animation, which ran at the monitor's rate whatever the frame cap). No blur filter: the gradient's eased
+   stops make them as soft, and as their own layers (will-change) they're drawn once and only moved, not blurred again every frame.
+   Everything here that moves is a layer of its own like them, so moving it never has what's around it painted again. */
 #mediaBack .mbOrb { position: absolute; border-radius: 50%; opacity: .5; will-change: transform, opacity; }
-#mediaBack.rest .mbOrb { animation-play-state: paused; }       /* a video playing on another monitor: nothing here moves (app.js) */
-/* a wash of light up from the floor on each beat (the scenes' uBeat), its opacity set by app.js */
-#mediaBack .mbFlash { position: absolute; inset: 0; opacity: 0; pointer-events: none; background: radial-gradient(90% 70% at 50% 110%, color-mix(in srgb, var(--mb2, #22c08a) 55%, transparent), transparent 70%); }
-#mediaBack .mbOrb.a { width: 46vmax; height: 46vmax; left: -10vmax; top: -14vmax; background: radial-gradient(circle, var(--mb2, #22c08a) 0%, color-mix(in srgb, var(--mb2, #22c08a) 70%, transparent) 18%, color-mix(in srgb, var(--mb2, #22c08a) 32%, transparent) 40%, color-mix(in srgb, var(--mb2, #22c08a) 9%, transparent) 58%, transparent 72%); animation: mbDriftA 38s ease-in-out infinite alternate; }
-#mediaBack .mbOrb.b { width: 40vmax; height: 40vmax; right: -12vmax; bottom: -16vmax; background: radial-gradient(circle, var(--mb3, #b58cff) 0%, color-mix(in srgb, var(--mb3, #b58cff) 70%, transparent) 18%, color-mix(in srgb, var(--mb3, #b58cff) 32%, transparent) 40%, color-mix(in srgb, var(--mb3, #b58cff) 9%, transparent) 58%, transparent 72%); opacity: .32; animation: mbDriftB 46s ease-in-out infinite alternate; }
-@keyframes mbDriftA { to { translate: 14vmax 10vmax; } }
-@keyframes mbDriftB { to { translate: -12vmax -8vmax; } }
-#mediaBack .mbGrain { position: absolute; inset: 0; opacity: .035; pointer-events: none;       /* (a plain layer: an overlay blend made the whole screen a second pass every frame) */
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+/* the song's cover, blown up across the whole screen behind everything (app.js sleeveArt). It comes already blurred, as a small
+   picture (app.js coverBackdrop) that the browser scales up smoothly: no blur filter to run over a full-screen layer. Darker at
+   the edges and under the text; fainter while paused. A layer of its own, so fading it paints nothing else. */
+#mediaBack .mbBackArt { position: absolute; inset: 0; opacity: 0; transition: opacity 1.2s ease; will-change: opacity; pointer-events: none;
+  background: radial-gradient(120% 100% at 50% 45%, rgba(0,0,0,.12) 0%, rgba(0,0,0,.62) 100%), var(--art, none) center/cover no-repeat; }
+#mediaBack.music .mbBackArt.on { opacity: .38; }
+#mediaBack.music.playing .mbBackArt.on { opacity: .6; }
+/* a wash of light up from the floor on each beat (the scenes' uBeat), its opacity set by app.js. Only as tall as the light it
+   holds (the top 40% of the screen was always clear), so a beat redraws that much less. */
+#mediaBack .mbFlash { position: absolute; left: 0; right: 0; top: 40%; bottom: 0; opacity: 0; pointer-events: none; will-change: opacity;
+  background: radial-gradient(90% 116.7% at 50% 116.7%, color-mix(in srgb, var(--mb2, #22c08a) 55%, transparent), transparent 70%); }
+#mediaBack .mbOrb.a { width: 46vmax; height: 46vmax; left: -10vmax; top: -14vmax; background: radial-gradient(circle, var(--mb2, #22c08a) 0%, color-mix(in srgb, var(--mb2, #22c08a) 70%, transparent) 18%, color-mix(in srgb, var(--mb2, #22c08a) 32%, transparent) 40%, color-mix(in srgb, var(--mb2, #22c08a) 9%, transparent) 58%, transparent 72%); }
+#mediaBack .mbOrb.b { width: 40vmax; height: 40vmax; right: -12vmax; bottom: -16vmax; background: radial-gradient(circle, var(--mb3, #b58cff) 0%, color-mix(in srgb, var(--mb3, #b58cff) 70%, transparent) 18%, color-mix(in srgb, var(--mb3, #b58cff) 32%, transparent) 40%, color-mix(in srgb, var(--mb3, #b58cff) 9%, transparent) 58%, transparent 72%); opacity: .32; }
 /* a record sleeve (its art made from the palette, laid out by the title: app.js sets --ax..--rot) with the record sliding out of
    it and turning while the music plays; the title set big beside it, and the spectrum as a skyline along the bottom */
 #mediaBack .mbCard { --s: clamp(180px, 40vh, 400px); position: absolute; left: 50%; top: 46%; transform: translate(-50%, -50%) scale(var(--mbScale, 1)); width: min(1080px, 88vw);
   display: flex; align-items: center; gap: clamp(36px, 5vw, 80px); transition: top .5s cubic-bezier(.22, 1, .36, 1), transform .5s cubic-bezier(.22, 1, .36, 1); }
-body:has(#panel.open.show) #mediaBack .mbCard { top: 25%; --mbScale: .6; }       /* above the panel while its page is open */
+body:has(#panel.open.show) #mediaBack :is(.mbCard, .mbBio) { top: 25%; --mbScale: .6; }       /* above the panel while its page is open */
+/* Two scenes side by side, the song and who sings it (app.js mbBio): the arrows pan the camera across, and the lights behind
+   move less than the scenes do, so they seem further away */
+#mediaBack .mbWorld { position: absolute; inset: 0; transition: transform 1.1s cubic-bezier(.65, 0, .25, 1); }
+#mediaBack.bio .mbWorld { transform: translateX(-100%); }
+#mediaBack.nums .mbWorld { transform: translateX(100%); }       /* (the numbers are to the left of the song) */
+#mediaBack .mbOrb { transition: margin-left 1.1s cubic-bezier(.65, 0, .25, 1); }
+#mediaBack.bio .mbOrb.a { margin-left: -22vw; }
+#mediaBack.bio .mbOrb.b { margin-left: -14vw; }
+#mediaBack.nums .mbOrb.a { margin-left: 22vw; }
+#mediaBack.nums .mbOrb.b { margin-left: 14vw; }
+/* The numbers scene (app.js drawStats): the song's name at the left, and its figures from Deezer as a grid of cards, each a big
+   figure over its name, with a line under it */
+#mediaBack .mbNums { position: absolute; left: -50%; top: 46%; transform: translate(-50%, -50%) scale(var(--mbScale, 1)); width: min(1080px, 84vw);
+  display: flex; align-items: center; gap: clamp(36px, 5vw, 80px); transition: top .5s cubic-bezier(.22, 1, .36, 1), transform .5s cubic-bezier(.22, 1, .36, 1); }
+body:has(#panel.open.show) #mediaBack .mbNums { top: 25%; --mbScale: .6; }
+#mediaBack .mbNumsHead { flex: 0 0 32%; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+#mediaBack .mbNumsHead .mbKicker svg { width: 15px; height: 15px; }
+#mediaBack .mbNumsTitle { font: 700 clamp(30px, 4.2vw, 60px)/1.02 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: -.035em; text-wrap: balance; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; padding-bottom: .06em; text-shadow: 0 4px 40px rgba(0,0,0,.35); }
+#mediaBack .mbNumsArtist { margin-top: -4px; font: 600 clamp(15px, 1.5vw, 20px)/1.3 "Segoe UI Variable Display", "Segoe UI", system-ui; color: color-mix(in srgb, var(--accent) 55%, #eef1f6); }
+#mediaBack .mbNumsGrid { flex: 1; min-width: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+#mediaBack .mbNum { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 18px 20px; border-radius: 16px; background: rgba(255,255,255,.045); border: 1px solid rgba(255,255,255,.08);
+  animation: mbNumIn .6s cubic-bezier(.22, 1, .36, 1) both; animation-delay: calc(var(--i, 0) * 60ms); }
+@keyframes mbNumIn { from { opacity: 0; translate: 0 10px; } }
+#mediaBack .mbNum.wide { grid-column: span 2; }
+#mediaBack .mbNum small { font: 600 10.5px/1 "Segoe UI Variable Text", "Segoe UI", system-ui; letter-spacing: .18em; text-transform: uppercase; color: color-mix(in srgb, var(--mb2, #22c08a) 70%, #fff); opacity: .85; }
+#mediaBack .mbNum b { font: 700 clamp(26px, 2.6vw, 38px)/1.05 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: -.02em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; color: #f3f5f8; }
+#mediaBack .mbNum span { font: 13px/1.35 "Segoe UI Variable Text", "Segoe UI", system-ui; color: rgba(238,241,246,.55); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#mediaBack .mbMeter { display: block; height: 8px; margin: 4px 0 2px; border-radius: 4px; background: rgba(255,255,255,.1); overflow: hidden; }
+#mediaBack .mbMeter i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(to right, var(--mb2, #22c08a), color-mix(in srgb, var(--accent) 70%, #fff)); box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 50%, transparent); }
+#mediaBack .mbBio { --s: clamp(180px, 40vh, 400px); position: absolute; left: 150%; top: 46%; transform: translate(-50%, -50%) scale(var(--mbScale, 1)); width: min(1080px, 84vw);
+  display: flex; align-items: center; gap: clamp(36px, 5vw, 80px); transition: top .5s cubic-bezier(.22, 1, .36, 1), transform .5s cubic-bezier(.22, 1, .36, 1); }
+#mediaBack .mbPortrait { position: relative; flex: none; width: calc(var(--s) * .86); aspect-ratio: 4 / 5; border-radius: 18px; overflow: hidden;
+  background: radial-gradient(120% 90% at 30% 20%, color-mix(in srgb, var(--mb2, #22c08a) 45%, transparent), transparent 60%), linear-gradient(160deg, var(--mb1, #0b3a52), var(--mb0, #040816));
+  box-shadow: 0 30px 80px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.08), 0 0 60px color-mix(in srgb, var(--mb2, #22c08a) 25%, transparent); }
+#mediaBack .mbPic { position: absolute; inset: 0; background: center 20%/cover no-repeat; opacity: 0; transition: opacity .6s ease; }
+#mediaBack .mbPic.on { opacity: 1; }
+#mediaBack .mbPortrait::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(to top, rgba(0,0,0,.55), transparent 38%); }
+#mediaBack .mbPicName { position: absolute; left: 18px; right: 18px; bottom: 15px; z-index: 1; font: 600 10.5px/1.3 "Segoe UI Variable Text", "Segoe UI", system-ui; letter-spacing: .22em; text-transform: uppercase; color: rgba(255,255,255,.85); display: flex; align-items: center; gap: 8px; }
+#mediaBack .mbPicName::before { content: ''; flex: none; width: 20px; height: 3px; border-radius: 2px; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+#mediaBack .mbPortrait .mbInitials { position: absolute; inset: 0; display: grid; place-items: center; font: 700 calc(var(--s) * .28)/1 "Segoe UI Variable Display", "Segoe UI", system-ui; color: rgba(255,255,255,.85); letter-spacing: -.04em; }
+#mediaBack .mbBioInfo { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+#mediaBack .mbBioName { font: 700 clamp(30px, 4.4vw, 64px)/1.02 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: -.035em; text-wrap: balance; text-shadow: 0 4px 40px rgba(0,0,0,.35); }
+#mediaBack .mbBioDesc { margin-top: -4px; font: 600 clamp(15px, 1.5vw, 20px)/1.3 "Segoe UI Variable Display", "Segoe UI", system-ui; color: color-mix(in srgb, var(--accent) 55%, #eef1f6); }
+#mediaBack .mbBioDesc:first-letter { text-transform: uppercase; }
+#mediaBack .mbBioDesc:empty { display: none; }
+#mediaBack .mbAbout { font: 15px/1.6 "Segoe UI Variable Text", "Segoe UI", system-ui; color: rgba(238,241,246,.72); max-width: 60ch; white-space: pre-line;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 9; overflow: hidden; }
+body:has(#panel.open.show) #mediaBack .mbAbout { -webkit-line-clamp: 4; }
+#mediaBack .mbWiki { align-self: flex-start; display: inline-flex; align-items: center; gap: 8px; margin-top: 4px; padding: 8px 15px 8px 12px; border-radius: 999px; text-decoration: none;
+  font: 600 13px/1 "Segoe UI Variable Text", "Segoe UI", system-ui; color: rgba(238,241,246,.86); background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.14);
+  transition: background .2s ease, border-color .2s ease, color .2s ease; cursor: pointer; }
+#mediaBack .mbWiki:hover { background: color-mix(in srgb, var(--accent) 18%, rgba(255,255,255,.06)); border-color: color-mix(in srgb, var(--accent) 60%, transparent); color: #fff; }
+#mediaBack .mbWiki svg { width: 15px; height: 15px; flex: none; color: var(--accent); }
+#mediaBack .mbWiki[hidden] { display: none; }
+#mediaBack .mbPan { position: absolute; top: 46%; z-index: 2; display: flex; align-items: center; gap: 0; height: 52px; min-width: 52px; padding: 0 15px; border-radius: 26px; cursor: pointer;
+  color: rgba(238,241,246,.9); background: rgba(10,12,18,.42); border: 1px solid rgba(255,255,255,.14); box-shadow: 0 10px 30px rgba(0,0,0,.3);
+  font: 600 13px/1 "Segoe UI Variable Text", "Segoe UI", system-ui; transform: translateY(-50%); transition: background .2s ease, border-color .2s ease, gap .25s ease, opacity .4s ease; }
+#mediaBack .mbPan.r { right: clamp(16px, 2.4vw, 40px); flex-direction: row-reverse; }
+#mediaBack .mbPan.l { left: clamp(16px, 2.4vw, 40px); }
+#mediaBack .mbPan[hidden] { display: none; }
+#mediaBack .mbPan svg { width: 20px; height: 20px; flex: none; }
+#mediaBack .mbPan span { max-width: 0; overflow: hidden; white-space: nowrap; transition: max-width .35s ease; }       /* the name opens out on hover */
+#mediaBack .mbPan:hover { gap: 8px; background: color-mix(in srgb, var(--accent) 22%, rgba(10,12,18,.5)); border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
+#mediaBack .mbPan:hover span { max-width: 260px; }
+body:has(#panel.open.show) #mediaBack .mbPan { top: 25%; }
+@media (prefers-reduced-motion: reduce) { #mediaBack :is(.mbWorld, .mbOrb) { transition: none; } }
 body:has(#panel.open.show) #mediaBack .mbNext { visibility: hidden; }
 #mediaBack .mbArt { position: relative; flex: none; perspective: 1100px;       /* for the record's lean toward the pointer (app.js sets its rotate) */ width: var(--s); height: var(--s); transition: width .9s cubic-bezier(.22, 1, .36, 1); }
 #mediaBack.music .mbArt { width: calc(var(--s) * 1.5); }
@@ -43,70 +119,83 @@ body:has(#panel.open.show) #mediaBack .mbNext { visibility: hidden; }
   background: radial-gradient(circle at var(--ax, 30%) var(--ay, 28%), color-mix(in srgb, var(--mb2, #22c08a) 92%, #fff) 0%, transparent 58%),
     radial-gradient(circle at var(--bx, 78%) var(--by, 80%), var(--mb3, #b58cff) 0%, transparent 52%),
     linear-gradient(var(--rot, 160deg), var(--mb1, #0b3a52), var(--mb0, #040816));
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,.1), 0 34px 80px -10px rgba(0,0,0,.7); will-change: transform; }       /* app.js gives it a small kick on each beat (scale) */
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 75%, transparent), 0 0 18px -4px color-mix(in srgb, var(--accent) 55%, transparent), 0 34px 80px -10px rgba(0,0,0,.7); will-change: transform; }       /* app.js gives it a small kick on each beat (scale) */
 /* the sleeve's coloured glow, its own layer under it: painted once, then app.js swells it with the bass and brightens it on the
    beat by scale and opacity alone (a box-shadow that changed size had the sleeve painted again every frame) */
 #mediaBack .mbGlow { position: absolute; left: 0; top: 0; width: var(--s); height: var(--s); border-radius: 12px; pointer-events: none; opacity: .72; will-change: transform, opacity;
   box-shadow: 0 0 110px color-mix(in srgb, var(--mb2, #22c08a) 36%, transparent); }
-#mediaBack .mbSleeve::after { content: ''; position: absolute; inset: 0; pointer-events: none;       /* a glint that follows its lean toward the pointer (app.js --gx, --gy), a sheen across the card, a crease at the spine, and grain */
-  background: radial-gradient(circle at calc(50% + var(--gx, 0) * 55%) calc(50% + var(--gy, 0) * 55%), rgba(255,255,255,.13), transparent 50%), linear-gradient(to right, rgba(0,0,0,.28), transparent 3.5%, rgba(255,255,255,.06) 4.2%, transparent 7%), linear-gradient(135deg, rgba(255,255,255,.2), transparent 42%),
+/* a glint that follows its lean toward the pointer (app.js --gx, --gy): a layer of its own, twice the sleeve's size, only moved.
+   (It was a gradient placed by --gx and --gy in ::after, so every step of the lean painted the sleeve again, its grain's noise
+   filter and the song's cover with it, every frame the pointer moved.) */
+#mediaBack .mbSleeve::before { content: ''; position: absolute; left: -50%; top: -50%; width: 200%; height: 200%; z-index: 1; pointer-events: none;
+  background: radial-gradient(circle, rgba(255,255,255,.13), transparent 25%); transform: translate(calc(var(--gx, 0) * 27.5%), calc(var(--gy, 0) * 27.5%)); will-change: transform; }
+#mediaBack .mbSleeve::after { content: ''; position: absolute; inset: 0; pointer-events: none;       /* a sheen across the card, a crease at the spine, and grain: painted once */
+  background: linear-gradient(to right, rgba(0,0,0,.28), transparent 3.5%, rgba(255,255,255,.06) 4.2%, transparent 7%), linear-gradient(135deg, rgba(255,255,255,.2), transparent 42%),
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.22'/%3E%3C/svg%3E"); }
-#mediaBack .mbRings { position: absolute; inset: 0; opacity: .4; mix-blend-mode: overlay;       /* they light with the mids (app.js sets the opacity) */
+#mediaBack .mbRings { position: absolute; inset: 0; opacity: .4; mix-blend-mode: overlay; will-change: opacity;       /* they light with the mids (app.js sets the opacity: as a layer of its own, not the sleeve and its grain painted again) */
   background: repeating-radial-gradient(circle at var(--bx, 78%) var(--by, 80%), rgba(255,255,255,.5) 0 1px, transparent 1.5px 13px);
   -webkit-mask: radial-gradient(circle at var(--bx, 78%) var(--by, 80%), #000 0%, transparent 75%); }
 #mediaBack .mbCover { position: absolute; inset: 0; background: center/cover no-repeat; opacity: 0; transition: opacity .6s ease; }       /* the song's own cover (app.js sleeveArt) */
 #mediaBack .mbSleeve.art .mbCover { opacity: 1; }
 #mediaBack .mbSleeve.art .mbRings { opacity: 0; }
-#mediaBack .mbNo { position: absolute; left: 18px; bottom: 15px; z-index: 1; font: 600 10.5px/1 "Segoe UI Variable Text", "Segoe UI", system-ui; letter-spacing: .22em; text-transform: uppercase; color: rgba(255,255,255,.85); text-shadow: 0 1px 8px rgba(0,0,0,.35); font-variant-numeric: tabular-nums; }
+#mediaBack .mbNo { position: absolute; left: 18px; bottom: 15px; z-index: 1; font: 600 10.5px/1 "Segoe UI Variable Text", "Segoe UI", system-ui; letter-spacing: .22em; text-transform: uppercase; color: rgba(255,255,255,.85); text-shadow: 0 1px 8px rgba(0,0,0,.35); font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 8px; }
+#mediaBack .mbNo:not(:empty)::before { content: ''; width: 20px; height: 3px; border-radius: 2px; background: var(--accent); box-shadow: 0 0 10px var(--accent); }       /* a small accent dash before the track number */
 #mediaBack .mbSleeve svg { position: relative; width: 30%; height: 30%; filter: drop-shadow(0 4px 18px rgba(0,0,0,.35)); }
 #mediaBack.music .mbSleeve svg { display: none; }
 #mediaBack .mbDisc { position: absolute; left: 0; top: 3%; width: calc(var(--s) * .94); height: calc(var(--s) * .94); border-radius: 50%; opacity: 0;
   background: conic-gradient(from 20deg, transparent 0 4%, rgba(255,255,255,.13) 9%, transparent 15% 50%, rgba(255,255,255,.1) 58%, transparent 64%),
     repeating-radial-gradient(circle, #121216 0 1.2px, #1b1b21 1.6px 3px), #111;
-  box-shadow: 0 20px 50px rgba(0,0,0,.6), inset 0 0 0 1px rgba(255,255,255,.06);
+  box-shadow: 0 20px 50px rgba(0,0,0,.6), inset 0 0 0 2px color-mix(in srgb, var(--accent) 80%, transparent); will-change: transform;       /* (its grooves painted once: sliding out and leaning only move it) */
   transition: transform .9s cubic-bezier(.22, 1, .36, 1), opacity .4s; }
 #mediaBack.music .mbDisc { opacity: 1; transform: translateX(22%); }
 #mediaBack.music.playing .mbDisc { transform: translateX(56%); }       /* out of the sleeve while it plays, tucked back in when paused */
 #mediaBack .mbLabel { position: absolute; inset: 33%; border-radius: 50%; box-shadow: 0 0 0 2px rgba(0,0,0,.3);
   background: radial-gradient(circle, #0a0a0c 0 5%, transparent 5.5%), radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--mb2, #22c08a) 80%, #fff), var(--mb2, #22c08a) 55%, color-mix(in srgb, var(--mb2, #22c08a) 60%, var(--mb0, #040816)));
-  transform: rotate(var(--spin, 0deg)); }       /* app.js turns it: faster while the music is loud (the scenes' audio clock) */
+  transform: rotate(var(--spin, 0deg)); will-change: transform; }       /* app.js turns it: faster while the music is loud (the scenes' audio clock) */
 /* rings that leave the record on each of the last four beats, as the scenes' beatRings do (app.js sets each one's --a: its age) */
 #mediaBack .mbWaves { position: absolute; inset: 0; pointer-events: none; }
-#mediaBack .mbWaves i { position: absolute; inset: 0; border-radius: 50%; opacity: 0; border: 2px solid color-mix(in srgb, var(--mb2, #22c08a) 70%, #fff);
+#mediaBack .mbWaves i { position: absolute; inset: 0; border-radius: 50%; opacity: 0; will-change: transform, opacity; border: 2px solid color-mix(in srgb, var(--mb2, #22c08a) 70%, #fff);
   box-shadow: 0 0 24px color-mix(in srgb, var(--mb2, #22c08a) 50%, transparent), inset 0 0 18px color-mix(in srgb, var(--mb2, #22c08a) 30%, transparent); }
-#mediaBack .mbLabel i { position: absolute; left: calc(50% - 1.5px); top: 12%; width: 3px; height: 24%; border-radius: 2px; background: rgba(255,255,255,.7); }
+#mediaBack .mbLabel i { position: absolute; left: calc(50% - 1.5px); top: 12%; width: 3px; height: 24%; border-radius: 2px; background: var(--accent); box-shadow: 0 0 6px var(--accent); }
 #mediaBack .mbInfo { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
 #mediaBack .mbKicker { display: flex; align-items: center; gap: 10px; font: 600 11.5px/1 "Segoe UI Variable Text", "Segoe UI", system-ui; letter-spacing: .22em; text-transform: uppercase; color: color-mix(in srgb, var(--mb2, #22c08a) 75%, #fff); }
 #mediaBack .mbEq { display: none; align-items: flex-end; gap: 2px; height: 12px; }
 #mediaBack.music .mbEq { display: inline-flex; }
-#mediaBack .mbEq i { width: 3px; height: 100%; border-radius: 1px; background: currentColor; transform-origin: bottom; transform: scaleY(.3); }
-#mediaBack.playing .mbEq i { animation: mbEq .8s ease-in-out infinite alternate; }
-#mediaBack.playing .mbEq i:nth-child(2) { animation-duration: .55s; animation-delay: -.3s; }
-#mediaBack.playing .mbEq i:nth-child(3) { animation-duration: .7s; animation-delay: -.5s; }
-@keyframes mbEq { from { transform: scaleY(.25); } to { transform: scaleY(1); } }
+/* app.js (tickMediaBack) moves the bars with the music, in its frame loop. (They were a CSS animation, which runs at the monitor's
+   rate whatever the frame cap: three tiny bars had the whole screen made again 60 times a second, twice the cap's 30.) */
+#mediaBack .mbEq i { width: 3px; height: 100%; border-radius: 1px; background: currentColor; transform-origin: bottom; transform: scaleY(.3); will-change: transform; }
 #mediaBack .mbTitle { font: 700 clamp(34px, 5.2vw, 76px)/1.02 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: -.035em; overflow-wrap: anywhere; text-wrap: balance;
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; padding-bottom: .06em; text-shadow: 0 4px 40px rgba(0,0,0,.35); }
-#mediaBack .mbArtist { margin-top: -4px; font: 600 clamp(16px, 1.7vw, 24px)/1.25 "Segoe UI Variable Display", "Segoe UI", system-ui; color: rgba(238,241,246,.8); overflow-wrap: anywhere; }
+#mediaBack .mbArtist { margin-top: -4px; font: 600 clamp(16px, 1.7vw, 24px)/1.25 "Segoe UI Variable Display", "Segoe UI", system-ui; color: color-mix(in srgb, var(--accent) 55%, #eef1f6); overflow-wrap: anywhere; }
 #mediaBack .mbArtist:empty { display: none; }
-#mediaBack .mbNote { font: 15px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui; color: rgba(238,241,246,.6); max-width: 46ch; }
-#mediaBack .mbNext { display: flex; flex-direction: column; gap: 2px; margin-top: 14px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,.1); max-width: 460px; }
+#mediaBack .mbNote { font: 15px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui; color: rgba(238,241,246,.6); max-width: 50ch;       /* (a few words on the song or its singer: app.js setMbNote) */
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 5; overflow: hidden; }
+body:has(#panel.open.show) #mediaBack .mbNote { -webkit-line-clamp: 3; }
+#mediaBack .mbNext { display: flex; flex-direction: column; gap: 2px; margin-top: 14px; padding-top: 16px; border-top: 1px solid color-mix(in srgb, var(--accent) 70%, transparent); max-width: 460px; }
 #mediaBack .mbNext:empty { display: none; }
-#mediaBack .mbNext h4 { margin: 0 0 6px; font: 600 10.5px/1 "Segoe UI Variable Text", "Segoe UI", system-ui; letter-spacing: .22em; text-transform: uppercase; color: rgba(238,241,246,.42); }
+#mediaBack .mbNext h4 { margin: 0 0 6px; font: 600 10.5px/1 "Segoe UI Variable Text", "Segoe UI", system-ui; letter-spacing: .22em; text-transform: uppercase; color: var(--accent); }
 #mediaBack .mbNext div { display: flex; gap: 14px; align-items: baseline; padding: 5px 0; font: 14px/1.3 "Segoe UI Variable Text", "Segoe UI", system-ui; color: rgba(238,241,246,.78); }
 #mediaBack .mbNext div b { flex: none; width: 2ch; font-weight: 600; font-variant-numeric: tabular-nums; color: color-mix(in srgb, var(--mb2, #22c08a) 75%, #fff); opacity: .8; }
 #mediaBack .mbNext div span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #mediaBack .mbNext div + div span { opacity: .75; }
 #mediaBack .mbNext div + div + div span { opacity: .55; }
-#mediaBack .mbBars { position: absolute; left: 0; right: 0; bottom: 0; height: 24vh; display: none; align-items: flex-end; gap: 3px; padding: 0 1.5vw; opacity: .42;       /* (app.js lifts it on the beat) */
+#mediaBack .mbBars { position: absolute; left: 0; right: 0; bottom: 0; height: 24vh; display: none; align-items: flex-end; gap: 3px; padding: 0 1.5vw; opacity: .42; will-change: opacity;       /* (app.js lifts it on the beat) */
   -webkit-mask: linear-gradient(to top, #000 10%, transparent); }
 #mediaBack.music .mbBars { display: flex; }
-#mediaBack .mbBars i { flex: 1; height: 100%; border-radius: 3px 3px 0 0; background: linear-gradient(to top, var(--mb2, #22c08a), color-mix(in srgb, var(--mb3, #b58cff) 80%, #fff)); transform-origin: bottom; transform: scaleY(.02); }
+#mediaBack .mbBars i { flex: 1; height: 100%; border-radius: 3px 3px 0 0; background: linear-gradient(to top, var(--mb2, #22c08a), color-mix(in srgb, var(--mb3, #b58cff) 80%, #fff)); transform-origin: bottom; transform: scaleY(.02); will-change: transform; }       /* (each its own layer: app.js scales them every frame) */
 @media (max-width: 760px), (max-aspect-ratio: 1/1) {       /* narrow or portrait screens: stacked and centred */
   #mediaBack .mbCard { flex-direction: column; text-align: center; --s: clamp(160px, 30vh, 280px); }
   #mediaBack .mbInfo { align-items: center; }
+  #mediaBack .mbBio { flex-direction: column; text-align: center; --s: clamp(140px, 24vh, 240px); }
+  #mediaBack .mbBioInfo { align-items: center; }
+  #mediaBack .mbWiki { align-self: center; }
+  #mediaBack .mbAbout { -webkit-line-clamp: 5; }
+  #mediaBack .mbNums { flex-direction: column; text-align: center; gap: 20px; }
+  #mediaBack .mbNumsHead { flex: none; align-items: center; }
+  #mediaBack .mbNumsGrid { width: 100%; text-align: left; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+  #mediaBack .mbNum.wide { grid-column: auto; }
   #mediaBack .mbNext { width: 100%; text-align: left; }
 }
-@media (prefers-reduced-motion: reduce) { #mediaBack .mbOrb, #mediaBack .mbLabel, #mediaBack .mbEq i { animation: none !important; } }
 canvas#c { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 video#v { position: absolute; display: none; }
 canvas#vbg { position: absolute; display: none; transform: scale(1.12); }       /* blurred and dimmed as it is drawn: see app.js */
@@ -248,41 +337,140 @@ body.idle .bcTile.live:not(:hover) .bcTFoot { opacity: 0; }
 .ptr b { position: absolute; left: calc(var(--lx, 11px) + 1px); top: calc(var(--ly, 17px) + 1px); padding: 2.5px 8px 3.5px; border-radius: 4px 11px 11px 11px; white-space: nowrap;
   background: linear-gradient(170deg, var(--c-hi), var(--c) 55%, var(--c-lo)); color: var(--ink); font: 650 11px/1.25 "Segoe UI Variable Text", "Segoe UI", system-ui; letter-spacing: .015em;
   box-shadow: 0 0 0 1.4px #fff, 0 0 0 2px rgba(0,0,0,.18), 0 2px 5px rgba(0,0,0,.25), 0 5px 14px oklch(from var(--c) .45 c h / .3); }
-/* the browser's own controls: tabs and the address, floating at the top. Out of sight until the mouse reaches the top edge */
+/* The browser's own frame: a strip of tabs over a toolbar (back, forward, reload, the address bar, tools), one pane of glass
+   hanging from the top of the screen. Out of sight until the mouse reaches the top edge (app.js surfHideSoon). The tab in front
+   is the toolbar's colour and runs down into it, its bottom corners flared out, as a desktop browser's do. */
 #surfEdge { position: fixed; left: 0; right: 0; top: 0; height: 6px; display: none; z-index: 4; }
-#surfBar { position: fixed; left: 50%; top: 14px; width: min(1040px, 94vw); z-index: 5; display: none; flex-direction: column; gap: 8px; box-sizing: border-box;
-  transform: translate(-50%, -14px); opacity: 0; pointer-events: none; transition: opacity .3s ease, transform .3s ease; cursor: default; }
-/* each control is its own pane of the panel's glass (see #panel), rounded right off */
-#surfBar .glass { all: unset; box-sizing: border-box; cursor: pointer; color: var(--ink); border-radius: 999px;
-  background: rgba(11,13,19,.66); backdrop-filter: blur(30px) saturate(150%); border: 1px solid var(--line); box-shadow: 0 10px 34px rgba(0,0,0,.4);
-  transition: background .2s, border-color .2s, color .2s, opacity .2s; }
-#surfBar .glass:hover { background: rgba(28,31,40,.74); border-color: rgba(255,255,255,.18); }
-#surfBar .glass svg { width: 16px; height: 16px; }
-#surfBar .round { flex: none; width: 36px; height: 36px; display: grid; place-items: center; }
+#surfBar { --sbTool: rgba(255,255,255,.075); --sbR: 14px;
+  position: fixed; left: 50%; top: 8px; width: min(1280px, calc(100vw - 24px)); z-index: 5; display: none; flex-direction: column; box-sizing: border-box;
+  border-radius: var(--sbR); background: rgba(14,16,22,.84); backdrop-filter: blur(28px) saturate(160%);
+  box-shadow: 0 0 0 1px rgba(255,255,255,.08), inset 0 1px 0 rgba(255,255,255,.06), 0 18px 50px -6px rgba(0,0,0,.6);
+  font: 12.5px/1.2 "Segoe UI Variable Text", "Segoe UI", system-ui; color: var(--ink);
+  transform: translate(-50%, -14px); opacity: 0; pointer-events: none; transition: opacity .25s ease, transform .3s cubic-bezier(.22, 1, .36, 1); cursor: default; }
 body.surfing #surfEdge { display: block; }
 body.surfing #surfBar { display: flex; }
 #surfBar.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
-#sbTabs { display: flex; align-items: center; gap: 6px; min-width: 0; }
-#surfBar .sbTab { flex: 0 1 190px; min-width: 0; height: 32px; display: flex; align-items: center; gap: 6px; padding: 0 6px 0 14px; font-size: 12px; color: var(--dim); }
-#surfBar .sbTab:hover { color: var(--ink); }
-#surfBar .sbTab span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#surfBar .sbTab i { flex: none; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; opacity: .55; transition: background .2s, opacity .2s; }
-#surfBar .sbTab i svg { width: 11px; height: 11px; }
-#surfBar .sbTab i:hover { background: rgba(255,255,255,.16); opacity: 1; }
-#surfBar .sbTab.active { color: var(--ink); background: rgba(44,48,58,.78); border-color: rgba(255,255,255,.2); }
-#surfBar .sbAdd { width: 32px; height: 32px; color: var(--dim); }
-#surfBar .sbAdd:hover { color: var(--ink); }
-.sbNav { display: flex; align-items: center; gap: 6px; }
 #surfBar [hidden] { display: none !important; }
-#surfBar .round.off { opacity: .45; pointer-events: none; }
-#surfBar .round.off svg { opacity: .5; }
-#surfBar .round.lit { color: var(--accent); border-color: var(--accent); }       /* on: mirroring to the other monitors */
-#surfBar .sbSearch { flex: 1 1 auto; min-width: 0; height: 36px; display: flex; align-items: center; gap: 9px; padding: 0 16px 0 14px; margin-left: 2px; cursor: text; }
-#surfBar .sbSearch svg { flex: none; color: var(--dim); }
-#surfBar .sbSearch:focus-within { border-color: var(--accent); }
-#sbUrl { all: unset; flex: 1 1 auto; min-width: 0; color: var(--ink); font-size: 13px; user-select: text; }
+#surfBar button { all: unset; box-sizing: border-box; cursor: pointer; }
+#surfBar button:focus-visible, #surfBar .sbTab i:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* -- the tab strip -- */
+#surfBar .sbTop { display: flex; align-items: flex-end; gap: 10px; min-width: 0; height: 40px; padding: 0 8px 0 10px; }
+#sbTabs { flex: 1 1 auto; display: flex; align-items: flex-end; min-width: 0; height: 34px; }
+#surfBar .sbTab { position: relative; flex: 0 1 232px; min-width: 40px; height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 7px 0 12px;
+  border-radius: 10px 10px 0 0; color: var(--dim); container-type: inline-size; transition: color .15s; }
+#surfBar .sbTab::before { content: ''; position: absolute; left: 3px; right: 3px; top: 4px; bottom: 3px; border-radius: 8px; background: transparent; transition: background .15s; z-index: -1; }
+#surfBar .sbTab:not(.active):hover { color: var(--ink); }
+#surfBar .sbTab:not(.active):hover::before { background: rgba(255,255,255,.055); }
+/* a thin rule between tabs, hidden next to the one in front and the one under the mouse */
+#surfBar .sbTab + .sbTab::after { content: ''; position: absolute; left: 0; top: 10px; bottom: 9px; width: 1px; background: rgba(255,255,255,.12); }
+#surfBar .sbTab.active::after, #surfBar .sbTab.active + .sbTab::after, #surfBar .sbTab:hover::after, #surfBar .sbTab:hover + .sbTab::after { display: none; }
+#surfBar .sbTab.active { color: var(--ink); background: var(--sbTool); z-index: 1; }
+#surfBar .sbTab.active::before { left: -10px; right: -10px; top: auto; bottom: 0; height: 10px; border-radius: 0; z-index: 0;       /* the flares at its feet */
+  background: radial-gradient(circle at 0 0, transparent 9.5px, var(--sbTool) 10px) left bottom / 10px 10px no-repeat,
+    radial-gradient(circle at 100% 0, transparent 9.5px, var(--sbTool) 10px) right bottom / 10px 10px no-repeat; }
+/* the site's icon (web.js favicon), its first letter in a colour of its own (app.js sbIcon), Drift's for the start page, or a spinner */
+#surfBar .sbFav { flex: none; position: relative; width: 16px; height: 16px; display: grid; place-items: center; }
+#surfBar .sbFav img { width: 16px; height: 16px; border-radius: 3px; object-fit: contain; }
+#surfBar .sbFav b { width: 16px; height: 16px; border-radius: 4px; display: grid; place-items: center; font: 700 10px/1 "Segoe UI Variable Text", "Segoe UI", system-ui; color: #fff;
+  background: oklch(.58 .13 var(--h, 160)); text-transform: uppercase; }
+#surfBar .sbFav svg { width: 16px; height: 16px; color: var(--accent); }
+#surfBar .sbFav.spin > * { visibility: hidden; }
+#surfBar .sbFav.spin::after { content: ''; position: absolute; inset: 1px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--accent) 22%, transparent); border-top-color: var(--accent); }
+#surfBar.show .sbFav.spin::after { animation: sbSpin .8s linear infinite; }       /* (only while the bar is in sight) */
+@keyframes sbSpin { to { transform: rotate(360deg); } }
+#surfBar .sbTab .sbTitle { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; -webkit-mask: linear-gradient(to right, #000 calc(100% - 18px), transparent); }
+#surfBar .sbTab .sbAud { flex: none; width: 15px; height: 15px; color: var(--dim); }
+#surfBar .sbTab i { flex: none; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; color: var(--dim); transition: background .15s, color .15s; }
+#surfBar .sbTab i svg { width: 10px; height: 10px; }
+#surfBar .sbTab i:hover { background: rgba(255,255,255,.14); color: var(--ink); }
+@container (max-width: 66px) { #surfBar .sbTab .sbTitle, #surfBar .sbTab .sbAud { display: none; } }       /* (its content box: the tab less its padding) */
+@container (max-width: 40px) { #surfBar .sbTab:not(.active) i { display: none; } }
+#surfBar .sbAdd { flex: none; width: 30px; height: 30px; margin: 0 0 2px 6px; border-radius: 50%; display: grid; place-items: center; color: var(--dim); transition: background .15s, color .15s; }
+#surfBar .sbAdd:hover { background: rgba(255,255,255,.08); color: var(--ink); }
+#surfBar .sbAdd svg { width: 16px; height: 16px; }
+
+/* -- the toolbar -- */
+#surfBar .sbNav { position: relative; display: flex; align-items: center; gap: 2px; height: 46px; padding: 0 8px; background: var(--sbTool); border-radius: 0 0 var(--sbR) var(--sbR); }
+#surfBar .sbBtn { flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; color: var(--ink); transition: background .15s, color .15s, opacity .15s; }
+#surfBar .sbBtn:hover { background: rgba(255,255,255,.09); }
+#surfBar .sbBtn:active { background: rgba(255,255,255,.14); }
+#surfBar .sbBtn svg { width: 18px; height: 18px; }
+#surfBar .sbBtn.off { opacity: .32; pointer-events: none; }
+#surfBar .sbBtn.lit { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }       /* on: mirroring to the other monitors */
+#sbReload .sbStopIco, #sbReload.stop .sbReloadIco { display: none; }
+#sbReload.stop .sbStopIco { display: block; }
+#surfBar .sbTools { display: flex; align-items: center; gap: 2px; }
+#surfBar .sbTools:not(:has(.sbBtn:not([hidden]))) { display: none; }
+/* the address bar: what kind of page it is (sbChip), then the address with its site picked out (sbUrlView) until it's clicked */
+#surfBar .sbOmni { flex: 1 1 auto; min-width: 0; height: 34px; margin: 0 6px; display: flex; align-items: center; gap: 4px; padding: 0 14px 0 4px; border-radius: 17px; cursor: text;
+  background: rgba(0,0,0,.3); box-shadow: inset 0 0 0 1px rgba(255,255,255,.05); transition: background .15s, box-shadow .15s; }
+#surfBar .sbOmni:hover { background: rgba(0,0,0,.38); }
+#surfBar .sbOmni:focus-within { background: rgba(8,10,14,.92); box-shadow: inset 0 0 0 2px var(--accent); }
+#surfBar .sbChip { flex: none; height: 26px; min-width: 26px; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 0 5px; box-sizing: border-box; border-radius: 13px;
+  color: var(--dim); font-size: 12px; white-space: nowrap; cursor: default; }
+#surfBar .sbChip svg { flex: none; width: 15px; height: 15px; }
+#surfBar .sbChip.warn { color: #ffb4a8; padding: 0 10px 0 7px; background: rgba(255,120,100,.1); margin-right: 4px; }
+#surfBar .sbChip.ext { color: var(--accent); padding: 0 10px 0 7px; background: color-mix(in srgb, var(--accent) 12%, transparent); margin-right: 4px; }
+#surfBar .sbField { position: relative; flex: 1 1 auto; min-width: 0; height: 100%; display: flex; align-items: center; }
+#sbUrl { all: unset; width: 100%; min-width: 0; color: var(--ink); font-size: 14px; user-select: text; }
 #sbUrl::placeholder { color: var(--dim); }
 #sbUrl::-webkit-search-cancel-button { display: none; }
+#surfBar .sbUrlView { position: absolute; inset: 0; display: flex; align-items: center; font-size: 14px; white-space: nowrap; overflow: hidden; pointer-events: none; color: var(--dim);
+  background: transparent; -webkit-mask: linear-gradient(to right, #000 calc(100% - 24px), transparent); }
+#surfBar .sbUrlView b { font-weight: 400; color: var(--ink); }
+#surfBar .sbUrlView:empty, #surfBar .sbOmni:focus-within .sbUrlView { display: none; }
+#surfBar .sbOmni.pretty:not(:focus-within) #sbUrl { color: transparent; }       /* (the address drawn over it instead) */
+/* a page loading: a thin line along the toolbar's foot */
+#surfBar .sbProg { position: absolute; left: 14px; right: 14px; bottom: 0; height: 2px; border-radius: 2px; overflow: hidden; opacity: 0; transition: opacity .3s; pointer-events: none; }
+#surfBar.loading .sbProg { opacity: 1; }
+#surfBar .sbProg::after { content: ''; position: absolute; top: 0; bottom: 0; width: 30%; border-radius: 2px; background: linear-gradient(90deg, transparent, var(--accent), transparent); }
+#surfBar.show.loading .sbProg::after { animation: sbProg 1.1s cubic-bezier(.45, 0, .55, 1) infinite; }
+@keyframes sbProg { from { left: -30%; } to { left: 100%; } }
+@media (prefers-reduced-motion: reduce) { #surfBar.show .sbFav.spin::after, #surfBar.show.loading .sbProg::after { animation-duration: 3s; } }
+/* -- its styles (Settings → "Surf bar style", state.surfTheme; app.js puts t-<style> on the bar). Glass is the rules above. -- */
+/* Tinted: the same glass, coloured by the accent, so it follows the palette */
+#surfBar.t-tint { background: color-mix(in srgb, var(--accent) 16%, rgba(12,14,19,.88)); --sbTool: color-mix(in srgb, var(--accent) 9%, rgba(255,255,255,.06)); }
+#surfBar.t-tint .sbOmni { background: rgba(0,0,0,.32); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); }
+#surfBar.t-tint .sbOmni:focus-within { background: rgba(8,10,14,.92); box-shadow: inset 0 0 0 2px var(--accent); }
+#surfBar.t-tint .sbChip:not(.warn) { color: var(--accent); }
+#surfBar.t-tint .sbUrlView b { color: color-mix(in srgb, var(--accent) 35%, #fff); }
+/* Graphite: solid and flat, a desktop browser's dark mode. No blur behind it, so the least to draw */
+#surfBar.t-graphite { background: #202124; backdrop-filter: none; --sbTool: #35363a; --sbR: 10px; box-shadow: 0 0 0 1px #3c4043, 0 14px 40px -8px rgba(0,0,0,.6); }
+#surfBar.t-graphite .sbTab { border-radius: 8px 8px 0 0; }
+#surfBar.t-graphite .sbOmni { background: #202124; box-shadow: none; }
+#surfBar.t-graphite .sbOmni:focus-within { background: #202124; box-shadow: inset 0 0 0 2px var(--accent); }
+#surfBar.t-graphite .sbUrlView b { color: #e8eaed; }
+#surfBar.t-graphite #ssLine.docked { background: #2a2b2e; border-color: #3c4043; }
+/* Daylight: a light frame, dark ink */
+#surfBar.t-day { --ink: #1f1f1f; --dim: #5f6368; background: rgba(222,225,230,.94); --sbTool: #ffffff; box-shadow: 0 0 0 1px rgba(0,0,0,.08), 0 14px 40px -8px rgba(0,0,0,.35); }
+#surfBar.t-day .sbTab + .sbTab::after { background: rgba(0,0,0,.15); }
+#surfBar.t-day .sbTab:not(.active):hover::before, #surfBar.t-day .sbBtn:hover, #surfBar.t-day .sbAdd:hover, #surfBar.t-day .sbTab i:hover { background: rgba(0,0,0,.07); }
+#surfBar.t-day .sbBtn:active { background: rgba(0,0,0,.12); }
+#surfBar.t-day .sbOmni { background: #eef1f4; box-shadow: none; }
+#surfBar.t-day .sbOmni:hover { background: #e6e9ed; }
+#surfBar.t-day .sbOmni:focus-within { background: #fff; box-shadow: inset 0 0 0 2px #15946b; }
+#surfBar.t-day .sbFav svg, #surfBar.t-day .sbBtn.lit, #surfBar.t-day .sbChip.ext { color: #15946b; }
+#surfBar.t-day .sbChip.warn { color: #c5221f; background: rgba(217,48,37,.09); }
+#surfBar.t-day .sbProg::after { background: linear-gradient(90deg, transparent, #15946b, transparent); }
+#surfBar.t-day .sbFav.spin::after { border-color: rgba(21,148,107,.2); border-top-color: #15946b; }
+#surfBar.t-day #ssLine.docked { background: rgba(0,0,0,.05); border-color: rgba(0,0,0,.06); }
+/* Aurora: dark glass with a thin edge in the accent and highlight colours, and a glow under it */
+#surfBar.t-aurora { border: 1px solid transparent; box-shadow: 0 0 34px -6px color-mix(in srgb, var(--accent) 45%, transparent), 0 18px 50px -6px rgba(0,0,0,.6);
+  background: linear-gradient(rgba(13,14,20,.92), rgba(13,14,20,.92)) padding-box, linear-gradient(100deg, var(--accent), var(--hi) 55%, #4fb3ff) border-box; }
+#surfBar.t-aurora .sbOmni { border: 1px solid transparent; box-shadow: none;
+  background: linear-gradient(rgba(6,7,11,.85), rgba(6,7,11,.85)) padding-box, linear-gradient(100deg, color-mix(in srgb, var(--accent) 70%, transparent), color-mix(in srgb, var(--hi) 70%, transparent)) border-box; }
+#surfBar.t-aurora .sbOmni:focus-within { background: linear-gradient(rgba(6,7,11,.95), rgba(6,7,11,.95)) padding-box, linear-gradient(100deg, var(--accent), var(--hi)) border-box; }
+#surfBar.t-aurora .sbChip:not(.warn) { color: var(--accent); }
+#surfBar.t-aurora .sbTab.active .sbTitle { color: #fff; }
+/* Minimal: the address bar shows the site alone, centred, until it's clicked; then the whole address, as usual */
+#surfBar.t-min .sbOmni { background: rgba(255,255,255,.07); box-shadow: none; }
+#surfBar.t-min .sbOmni:focus-within { background: rgba(8,10,14,.92); box-shadow: inset 0 0 0 2px var(--accent); }
+#surfBar.t-min .sbOmni.pretty:not(:focus-within) { justify-content: center; padding: 0 14px; }
+#surfBar.t-min .sbOmni.pretty:not(:focus-within) .sbField { flex: 0 1 auto; }
+#surfBar.t-min .sbOmni.pretty:not(:focus-within) .sbUrlView { position: static; -webkit-mask: none; color: var(--ink); font-weight: 600; }
+#surfBar.t-min .sbOmni.pretty:not(:focus-within) .sbPath { display: none; }
+#surfBar.t-min .sbOmni.pretty:not(:focus-within) #sbUrl { position: absolute; inset: 0; opacity: 0; }
 #mShare:empty { display: none; }
 #panel.notab #content { display: none !important; }       /* Surf: the browser is the page, nothing to open in the panel */
 body.web #algo, body.web #clockFace, body.web #breath { display: none; }
@@ -293,11 +481,9 @@ body.web #algo, body.web #clockFace, body.web #breath { display: none; }
 #ssLine.on { display: flex; }
 body.idle #ssLine { opacity: .35; }
 #ssLine .face { pointer-events: auto; }
-/* ...docked at the end of the bar's row of tabs: a pane of the same glass */
-#surfBar .sbTop { display: flex; align-items: center; gap: 10px; min-width: 0; }
-#surfBar .sbTop #sbTabs { flex: 1 1 auto; }
-#ssLine.docked { position: static; transform: none; flex: none; height: 32px; box-sizing: border-box; padding: 0 5px 0 12px; gap: 7px; max-width: 40%;
-  background: rgba(11,13,19,.66); backdrop-filter: blur(30px) saturate(150%); border-color: var(--line); box-shadow: 0 10px 34px rgba(0,0,0,.4); color: var(--dim); pointer-events: auto; cursor: default; }
+/* ...docked at the end of the bar's row of tabs, where a browser keeps its profile: a quiet pill in the strip */
+#ssLine.docked { position: static; transform: none; flex: none; align-self: center; margin-top: 4px; height: 28px; box-sizing: border-box; padding: 0 4px 0 11px; gap: 7px; max-width: 40%;
+  background: rgba(255,255,255,.06); backdrop-filter: none; border-color: rgba(255,255,255,.06); box-shadow: none; color: var(--dim); pointer-events: auto; cursor: default; }
 #ssLine.docked span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 7px; }
 body.idle #ssLine.docked { opacity: 1; }
 #ssLine .live { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
@@ -495,6 +681,7 @@ input[type=range]::-webkit-slider-thumb { appearance: none; width: 14px; height:
 @media (max-width: 1000px) { .tabs .tabSide button > span { display: none; } .tabs .tabSide button { padding: 6px 8px; } }       /* narrow: Hub and Settings by their icons (their names in the tooltip) */
 .quick { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .quick .sep { width: 1px; height: 18px; background: var(--line); margin: 0 6px; }
+#barClock { font-size: 13px; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--ink); opacity: .8; white-space: nowrap; padding: 0 4px; cursor: default; }
 .icon { all: unset; cursor: pointer; width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; color: var(--ink); font-size: 15px; transition: background .2s; }
 .icon:hover { background: rgba(255,255,255,.12); }
 .icon:disabled { opacity: .3; cursor: default; background: none; }
@@ -568,6 +755,8 @@ select:disabled { opacity: .4; cursor: default; }
 body:has(#panel.show) #algo { opacity: 0; }
 
 .sw.cus { color: #fff; font-size: 13px; font-weight: 700; text-shadow: 0 1px 4px rgba(0,0,0,.7); }
+.sw.art { color: #fff; font-size: 14px; font-weight: 700; text-shadow: 0 1px 4px rgba(0,0,0,.7);       /* What's playing: the cover's colours once read (app.js syncUI) */
+  background: linear-gradient(90deg, #f2643d, #e5c14a, #22c08a, #1fa8c9, #b07ae0); }
 #customRow { display: none; gap: 14px; align-items: center; flex-wrap: wrap; margin: -4px 0 14px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.03); }
 #customRow.on { display: flex; }
 .cc { display: flex; align-items: center; gap: 8px; font-size: 12px; color: rgba(255,255,255,.75); cursor: pointer; margin: 0; }
@@ -1265,7 +1454,7 @@ body.surfing.inHub #chatOverlay.typing #coBtn { bottom: calc(50% - 17px); }     
    mouse reaches the top edge, in its usual place at the left, level with it. Hovered or focused, it stays. Surf's bar, centred,
    narrows to leave it room on both sides (--cbw, its width: drawCall in chat.js) */
 body.surfing #callBar, body.bc #callBar { top: 14px; transition: opacity .3s ease, transform .3s ease; }
-body.surfing:has(#callBar.on) #surfBar { width: min(1040px, calc(100vw - 2 * (var(--cbw, 0px) + 36px))); }       /* (36: its 18px from the edge, and as much again between them) */
+body.surfing:has(#callBar.on) #surfBar { width: min(1280px, calc(100vw - 2 * (var(--cbw, 0px) + 36px))); }       /* (36: its 18px from the edge, and as much again between them) */
 body.surfing:not(:has(#surfBar.show)) #callBar:not(:hover):not(:focus-within) { opacity: 0; transform: translateX(-16px); pointer-events: none; }       /* (the rail slides off to the left) */
 body.bcfull:not(.surfing):not(:has(#bcBar.show, #bcBar:hover, #bcBar:focus-within)) #callBar:not(:hover):not(:focus-within) { opacity: 0; transform: translateX(-16px); pointer-events: none; }       /* (over the grid it stays: there's room for it) */
 /* the Share tab: who's watching you */

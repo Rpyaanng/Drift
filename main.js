@@ -68,6 +68,8 @@ const DEFAULTS = {
   onTop: false,
   surfMirror: false,       // the Surf page shows on every other monitor too (see "mirroring" in renderer/app.js)
   surfGpu: false,          // Surf's pages are drawn offscreen and handed to the windows as textures on the graphics card (see web.js)
+  surfTheme: 'glass',      // the look of Surf's bar (Settings → "Surf bar style"): 'glass', 'tint', 'graphite', 'day', 'aurora' or 'min' (style.css #surfBar.t-*)
+  surfFit: 'own',          // while mirroring, the page's size: 'own' keeps the Surf monitor's, stretched partway to the others' shapes; or 'exact', 'widest', 'sharpest', 'd<n>' (pageSize)
   // the volume mixer (the toolbar's speaker): master scales all of Drift's own sound (ambient, media, Surf, voices); surf is the
   // browser's pages; the mutes are its icons. Its Ambient level (generated music and nature sounds) is music.volume, its Media
   // level (videos, and music from the Media tab) video.volume.
@@ -96,6 +98,8 @@ const DEFAULTS = {
   sfx: { on: true, volume: 0.7 },
   // GIF search in the Hub tab: the user's own GIPHY API key ('' = search is off; pictures from this PC still send)
   gif: { key: '' },
+  // the Media screen's tour dates (artistShows): the user's own Ticketmaster key ('' = the scene asks for one)
+  concerts: { key: '' },
   // files sent straight between PCs (docs/plans/files.md): where downloads go ('' = Downloads\Drift)
   files: { folder: '' },
   // What's new (renderer/whatsnew.js): the newest version whose notes were shown. A newer one starting shows them, once
@@ -147,6 +151,7 @@ function loadSettings() {
     state.broadcast = cleanBroadcast({ ...DEFAULTS.broadcast, ...(s.broadcast || {}) });
     state.sfx = cleanSfx({ ...DEFAULTS.sfx, ...(s.sfx && typeof s.sfx === 'object' ? s.sfx : {}) });
     state.gif = cleanGif(s.gif);
+    state.concerts = cleanGif(s.concerts);       // (the same: a key of letters and numbers)
     state.hubSurf = cleanHubSurf({ ...DEFAULTS.hubSurf, ...(s.hubSurf && typeof s.hubSurf === 'object' ? s.hubSurf : {}) });
     if (!state.voice.keepMic) state.voice.talk = false;       // nobody is ever live by surprise: the microphone starts closed
     state.voice.deaf = true;       // and nobody is in a voice room by surprise either: Join voice puts you in
@@ -610,7 +615,7 @@ function startLocalServer() {
 // It is watched all the time: whenever Spotify is playing and Drift itself has no video or music on, the toolbar's controls are Spotify's.
 // `had`: it has played since it was opened, so "paused" means a song is paused (not just an idle window).
 let spotify = { status: process.platform === 'win32' ? 'closed' : 'unsupported', title: '', volMode: '', vol: 0, had: false }, spotifyProc = null;
-const ps = (script, opts) => spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { windowsHide: true, ...opts });
+const ps = (script, opts, first = []) => spawn('powershell.exe', [...first, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { windowsHide: true, ...opts });
 const SPOTIFY_WATCH = `
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 while ($true) {
@@ -653,6 +658,361 @@ function spotifyDo(action) {
   const p = ps(`(New-Object -ComObject WScript.Shell).SendKeys([char]${key})`, { stdio: 'ignore' });
   p.on('error', () => {});
 }
+
+// What another app is playing (Spotify, Apple Music, a browser's YouTube Music...), with its cover, from Windows' media controls
+// (what the volume pop-up shows): the app tells Windows, and Drift reads it there, with no account or API key. Media's music
+// screen shows it when none of Drift's own music is on (app.js syncMediaBack). Of the apps there, one that's playing (Windows'
+// current one if it's among them), else Windows' current one; never Drift itself (its own music and Surf pages are there too,
+// under its program's name: DRIFT_SELF). Compiled C#, as PowerShell can't read a picture's stream itself, against Windows' own
+// metadata (no SDK needed), waiting on each step by its status; PowerShell runs -MTA, where those steps can finish while it
+// waits. Each line: S|app|title|artist|album|status (base64, UTF-8); A|mime|picture (base64) when the picture's bytes change
+// (an app can set the cover a moment after the title), A|none| when it has none; or N| with nothing playing anywhere.
+let appNow = { id: '', title: '', artist: '', album: '', playing: false, had: false, key: 0 }, appArt = { key: 0, url: '' }, appNowProc = null;
+const APP_NOW = `
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$fw = [System.Runtime.InteropServices.RuntimeEnvironment]::GetRuntimeDirectory(); $wm = "$env:SystemRoot\\System32\\WinMetadata"
+$src = @'
+using System; using System.Text; using System.Threading;
+using Windows.Foundation; using Windows.Media.Control; using Windows.Storage.Streams;
+public static class DriftNow {
+  static T Wait<T>(IAsyncOperation<T> op) { while (op.Status == AsyncStatus.Started) Thread.Sleep(5); return op.GetResults(); }
+  static T Wait<T, P>(IAsyncOperationWithProgress<T, P> op) { while (op.Status == AsyncStatus.Started) Thread.Sleep(5); return op.GetResults(); }
+  static GlobalSystemMediaTransportControlsSessionManager mgr;
+  static uint lastArt;
+  static string B(string s) { return Convert.ToBase64String(Encoding.UTF8.GetBytes(s ?? "")); }
+  static bool Mine(GlobalSystemMediaTransportControlsSession s, string self) {
+    foreach (var x in (self ?? "").Split(',')) if (x.Length > 0 && s.SourceAppUserModelId.IndexOf(x, StringComparison.OrdinalIgnoreCase) >= 0) return true;
+    return false;
+  }
+  public static string Poll(string self) {
+    if (mgr == null) mgr = Wait(GlobalSystemMediaTransportControlsSessionManager.RequestAsync());
+    GlobalSystemMediaTransportControlsSession cur = null, pick = null;
+    try { cur = mgr.GetCurrentSession(); } catch { }
+    if (cur != null && Mine(cur, self)) cur = null;
+    foreach (var s in mgr.GetSessions()) {
+      if (Mine(s, self) || s.GetPlaybackInfo().PlaybackStatus != GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing) continue;
+      if (pick == null || (cur != null && s.SourceAppUserModelId == cur.SourceAppUserModelId)) pick = s;
+    }
+    if (pick == null) pick = cur;
+    if (pick == null) { lastArt = 0; return "N|"; }
+    var p = Wait(pick.TryGetMediaPropertiesAsync());
+    var line = "S|" + B(pick.SourceAppUserModelId) + "|" + B(p.Title) + "|" + B(p.Artist) + "|" + B(p.AlbumTitle) + "|" + pick.GetPlaybackInfo().PlaybackStatus;
+    byte[] bytes = null; string type = "";
+    if (p.Thumbnail != null) {
+      var st = Wait(p.Thumbnail.OpenReadAsync());
+      if (st.Size > 0 && st.Size <= 8000000) {
+        var buf = Wait(st.ReadAsync(new Windows.Storage.Streams.Buffer((uint)st.Size), (uint)st.Size, InputStreamOptions.None));
+        bytes = new byte[buf.Length]; DataReader.FromBuffer(buf).ReadBytes(bytes); type = st.ContentType;
+      }
+    }
+    if (bytes == null || bytes.Length == 0) { if (lastArt == 0) return line; lastArt = 0; return line + "\\n" + "A|none|"; }
+    uint h = 2166136261; foreach (var b in bytes) h = (h ^ b) * 16777619;
+    if (h == 0) h = 1;
+    if (h == lastArt) return line;
+    lastArt = h;
+    return line + "\\n" + "A|" + type + "|" + Convert.ToBase64String(bytes);
+  }
+}
+'@
+$cp = New-Object System.CodeDom.Compiler.CompilerParameters
+$cp.GenerateInMemory = $true
+$cp.ReferencedAssemblies.AddRange([string[]]@((Join-Path $fw 'System.Runtime.dll'), "$wm\\Windows.Foundation.winmd", "$wm\\Windows.Media.winmd", "$wm\\Windows.Storage.winmd"))
+$res = (New-Object Microsoft.CSharp.CSharpCodeProvider).CompileAssemblyFromSource($cp, $src)
+if ($res.Errors.HasErrors) { [Console]::Out.WriteLine('E|' + ($res.Errors | Select-Object -First 1)); exit }
+$poll = $res.CompiledAssembly.GetType('DriftNow').GetMethod('Poll'); $self = [string]$env:DRIFT_SELF
+while ($true) {
+  try { [Console]::Out.WriteLine($poll.Invoke($null, @($self))) } catch { [Console]::Out.WriteLine('N|') }
+  Start-Sleep -Milliseconds 1500
+}`;
+function appNowWatch(on) {
+  if (process.platform !== 'win32') return;
+  if (!on) { if (appNowProc) { try { appNowProc.kill(); } catch { /* gone */ } appNowProc = null; } return; }
+  if (appNowProc) return;
+  let buf = '';
+  const p = appNowProc = ps(APP_NOW, { stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, DRIFT_SELF: path.basename(process.execPath) } }, ['-MTA']);
+  p.on('error', () => { if (appNowProc === p) appNowProc = null; });
+  p.on('close', () => { if (appNowProc === p) appNowProc = null; });
+  p.stdout.setEncoding('utf8');
+  const txt = (b) => { try { return Buffer.from(b || '', 'base64').toString('utf8').trim(); } catch { return ''; } };
+  p.stdout.on('data', (d) => {
+    buf += d; const lines = buf.split(/\r?\n/); buf = lines.pop();
+    let changed = false;
+    for (const line of lines) {
+      const f = line.split('|');
+      if (f[0] === 'A' && (f[1] === 'none' || (/^image\/(png|jpeg|jpg|gif|webp|bmp)$/i.test(f[1]) && f[2]))) {
+        appArt = { key: appArt.key + 1, url: f[1] === 'none' ? '' : `data:${f[1].toLowerCase()};base64,${f[2]}` };
+        appNow = { ...appNow, key: appArt.key }; changed = true;
+      } else if (f[0] === 'S' || f[0] === 'N') {
+        const next = f[0] === 'S' ? { id: txt(f[1]), title: txt(f[2]), artist: txt(f[3]), album: txt(f[4]), playing: f[5] === 'Playing' } : { id: '', title: '', artist: '', album: '', playing: false };
+        next.had = next.playing || (appNow.had && !!next.id && next.id === appNow.id);       // it has played since Drift saw it (the same app)
+        if (['id', 'title', 'artist', 'album', 'playing', 'had'].some((k) => next[k] !== appNow[k])) { appNow = { ...appNow, ...next }; changed = true; }
+      }
+    }
+    if (changed) pushState();
+  });
+}
+// Whether Media's music screen may show it: as for Spotify's controls (spotifyLead), something that has played, while none of
+// Drift's own music or a video plays. Only with an artist: Windows doesn't say music from video (a browser calls all of it
+// music), but a video in a page or a player comes without one, where music apps, YouTube Music, SoundCloud and podcasts give one.
+function appNowShown() {
+  if (!appNow.title || !appNow.artist || !(appNow.playing || appNow.had)) return false;
+  if (remote && remote.music && remote.music.on) return false;
+  if (state.music.source === 'files' && state.music.playing && state.music.playlist.length) return false;
+  return !(cur() && !state.video.paused && visWins.some((v) => showsVideo(v.key)));
+}
+// The app's name, from the id Windows knows it by ('Spotify.exe', 'AppleInc.AppleMusicWin_nzyj5cx40ttqa!App', 'Helium.6PROS...')
+const APP_NAMES = [[/spotify/i, 'Spotify'], [/applemusic/i, 'Apple Music'], [/amazon.*music/i, 'Amazon Music'], [/tidal/i, 'TIDAL'], [/deezer/i, 'Deezer'],
+  [/zunemusic|mediaplayer/i, 'Media Player'], [/itunes/i, 'iTunes'], [/foobar/i, 'foobar2000'], [/musicbee/i, 'MusicBee'], [/vlc/i, 'VLC'], [/winamp/i, 'Winamp'],
+  [/msedge|microsoftedge/i, 'Edge'], [/chrome/i, 'Chrome'], [/firefox|308046B0AF4A39CB/i, 'Firefox'], [/brave/i, 'Brave'], [/opera/i, 'Opera'], [/vivaldi/i, 'Vivaldi']];
+function appName(id) {
+  if (!id) return '';
+  const known = APP_NAMES.find(([re]) => re.test(id));
+  if (known) return known[1];
+  const parts = id.replace(/!.*$/, '').replace(/\.exe$/i, '').replace(/_[a-z0-9]{13}$/i, '').split('.').filter((x) => /[a-z]/.test(x));
+  return parts.length ? parts[parts.length - 1] : id;
+}
+ipcMain.handle('app-art', () => appArt);       // its cover (a data: URL, '' for none), asked for when appNow.key changes
+
+// Who sings it, from Wikipedia, for the Media screen's second scene (renderer/app.js mbBio): the first artist named ("Kendrick
+// Lamar, Sampha" → Kendrick Lamar), found by a search whose hit is described as a musician or a band. A band's lead singer comes
+// from Wikidata (its "has part" members whose role is a vocalist), when it says; otherwise the band itself. Answers
+// { name, desc, about, url, pic (a data: URL, '' for none), band ('' or the band's name), bandUrl }, or null.
+const bios = new Map();
+const MUSICAL = /\b(singer|rapper|musician|band|group|duo|trio|songwriter|vocalist|DJ|record producer|composer|guitarist|pianist|artist|rock|pop|hip hop|rap|orchestra|ensemble)\b/i;
+const BANDLIKE = /\b(band|group|duo|trio|quartet|ensemble|orchestra|collective)\b/i;
+async function wikiJson(url) {
+  const r = await net.fetch(url, { signal: AbortSignal.timeout(8000), headers: { 'User-Agent': 'MusicBio/1.0 (desktop music player)', Accept: 'application/json' } });
+  if (!r.ok) throw new Error('wiki ' + r.status);
+  return r.json();
+}
+const WP = 'https://en.wikipedia.org/w/api.php?format=json&formatversion=2&origin=*&';
+async function wikiPage(title) {       // its intro as plain text, its short description, its picture and its Wikidata id
+  const q = await wikiJson(WP + 'action=query&redirects=1&prop=extracts|description|pageimages|pageprops|info&inprop=url&exintro=1&explaintext=1&piprop=thumbnail&pithumbsize=640&ppprop=wikibase_item&titles=' + encodeURIComponent(title));
+  const p = ((q.query || {}).pages || [])[0];
+  return p && !p.missing ? p : null;
+}
+async function wikiPic(p) {
+  const src = p && p.thumbnail && p.thumbnail.source;
+  if (!src) return '';
+  try {
+    const r = await net.fetch(src, { signal: AbortSignal.timeout(8000), headers: { 'User-Agent': 'MusicBio/1.0 (desktop music player)' } });
+    if (!r.ok) return '';
+    const type = (r.headers.get('content-type') || 'image/jpeg').split(';')[0];
+    return `data:${type};base64,${Buffer.from(await r.arrayBuffer()).toString('base64')}`;
+  } catch { return ''; }
+}
+async function leadSinger(qid) {       // a band's lead singer's English Wikipedia title, from Wikidata, or ''
+  if (!/^Q\d+$/.test(qid || '')) return '';
+  const sparql = `SELECT ?title WHERE { wd:${qid} p:P527 ?st. ?st ps:P527 ?m. ?st (pq:P2868|pq:P3831) ?role. ?role rdfs:label ?rl. FILTER(LANG(?rl) = "en" && REGEX(?rl, "lead (vocal|sing)|vocalist|singer|frontman|frontwoman", "i")) ?a schema:about ?m; schema:isPartOf <https://en.wikipedia.org/>; schema:name ?title. } LIMIT 1`;
+  const j = await wikiJson('https://query.wikidata.org/sparql?format=json&query=' + encodeURIComponent(sparql));
+  const b = ((j.results || {}).bindings || [])[0];
+  return (b && b.title && b.title.value) || '';
+}
+const bioText = (s) => {       // the intro, cut at a sentence near 900 characters
+  const t = String(s || '').replace(/^([^.(]{0,200}?)\s*\([^()]*\)/, '$1').replace(/\n+/g, '\n').trim();       // (brackets in the opening words: pronunciation and dates)
+  if (t.length <= 900) return t;
+  const cut = t.slice(0, 900), end = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('.\n'));
+  return end > 300 ? cut.slice(0, end + 1) : cut.replace(/\s+\S*$/, '') + '…';
+};
+async function findArtist(name) {       // the Wikipedia title of the musician or band called this, or ''
+  // the page of that name first, or "Name (band)" and the like when the plain name is something else (each followed through redirects)
+  const tries = [name, ...['band', 'musician', 'singer', 'rapper', 'group'].map((x) => `${name} (${x})`)];
+  const q = (await wikiJson(WP + 'action=query&redirects=1&prop=description&titles=' + encodeURIComponent(tries.join('|')))).query || {};
+  const via = new Map([...(q.normalized || []), ...(q.redirects || [])].map((r) => [r.from, r.to]));
+  const descs = new Map((q.pages || []).filter((p) => !p.missing).map((p) => [p.title, p.description || '']));
+  for (let t of tries) {
+    for (let i = 0; i < 3 && via.has(t); i++) t = via.get(t);
+    if (MUSICAL.test(descs.get(t) || '')) return t;
+  }
+  // else a search, its first hit described as a musician or a band with the name in its title
+  const s = ((await wikiJson(WP + 'action=query&generator=search&gsrlimit=8&prop=description&gsrsearch=' + encodeURIComponent(name))).query || {}).pages || [];
+  const low = name.toLowerCase(), hit = s.sort((a, b) => a.index - b.index).find((p) => MUSICAL.test(p.description || '') && p.title.toLowerCase().includes(low));
+  return hit ? hit.title : '';
+}
+// A band's lead singer, as its intro names them: "Thom Yorke (vocals, guitar…)", "lead singer Freddie Mercury", "vocalist and pianist Chris Martin"
+const NAME = "([A-Z][\\p{L}'’.-]+(?: (?:[A-Z][\\p{L}'’.-]+|de|van|von|la|del)){1,3})";
+const SINGER_IN = [new RegExp(NAME + ' \\((?:lead )?vocals', 'u'), new RegExp('\\b(?:lead (?:vocalist|singer)|frontman|frontwoman|vocalist|singer)(?: and [a-z]+)?,? ' + NAME, 'u')];
+const singerIn = (text) => { for (const re of SINGER_IN) { const m = re.exec(text || ''); if (m) return m[1]; } return ''; };
+async function artistBio(artist) {
+  const all = String(artist || '').trim(), first = all.split(/\s*(?:,|;|&| feat\.? | ft\.? | featuring | x | with )\s*/i)[0].trim();
+  if (!all) return null;
+  let hit = await findArtist(all);       // the whole name first ("Tyler, The Creator"), then the first of several ("Kendrick Lamar, Sampha")
+  if (!hit && first && first !== all) hit = await findArtist(first);
+  if (!hit) return null;
+  const page = await wikiPage(hit);
+  if (!page) return null;
+  let who = page, band = null;
+  if (BANDLIKE.test(page.description || '')) {
+    const named = singerIn(page.extract);       // (a name read from the text may be shared: "Chris Martin" is several people)
+    const t = await leadSinger((page.pageprops || {}).wikibase_item).catch(() => '') || (named && await findArtist(named).catch(() => ''));
+    const singer = t && await wikiPage(t).catch(() => null);
+    if (singer && MUSICAL.test(singer.description || '') && !BANDLIKE.test(singer.description || '')) { band = page; who = singer; }
+  }
+  return { name: who.title.replace(/\s*\(.*\)$/, ''), desc: who.description || '', about: bioText(who.extract), url: who.fullurl || 'https://en.wikipedia.org/wiki/' + encodeURIComponent(who.title.replace(/ /g, '_')),
+    pic: await wikiPic(who), band: band ? band.title.replace(/\s*\(.*\)$/, '') : '', bandUrl: band ? band.fullurl || '' : '' };
+}
+// The opening of a text, a sentence or two up to about `max` characters ("Jr." and "St." don't end one)
+function sentences(s, max = 300) {
+  const t = String(s || '').split('\n')[0].trim(), re = /[.!?](?=\s+[A-Z"“'‘(]|$)/g;
+  let end = 0, m;
+  while ((m = re.exec(t))) {
+    if (/\b(?:Jr|Sr|St|Dr|Mr|Mrs|Ms|vs|No|feat|ft)\.$/.test(t.slice(Math.max(0, m.index - 5), m.index + 1))) continue;
+    if (end && m.index + 1 > max) break;
+    end = m.index + 1;
+    if (end > max * 0.45) break;       // (two short ones, or one long one)
+  }
+  return (end ? t.slice(0, end) : t.length > max ? t.slice(0, max).replace(/\s+\S*$/, '') + '…' : t);
+}
+// What Wikipedia says of the song itself, for the line under the artist (renderer/app.js mbSongNote): its page found as
+// "Title (Artist song)", "Title (song)" or "Title", or by a search, when described as a song and naming the artist. '' for none.
+const songNotes = new Map();
+const plainTitle = (title) => String(title || '').replace(/\s*[([](?:feat|ft|with|from)\b.*?[)\]]/gi, '').replace(/\s+-\s+.*(?:remaster|version|edit|mix|live|mono|stereo|deluxe).*$/i, '').trim();       // "Yellow - Remastered 2011" → "Yellow"
+const firstArtist = (artist) => String(artist || '').split(/\s*(?:,|;|&| feat\.? | ft\.? | featuring | x | with )\s*/i)[0].trim();       // "Kendrick Lamar, Sampha" → "Kendrick Lamar"
+async function songAbout(title, artist) {
+  const t = plainTitle(title), a = firstArtist(artist);
+  if (!t || !a) return '';
+  const SONG = /\b(song|single|track|ballad|anthem)\b/i, his = (p) => `${p.description || ''} ${p.extract || ''}`.toLowerCase().includes(a.toLowerCase());
+  const pick = (pages) => pages.find((p) => !p.missing && SONG.test(p.description || '') && his(p));
+  const tries = [`${t} (${a} song)`, `${t} (song)`, t];
+  const q = (await wikiJson(WP + 'action=query&redirects=1&prop=description|extracts&exintro=1&explaintext=1&exlimit=max&titles=' + encodeURIComponent(tries.join('|')))).query || {};
+  const via = new Map([...(q.normalized || []), ...(q.redirects || [])].map((r) => [r.from, r.to])), pages = q.pages || [];
+  for (let x of tries) {
+    for (let i = 0; i < 3 && via.has(x); i++) x = via.get(x);
+    const p = pick(pages.filter((pg) => pg.title === x));
+    if (p) return sentences(p.extract);
+  }
+  const s = ((await wikiJson(WP + 'action=query&generator=search&gsrlimit=5&prop=description|extracts&exintro=1&explaintext=1&exlimit=max&gsrsearch=' + encodeURIComponent(`"${t}" ${a} song`))).query || {}).pages || [];
+  const p = pick(s.sort((x, y) => x.index - y.index));
+  return p ? sentences(p.extract) : '';
+}
+// The song's numbers from Deezer's open API (no key), for the strip under the line about it (renderer/app.js mbStats): its artist's
+// fans, when it came out, where it sits on its album, its length, its genre, how popular it is there (rank, 0 to 1,000,000) and,
+// when Deezer knows it, its tempo. The song is the search hit by that artist (the first named) with that title. null for none.
+const songStats = new Map();
+const dzJson = async (path) => {
+  const r = await net.fetch('https://api.deezer.com/' + path, { signal: AbortSignal.timeout(8000) });
+  if (!r.ok) throw new Error('deezer ' + r.status);
+  const j = await r.json();
+  if (j && j.error) throw new Error('deezer ' + (j.error.message || j.error.type));       // (its errors come back as 200s)
+  return j;
+};
+async function deezerStats(title, artist) {
+  const t = plainTitle(title), a = firstArtist(artist);
+  if (!t || !a) return null;
+  const norm = (s) => String(s || '').toLowerCase().replace(/^the\s+/, '').replace(/[^\p{L}\p{N}]+/gu, '');
+  const pickFrom = (j) => ((j && j.data) || []).find((x) => norm(x.artist && x.artist.name) === norm(a) && (norm(x.title_short || x.title) === norm(t) || norm(x.title).startsWith(norm(t))));
+  let hit = pickFrom(await dzJson(`search?limit=10&q=${encodeURIComponent(`artist:"${a}" track:"${t}"`)}`));
+  if (!hit) hit = pickFrom(await dzJson(`search?limit=15&q=${encodeURIComponent(`${a} ${t}`)}`));
+  if (!hit) return null;
+  const [tr, ar, al] = await Promise.all([dzJson('track/' + hit.id), dzJson('artist/' + hit.artist.id).catch(() => ({})), dzJson('album/' + hit.album.id).catch(() => ({}))]);
+  return {
+    fans: +ar.nb_fan || 0, albums: +ar.nb_album || 0, album: al.title || (hit.album && hit.album.title) || '',
+    released: tr.release_date || al.release_date || '', pos: +tr.track_position || 0, of: +al.nb_tracks || 0, albumType: al.record_type || '',
+    duration: +tr.duration || 0, bpm: Math.round(+tr.bpm || 0), rank: +tr.rank || 0, genre: ((al.genres || {}).data || []).map((g) => g.name).filter(Boolean)[0] || '',
+    link: /^https:\/\//.test(tr.link || '') ? tr.link : '',
+  };
+}
+ipcMain.handle('song-stats', (_e, title, artist) => {
+  const k = `${title}\n${artist}`.toLowerCase();
+  if (!String(title || '').trim() || !String(artist || '').trim()) return null;
+  if (!songStats.has(k)) {
+    const p = deezerStats(title, artist).catch(() => undefined);       // (undefined: it failed, try again in a while; null: not on Deezer)
+    songStats.set(k, p);
+    p.then((x) => { if (x === undefined) setTimeout(() => { if (songStats.get(k) === p) songStats.delete(k); }, 5 * 60000); });
+    if (songStats.size > 60) songStats.delete(songStats.keys().next().value);
+  }
+  return songStats.get(k).then((x) => x || null);
+});
+ipcMain.handle('song-about', (_e, title, artist) => {
+  const k = `${title}\n${artist}`.toLowerCase();
+  if (!String(title || '').trim() || !String(artist || '').trim()) return '';
+  if (!songNotes.has(k)) {
+    const p = songAbout(title, artist).catch(() => null);       // (null: it failed, try again in a while; '' : there's no page)
+    songNotes.set(k, p);
+    p.then((x) => { if (x === null) setTimeout(() => { if (songNotes.get(k) === p) songNotes.delete(k); }, 5 * 60000); });
+    if (songNotes.size > 60) songNotes.delete(songNotes.keys().next().value);
+  }
+  return songNotes.get(k).then((x) => x || '');
+});
+// The Media screen's third scene, where they play next (renderer/app.js mbShows): Ticketmaster's Discovery API, with the user's own
+// key (state.concerts.key). The artist is the act Ticketmaster lists under exactly that name (not a tribute act whose name holds it):
+// the whole name first ("Tyler, The Creator"), then the first of several. Answers { shows: [{ date, time, tba, venue, city, region,
+// country, status, url }], page } ('' page: no such act), or { error: 'nokey' | 'badkey' | a message }.
+const showsCache = new Map();
+async function tmJson(path, q) {
+  const u = new URL('https://app.ticketmaster.com/discovery/v2/' + path);
+  u.search = new URLSearchParams({ apikey: state.concerts.key, ...q });
+  const r = await net.fetch(u.href, { signal: AbortSignal.timeout(8000) });
+  if (r.status === 401 || r.status === 403) throw Object.assign(new Error('badkey'), { tm: 'badkey' });
+  if (!r.ok) throw new Error(`Ticketmaster answered ${r.status}.`);
+  return r.json();
+}
+async function artistShows(artist) {
+  if (!(state.concerts && state.concerts.key)) return { error: 'nokey' };
+  const all = String(artist || '').trim(), first = all.split(/\s*(?:,|;|&| feat\.? | ft\.? | featuring | x | with )\s*/i)[0].trim();
+  const norm = (s) => String(s || '').toLowerCase().replace(/^the\s+/, '').replace(/[^\p{L}\p{N}]+/gu, '');
+  let act = null;
+  for (const name of [...new Set([all, first])].filter(Boolean)) {
+    const j = await tmJson('attractions.json', { keyword: name, classificationName: 'music', size: '10' });
+    act = ((j._embedded || {}).attractions || []).find((a) => norm(a.name) === norm(name));
+    if (act) break;
+  }
+  if (!act) return { shows: [], page: '' };
+  const j = await tmJson('events.json', { attractionId: act.id, sort: 'date,asc', size: '60' });
+  const seen = new Set(), shows = [];
+  for (const e of (j._embedded || {}).events || []) {
+    const st = (e.dates || {}).start || {}, v = ((e._embedded || {}).venues || [])[0] || {};
+    const date = st.localDate || '';
+    if (!date || !/^https:\/\//.test(e.url || '')) continue;
+    const k = `${date}|${v.id || v.name}`;       // (one show sold as several tickets: VIP, parking… is listed once)
+    if (seen.has(k)) continue;
+    seen.add(k);
+    shows.push({ date, time: st.noSpecificTime || st.timeTBA ? '' : (st.localTime || '').slice(0, 5), tba: !!st.dateTBA,
+      venue: v.name || '', city: (v.city || {}).name || '', region: (v.state || {}).stateCode || '', country: (v.country || {}).name || '',
+      status: ((e.dates || {}).status || {}).code || '', url: e.url });
+  }
+  return { name: act.name || '', shows, page: /^https:\/\//.test(act.url || '') ? act.url : '' };
+}
+ipcMain.handle('artist-shows', (_e, artist) => {
+  const k = String(artist || '').trim().toLowerCase();
+  if (!k) return { shows: [], page: '' };
+  const c = showsCache.get(k);
+  if (c && Date.now() - c.at < 6 * 3600000) return c.p;       // (dates come and go: asked again after six hours)
+  const p = artistShows(artist).catch((e) => ({ error: e.tm || (e && e.message) || String(e) }));
+  showsCache.set(k, { p, at: Date.now() });
+  p.then((x) => { if (x.error && x.error !== 'nokey') { const n = showsCache.get(k); if (n && n.p === p) n.at = Date.now() - 6 * 3600000 + 5 * 60000; } });       // (an error: try again in five minutes)
+  if (showsCache.size > 40) showsCache.delete(showsCache.keys().next().value);
+  return p;
+});
+ipcMain.handle('artist-bio', (_e, artist) => {
+  const k = String(artist || '').trim().toLowerCase();
+  if (!k) return null;
+  if (!bios.has(k)) {
+    const p = artistBio(artist).catch(() => null);
+    bios.set(k, p);
+    p.then((b) => { if (!b) setTimeout(() => { if (bios.get(k) === p) bios.delete(k); }, 5 * 60000); });       // (no answer: ask again later, it may have been the network)
+    if (bios.size > 40) bios.delete(bios.keys().next().value);
+  }
+  return bios.get(k);
+});
+
+// The "What's playing" colours (renderer/app.js syncContentPal) come from a page open in Surf, or else a friend's broadcast being
+// watched, before the song's cover. Every few seconds, while that palette is on: a 32 × 32 picture of the Surf page (taken here),
+// or of the broadcast (the window watching it sends one: 'content-pic-in'), handed to every window, which each read the same
+// colours from it. A picture not renewed for 9 s has gone (the page put away, the broadcast closed).
+const contentPics = { surf: null, broadcast: null };       // { url: a data: URL, at }
+function contentTick() {
+  if (state.palette !== 'content') return;
+  const send = () => {
+    const fresh = (k) => (contentPics[k] && Date.now() - contentPics[k].at < 9000 ? contentPics[k] : null);
+    const from = fresh('surf') ? 'surf' : fresh('broadcast') ? 'broadcast' : '', url = from ? contentPics[from].url : '';
+    for (const v of visWins) if (!v.win.isDestroyed()) v.win.webContents.send('cmd', { type: 'content-pic', from, url });       // (each window skips a picture it has already)
+  };
+  const m = surfMode(), w = m === 'own' ? (web.info().open ? web : null) : m === 'hub' && surfShown ? hubWeb : null, wc = w && w.pageWc();
+  if (!wc || wc.isDestroyed()) { send(); return; }
+  wc.capturePage().then((img) => { if (!img.isEmpty()) contentPics.surf = { url: img.resize({ width: 32, height: 32, quality: 'good' }).toDataURL(), at: Date.now() }; send(); }).catch(send);
+}
+setInterval(contentTick, 4000);
 
 // Volume while Spotify has the toolbar. Drift turns down Spotify's own slot in the Windows volume mixer;
 // if Spotify has no slot there (it has not played anything yet), it changes the PC's main volume instead.
@@ -751,10 +1111,27 @@ function spotifyLead() {
 // Every Drift window draws through Chromium's one GPU process, which works through their drawing in turn, so two monitors of
 // heavy scenes can keep a video on a third waiting for its frames. The window playing the video says when frames come late
 // (video-strain in app.js), and the other screens' scenes then draw fewer frames a second (never fewer pixels) until it is smooth again.
+// A video in a Surf page counts too (surf-frames.js says so every 2 s while one plays, and when its frames come late): then
+// surfVideo is the Surf monitor (the cats nap meanwhile: app.js tickOverlays).
 const STRAIN = [1, 0.8, 0.66, 0.5];
-let strain = 0, strainAt = 0;
+let strain = 0, strainAt = 0, surfVidAt = 0, surfVidOff = null;
+function strainStep(more) {       // the video's frames are coming late (more), or have been on time for a while
+  if (Date.now() - strainAt < 1800) return;
+  const was = strain;
+  strain = Math.max(0, Math.min(STRAIN.length - 1, strain + (more ? 1 : -1)));
+  if (strain !== was) { strainAt = Date.now(); pushState(); }
+}
+function surfVideo() { const w = web.info(); return w.open && Date.now() - surfVidAt < 5000 ? w.key : ''; }
+function surfVideoSeen(m) {
+  if (!m.playing || !web.info().open) return;
+  const was = surfVideo();
+  surfVidAt = Date.now(); clearTimeout(surfVidOff); surfVidOff = setTimeout(pushState, 5200);       // (no word for 5 s: it stopped)
+  if (!was) pushState();
+  if (m.more !== undefined) strainStep(m.more);
+}
 function sceneFps() {
-  const busy = strain && cur() && !vpaused() && visWins.some((v) => showsVideo(v.key)) && visWins.some((v) => !showsVideo(v.key));
+  const sv = surfVideo();
+  const busy = strain && ((cur() && !vpaused() && visWins.some((v) => showsVideo(v.key)) && visWins.some((v) => !showsVideo(v.key))) || (!!sv && visWins.some((v) => v.key !== sv)));
   return busy ? Math.max(24, Math.round(state.fps * STRAIN[strain])) : state.fps;
 }
 function publicState() {
@@ -763,7 +1140,7 @@ function publicState() {
   const video = remote ? { ...state.video, files: remote.files.map((f) => f.name), index: remote.index, paused: !!remote.paused } : state.video;
   return { ...state, video, subs: { ...state.subs, perFile: undefined }, subsInfo: subInfo, time: clock, nowPlaying, vclock,
     videoUrl: c ? (c.path ? pathToFileURL(c.path).href : c.src) : '', videoName: c ? c.name : '', videoPath: c ? c.path : '', videoLeader: lead && c ? lead.key : '',
-    sceneFps: sceneFps(), screens: visWins.length, spotify: { ...spotify, lead: spotifyLead() }, videoAudio, videoInfo, audioBase: audioPort && c ? local(`/a?i=${c.index}`) : '',
+    sceneFps: sceneFps(), surfVideo: surfVideo(), screens: visWins.length, spotify: { ...spotify, lead: spotifyLead() }, appNow: { ...appNow, show: appNowShown(), app: appName(appNow.id) }, videoAudio, videoInfo, audioBase: audioPort && c ? local(`/a?i=${c.index}`) : '',
     xc: { ...xc, ...xcWant(), base: xcBase() }, encoders: xcoder.list(), canTonemap: !xcoder.ready() || xcoder.canTonemap(),
     p2p: { ...p2p.info(), ctrl: !remote || !!remote.ctrl, own: !!(c && c.remote && c.path), viaHost: viaHost(), quality: shareQuality(), waitingFor: heldFor || [], defaultName: shareName(true), file: remote ? remote.file || '' : '', music: remote ? remote.music : null, chatHub: sessionHub(), lan: createP2P.localAddrs().find((a) => a.includes('.')) || '' },
     mediaSolo: mediaSolo ? mediaSolo.text : '',       // why what this PC plays isn't on the hub's stream (mediaRefused)       // music: a friend's, playing here in place of ours; chatHub: the hub this session is in; lan: this PC's address on its network (Help)
@@ -966,12 +1343,14 @@ function guestCmd(m) {
 // own, drawn here straight from its offscreen frames; on everyone else's it's a picture streamed from the host's PC, with
 // their mouse, keyboard and Surf bar sent back. Your own browser is put away meanwhile (surfKept) and comes back, with its
 // tabs, once you disconnect.
-const SURF = ['go', 'home', 'new', 'tab', 'close', 'back', 'fwd', 'reload', 'hard', 'reopen', 'step', 'nth', 'zoom'];       // (the last five: keyboard shortcuts)
+const SURF = ['go', 'home', 'new', 'tab', 'close', 'back', 'fwd', 'reload', 'stop', 'hard', 'reopen', 'step', 'nth', 'zoom'];       // (the last five: keyboard shortcuts)
 let appAccent = { a: '#22c08a', b: '#b58cff' };       // Drift's accent and its second colour, as the windows last said ('accent'): the start page's by default
 const screenFor = (key) => (visWins.some((x) => x.key === key) ? key : (visWins.find((x) => (allDisplays().find((d) => d.key === x.key) || {}).primary) || visWins[0] || { key: 'd0' }).key);
-const SURF_FIT_MIN = 0.85;       // while mirroring, the least the Surf monitor shrinks the page to make room for other monitors' shapes (pageSize)
+const scaleOf = (x) => screen.getDisplayMatching(x.win.getBounds()).scaleFactor || 1;       // a Drift window's monitor's scale
+const SURF_FIT_MIN = 0.85;      // while mirroring, the least the Surf monitor shrinks the page to make room for other monitors' shapes (pageSize)
 const web = createWeb({
   changed: () => pushState(),
+  video: (m) => surfVideoSeen(m),       // a video playing in a Surf page (surf-frames.js)
   screen: screenFor,
   escape: () => surfEsc(web.info().key),
   unfull: (hostWc) => setTimeout(() => {       // leaving a video's full screen must not take Drift's window out of full screen with it
@@ -998,13 +1377,30 @@ const web = createWeb({
   // its own shape, so it shows smaller bars, but only so far that the Surf monitor still shows the page at SURF_FIT_MIN of its size or
   // more: the bars are shared out, and no monitor's size or scale can make the page tiny on another (it used to take the widest
   // monitor's pixels, which shrank and barred the page on a smaller or differently shaped Surf monitor). Monitors show it whole.
+  // Settings' "Mirrored page size" (state.surfFit) picks another way while mirroring; whichever it is, the other monitors show the
+  // page whole, with black bars:
+  //   'exact'    the Surf monitor's own size, not stretched: no bars there, the others take them all
+  //   'widest'   the widest monitor's pixels (the old way)
+  //   'sharpest' the pixels of the monitor with the most of them, so a 4K screen beside an ultrawide stays crisp
+  //   'd<n>'     monitor n's layout (its size in its own units, at the Surf monitor's scale), e.g. a TV everyone watches; one that's
+  //              off falls back to 'own'
   pageSize: (key) => {
-    const own = visWins.find((x) => x.key === key && !x.win.isDestroyed());
+    const fit = state.surfFit, live = visWins.filter((x) => !x.win.isDestroyed() && x.win.getContentSize().every((n) => n > 0));
+    const px = (x) => { const k = scaleOf(x), [w, h] = x.win.getContentSize(); return { w: Math.round(w * k), h: Math.round(h * k) }; };
+    if (state.surfMirror && (fit === 'widest' || fit === 'sharpest')) {
+      let best = null;
+      for (const p of live.map(px)) if (!best || (fit === 'widest' ? p.w > best.w || (p.w === best.w && p.h > best.h) : p.w * p.h > best.w * best.h)) best = p;
+      if (best) return best;
+    }
+    const own = live.find((x) => x.key === key);
     if (!own) return null;
-    const k = screen.getDisplayMatching(own.win.getBounds()).scaleFactor || 1, [sw, sh] = own.win.getContentSize();
-    if (!sw || !sh) return null;
+    const k = scaleOf(own), [sw, sh] = own.win.getContentSize();
+    if (state.surfMirror && /^d\d+$/.test(fit)) {
+      const m = live.find((x) => x.key === fit);
+      if (m) { const [mw, mh] = m.win.getContentSize(); return { w: Math.round(mw * k), h: Math.round(mh * k) }; }
+    }
     let w = sw, h = sh;
-    if (state.surfMirror) for (const x of visWins) {
+    if (state.surfMirror && fit !== 'exact') for (const x of visWins) {
       if (x === own || x.win.isDestroyed()) continue;
       const [mw, mh] = x.win.getContentSize();
       if (!mw || !mh) continue;
@@ -1256,7 +1652,15 @@ async function ssStart(again) {
 function ssStop() { if (!ssW) return; ssW = null; chat.ssUnwatch(); toScreen({ type: 'ss-rtc', d: { type: 'bye' } }); ptrClear(); pushState(); }
 const toScreen = (c) => { const x = visWins.find((y) => y.key === screenFor(surfKey)); if (x && !x.win.isDestroyed()) x.win.webContents.send('cmd', c); };
 const ssOut = (m) => { if (ssW) toScreen({ type: 'ss-out', m }); };       // to the host, over the data channel the screen window holds
-const cleanTabs = (t) => (Array.isArray(t) ? t : []).slice(0, 12).map((x) => ({ id: +(x || {}).id || 0, title: String((x || {}).title || '').replace(/[\x00-\x1f]/g, '').slice(0, 200) }));
+const cleanTabs = (t) => (Array.isArray(t) ? t : []).slice(0, 12).map((x) => {
+  x = x || {};
+  const r = { id: +x.id || 0, title: String(x.title || '').replace(/[\x00-\x1f]/g, '').slice(0, 200) };
+  if (x.home) r.home = true;
+  if (x.loading) r.loading = true;
+  if (x.audible) r.audible = true;
+  if (typeof x.icon === 'string' && x.icon.length <= 12000 && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(x.icon)) r.icon = x.icon;       // the site's icon as web.js makes it, and nothing else
+  return r;
+});
 function onSsDc(m) {       // from the host, over the data channel (the screen window passes it on as it is)
   if (!ssW || !m || typeof m !== 'object') return;
   if (m.t === 'state') {
@@ -2867,6 +3271,7 @@ function patch(p) {
     else if (k === 'hubSurf') { const q = p.hubSurf || {}; state.hubSurf = cleanHubSurf({ ...state.hubSurf, ...(q.noDownloads !== undefined ? { noDownloads: q.noDownloads } : {}), ...(q.allowLan !== undefined ? { allowLan: q.allowLan } : {}),
       ...(q.showSpecs !== undefined ? { showSpecs: q.showSpecs } : {}), ...(q.showBrowsing !== undefined ? { showBrowsing: q.showBrowsing } : {}) }); }       // (only these four are the panel's to set)
     else if (k === 'gif') state.gif = cleanGif(p.gif);
+    else if (k === 'concerts') { state.concerts = cleanGif(p.concerts); showsCache.clear(); }
     else if (k === 'sfx') state.sfx = cleanSfx({ ...state.sfx, ...(p.sfx && typeof p.sfx === 'object' ? p.sfx : {}) });
     else if (k === 'mixer') state.mixer = cleanMixer({ ...state.mixer, ...(p.mixer && typeof p.mixer === 'object' ? p.mixer : {}) });
     else if (k === 'share') { state.share = cleanShare({ ...state.share, ...(p.share || {}) }); p2p.setOptions({ wait: state.share.wait, name: shareName() }); if (chat && p.share && p.share.name !== undefined) chat.setName(shareName()); web.blockChanged();
@@ -2895,6 +3300,8 @@ function patch(p) {
     else if (k === 'mode') { if (['span', 'mirror', 'mix'].includes(p[k])) state.mode = p[k]; }
     else if (k === 'surfMirror') state.surfMirror = !!p[k];
     else if (k === 'surfGpu') state.surfGpu = !!p[k];
+    else if (k === 'surfTheme') { if (['glass', 'tint', 'graphite', 'day', 'aurora', 'min'].includes(p[k])) state.surfTheme = p[k]; }
+    else if (k === 'surfFit') { if (['own', 'exact', 'widest', 'sharpest'].includes(p[k]) || /^d\d+$/.test(p[k])) state.surfFit = p[k]; }
     else if (k in DEFAULTS) state[k] = p[k];
   }
   if (allDisplays().every((d) => state.displaysOff.includes(d.index))) state.displaysOff = prev.displaysOff;
@@ -2903,7 +3310,7 @@ function patch(p) {
   applySideEffects(prev);
   if (JSON.stringify(prev.mixer) !== JSON.stringify(state.mixer)) { web.gainChanged(); hubSound(); toVoice({ t: 'master', v: mixGain().master }); }       // (a voice room not open yet takes it as it starts)
   if (prev.surfGpu !== state.surfGpu) web.gpuChanged();       // the browser goes up again the other way
-  else if (prev.surfMirror !== state.surfMirror) web.resized();       // the page's shape meets the other monitors' partway while mirroring (pageSize)
+  else if (prev.surfMirror !== state.surfMirror || prev.surfFit !== state.surfFit) web.resized();       // the page's shape meets the other monitors' partway while mirroring, or takes the widest one's (pageSize)
   const pv = prev.video, nv = state.video;
   if (pv.enc !== nv.enc) encFallback = false;
   // anything that changes what the converted stream looks like, or who needs it, starts a new one
@@ -3370,13 +3777,7 @@ ipcMain.on('cmd', async (e, c) => {
       applySideEffects(null); pushState(); saveSoon(); rebuildSoon();
       break;
     }
-    case 'video-strain': {       // the video's window: frames are coming late (more), or have been on time for a while
-      if (Date.now() - strainAt < 1800) break;
-      const was = strain;
-      strain = Math.max(0, Math.min(STRAIN.length - 1, strain + (c.more ? 1 : -1)));
-      if (strain !== was) { strainAt = Date.now(); pushState(); }
-      break;
-    }
+    case 'video-strain': strainStep(!!c.more); break;       // the video's window: frames are coming late (more), or have been on time for a while
     case 'sfx': {       // a panel's: a new message it showed (one screen gets those), or a sound tried in Options
       const names = (Array.isArray(c.names) ? c.names : [c.name]).filter((n) => SFX_NAMES.has(n));
       if (names.length) sfxPlay(names, !!c.preview);
@@ -3390,6 +3791,14 @@ ipcMain.on('cmd', async (e, c) => {
     case 'media-choice': {       // the answer to a pick's question (mediaChoose): 'private', 'share' or 'cancel'
       const done = mediaAsks.get(String(c.id || ''));
       if (done) { mediaAsks.delete(String(c.id)); done(['private', 'share'].includes(c.choice) ? c.choice : 'cancel'); }
+      break;
+    }
+    case 'content-pic-in':       // a small picture of the broadcast this window is watching, for the "What's playing" colours (contentTick)
+      if (typeof c.url === 'string' && c.url.length < 40000 && /^data:image\/(jpeg|png);base64,/.test(c.url)) contentPics.broadcast = { url: c.url, at: Date.now() };
+      break;
+    case 'screen-pick': {       // Mirror: Scenes or Media picked on one monitor goes up on every monitor (app.js pickScreen)
+      if (state.mode !== 'mirror' || !['scenes', 'media'].includes(c.tab)) break;
+      for (const x of visWins) if (x.win.webContents !== e.sender && !x.win.isDestroyed()) x.win.webContents.send('cmd', { type: 'screen-pick', tab: c.tab });
       break;
     }
     case 'tab-focus': {       // the panel tab a window is on: kept for a rebuild, and friends see how many are on each
@@ -3474,6 +3883,7 @@ else {
     if (state.surf && !SHOT_DIR) web.restore(state.surf);       // the browser that was open last time, its pages held paused
     applySideEffects(null);
     spotifyWatch(true);       // Drift follows Spotify by itself: see spotifyLead()
+    appNowWatch(true);       // and what any app is playing, for Media's music screen
     const onDisplays = () => { if (displaySig() !== lastSig) rebuildSoon(); };   // ignore work-area-only changes
     screen.on('display-added', onDisplays);
     screen.on('display-removed', onDisplays);
@@ -3503,7 +3913,7 @@ else {
     }
     if (updater) updater.install(false);       // a downloaded update goes in once Drift has closed
     if (pttProc) { try { pttProc.kill(); } catch { /* gone */ } }
-    spotifyWatch(false); spotifyVolWatch(false); xcoder.stopAll(); for (const k of audioKids) { try { k.kill(); } catch { /* gone */ } } noteProgress(); saveNow(); });
+    spotifyWatch(false); spotifyVolWatch(false); appNowWatch(false); xcoder.stopAll(); for (const k of audioKids) { try { k.kill(); } catch { /* gone */ } } noteProgress(); saveNow(); });
 }
 
 // ---- dev-only screenshot harness -------------------------------------------------

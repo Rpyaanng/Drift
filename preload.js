@@ -9,7 +9,12 @@ contextBridge.exposeInMainWorld('drift', {
   listDir: (d, kind) => ipcRenderer.invoke('list-dir', d, kind),
   searchLib: (kind, root, q) => ipcRenderer.invoke('search-lib', kind, root, q),
   readFile: (p) => ipcRenderer.invoke('read-file', p),
-  songTags: (p, big) => ipcRenderer.invoke('song-tags', p, !!big),       // { title, artist, album, art: data: URL or '' } (tags.js)
+  songTags: (p, big) => ipcRenderer.invoke('song-tags', p, !!big),
+  artistBio: (artist) => ipcRenderer.invoke('artist-bio', artist),       // who sings it, from Wikipedia (main.js artistBio): { name, desc, about, url, pic, band, bandUrl } or null
+  artistShows: (artist) => ipcRenderer.invoke('artist-shows', artist),       // their coming concerts from Ticketmaster (main.js artistShows)
+  songStats: (title, artist) => ipcRenderer.invoke('song-stats', title, artist),       // the song's numbers from Deezer, or null (main.js deezerStats)
+  songAbout: (title, artist) => ipcRenderer.invoke('song-about', title, artist),       // a sentence or two on the song from Wikipedia, '' for none (main.js songAbout)
+  appArt: () => ipcRenderer.invoke('app-art'),       // { key, url }: the cover of what another app plays, a data: URL or '' (main.js appNowWatch)       // { title, artist, album, art: data: URL or '' } (tags.js)
   subCues: () => ipcRenderer.invoke('sub-cues'),
   subSearch: (q) => ipcRenderer.invoke('sub-search', q),
   subDownload: (item) => ipcRenderer.invoke('sub-download', item),

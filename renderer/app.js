@@ -118,6 +118,7 @@
 
   const sceneFor = (st) => (st.mode === 'mix' ? (st.perDisplay[me.key] || st.scene) : st.scene);
   let shown = sceneFor(S), fading = false;
+  let webUp = false;       // a Surf page covers this screen (syncWeb): the scene under it isn't drawn
   const audio = [0, 0, 0], audioTarget = [0, 0, 0];
   const specTarget = new Float32Array(128).fill(0), specNow = new Float32Array(128).fill(0);
   for (let i = 64; i < 128; i++) specTarget[i] = specNow[i] = 128;
@@ -144,8 +145,18 @@
   // colours: a fixed palette, or "Cycle" which blends through every palette on the wall clock (same on every monitor)
   const PAL_IDS = Object.keys(PALETTES);
   const rgb = (id) => PALETTES[id].c.map(hex);
+  // "What's playing" (palette 'content'): the colours of the cover of the song that's on (syncContentPal), eased in from the
+  // ones before over 2 s. With no cover, the last ones stay (Aurora before there are any).
+  // A page open in Surf, or else a friend's broadcast being watched, comes before the cover: main.js contentTick sends a small
+  // picture of it every few seconds (contentLive: { from, url }, null when neither is up).
+  let contentFor = null, contentPal = null, contentHex = null, contentFrom = null, contentAt = 0, contentLive = null;
   function currentColors(at) {
     if (S.palette === 'custom' && Array.isArray(S.customColors)) return S.customColors.map(hex);
+    if (S.palette === 'content') {
+      if (!contentPal) return rgb('aurora');
+      const k = Math.min(1, (performance.now() - contentAt) / 2000), e = k * k * (3 - 2 * k);
+      return e >= 1 || !contentFrom ? contentPal : contentFrom.map((c, j) => c.map((v, n) => v + (contentPal[j][n] - v) * e));
+    }
     if (S.palette !== 'cycle') return rgb(PALETTES[S.palette] ? S.palette : 'aurora');
     const T = (at || Date.now()) / 1000 / Math.max(5, S.cycleSecs || 30), i = Math.floor(T), f = T - i;
     const a = rgb(PAL_IDS[i % PAL_IDS.length]), b = rgb(PAL_IDS[(i + 1) % PAL_IDS.length]);
@@ -172,10 +183,11 @@
   // The accent goes to main too, for Surf's start page, which takes it by default (surf-home.js /api/accent), with the palette's
   // lightest colour as its second (Aurora's two are the start page's own green and lilac). Only a change is sent.
   let accentSent = '';
+  let coverPal = null;       // the cover's colours while Media's screen shows another app's song (coverColors): they're that screen's, in place of the palette
   function setAccent() {
     const a = accentHex(), b = toHex(currentColors()[3]);
     document.documentElement.style.setProperty('--accent', a);
-    const pc = currentColors(); ['--mbr0', '--mbr1', '--mbr2', '--mbr3'].forEach((v, i) => $('#mediaBack').style.setProperty(v, i === 2 ? a : toHex(pc[i])));       // Media's own screen wears the palette (style.css tones it down to --mb0..3 until something plays)
+    const pc = currentColors(); ['--mbr0', '--mbr1', '--mbr2', '--mbr3'].forEach((v, i) => $('#mediaBack').style.setProperty(v, coverPal ? coverPal[i] : i === 2 ? a : toHex(pc[i])));       // Media's own screen wears the palette (style.css tones it down to --mb0..3 until something plays)
     if (a + b !== accentSent) {
       accentSent = a + b; api.cmd({ type: 'accent', a, b });
       for (const el of document.querySelectorAll('.ptr')) if (el.lastChild) el.style.setProperty('--c', el.classList.contains('self') ? window.driftSelfColor(a) : window.driftPtrColor(el.lastChild.textContent, a));       // everyone's pointer takes the new palette (yours is the accent itself)
@@ -224,7 +236,7 @@
     aTime += (aTimeTarget - aTime) * 0.15;
     tickPeaks(now);
     tickMediaBack();
-    if (R && shown !== 'video' && !mbOn) {       // (under Media's own screen the scene rests)
+    if (R && shown !== 'video' && !mbOn && !webUp) {       // (under Media's own screen the scene rests, and under a Surf page, which covers it all)
       const vp = viewParams(), t = sceneTime(), sm = simFor(shown, vp.aspect);
       if (sm) sm.update(t);
       const now = Date.now(), age = beats.map((b) => (b ? (now - b) / 1000 : 99));
@@ -561,6 +573,16 @@
   let lastClock = '', accentAt = 0, pgAt = 0;
   const clockHm = $('#clockFace .hm'), clockAp = $('#clockFace .ap'), clockDate = $('#clockFace .date'), clockRule = $('#clockFace .rule i');
   const clockFmt = new Intl.DateTimeFormat([], { hour: 'numeric', minute: '2-digit' });
+  // the small clock in the bottom bar, beside the exit button; the date shows on hover
+  const barClock = $('#barClock');
+  let barClockWas = '';
+  const tickBarClock = () => {
+    const d = new Date(), t = clockFmt.format(d);
+    if (t === barClockWas) return;
+    barClockWas = t; barClock.textContent = t;
+    barClock.title = d.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  };
+  tickBarClock(); setInterval(tickBarClock, 1000);
   function tickOverlays() {
     const showHere = S.mode !== 'span' || isCenter;
     clockEl.classList.toggle('on', S.clock && showHere);
@@ -593,7 +615,7 @@
     // The same while Surf plays something (a page making sound) or shows a friend's live Surf stream: even drawn once and
     // only moved (cats.js), awake cats have every window composited again each frame, and a 60 fps video in Surf stuttered.
     // (window.catForce: DRIFT_CATCOST in main.js holds them 'awake' or 'asleep' to measure what they cost)
-    const w = S.web || {}, surfPlays = !!w.audible || (!!w.open && !!w.stream && !!w.live);
+    const w = S.web || {}, surfPlays = !!w.audible || !!S.surfVideo || (!!w.open && !!w.stream && !!w.live);       // (surfVideo: a video playing there, sound or not: main.js)
     const asleep = coEl.classList.contains('cat') && (window.catForce ? window.catForce === 'asleep' : (!!S.videoLeader && !S.video.paused) || surfPlays), zStep = Math.floor(Date.now() / 1100) % 5;
     coEl.classList.toggle('asleep', asleep);
     const z = asleep ? String(zStep > 3 ? 0 : zStep) : '';
@@ -628,7 +650,7 @@
   const tcan = document.createElement('canvas'); tcan.width = 256; tcan.height = 144;
   let TR = null, thumbPalette = null, thumbJob = 0;
   function makeThumbs() {
-    const palKey = S.palette + (S.palette === 'custom' ? (S.customColors || []).join('') : '');
+    const palKey = S.palette + (S.palette === 'custom' ? (S.customColors || []).join('') : S.palette === 'content' ? (contentHex || []).join('') : '');
     if (thumbPalette === palKey) return;
     thumbPalette = palKey; const job = ++thumbJob;
     if (!TR) TR = makeRenderer(tcan, { preserveDrawingBuffer: true });
@@ -712,9 +734,12 @@
     + `<h3 class="sub">Mathematical geometry</h3><div class="tilegrid">${SCENES.filter((s) => s.group === 'geo').map(tileHtml).join('')}</div>`;
   $('#palettes').innerHTML = Object.entries(PALETTES).map(([id, p]) => `<button class="sw" data-id="${id}" title="${p.name}" style="background:linear-gradient(90deg,${p.c.join(',')})"></button>`).join('')
     + `<button class="sw cyc" data-id="cycle" title="Cycle through every colour" style="background:linear-gradient(90deg,${Object.values(PALETTES).map((p) => p.c[2]).join(',')})">↻</button>`
+    + `<button class="sw art" data-id="content" title="What's playing: colours from the cover of the song that's on">♪</button>`
     + `<button class="sw cus" data-id="custom" title="Your own colours">✎</button>`;
   $('#presets').innerHTML = PRESETS.map((p) => `<button class="preset" data-id="${p.id}"><b>${p.name}</b><span>${p.desc}</span></button>`).join('')
     + '<button class="preset off" data-id="off"><b>Off</b><span>Silence, or just nature sounds</span></button>';
+  // Settings' "Mirrored page size": after the styles, one choice per monitor, whose layout the mirrored page then takes
+  if (init.displays.length > 1) $('#surfFit').insertAdjacentHTML('beforeend', init.displays.map((d) => `<option value="${d.key}">Match monitor ${d.index + 1} (${d.width} × ${d.height})</option>`).join(''));
   $('#monitors').innerHTML = init.displays.map((d) => `<button class="mon" data-i="${d.index}"><b>Monitor ${d.index + 1}</b>${d.width} × ${d.height}${d.index === me.index ? '<em>this screen</em>' : ''}</button>`).join('');
 
   function showPanel(open) {
@@ -732,6 +757,7 @@
     const same = t === tab && panel.classList.contains('open'), bcWas = bcHere();
     tab = t; surfFor(t); bcFor(t); tellTab();
     if (!SIDE_TABS.includes(t)) screenTab = t;       // (Hub and Settings leave the screen as it is)
+    pickScreen(t);
     if (t === 'scenes' && sceneFor(S) === 'video') {       // Scenes over a video: the scene that was on before it comes straight back, as picking its tile would
       const back = S.prevScene && S.prevScene !== 'video' ? S.prevScene : 'aurora';
       P(S.mode === 'mix' ? { perDisplay: { [me.key]: back } } : { scene: back });
@@ -774,10 +800,13 @@
       if (w.has) { if (!w.open) surf('show'); else if (w.key !== me.key) surf('move'); }
       else surf('new');
     }
-    else if (!SIDE_TABS.includes(t) && w.open && w.key === me.key) surf('hide');
+    else if (!SIDE_TABS.includes(t) && w.open && (w.key === me.key || S.mode === 'mirror')) surf('hide');       // (Mirror: whichever monitor it was picked on, it comes down on all of them)
     else if (!SIDE_TABS.includes(t) && (mirEl || (gpuEl && !gpuEl.own))) api.patch({ surfMirror: false });       // on a monitor mirroring the page: Scenes or Media is what was asked for here
   }
   const SIDE_TABS = ['settings', 'hub'];       // tabs that leave what's on screen where it is (the browser, the Broadcast scene)
+  // Mirror: every monitor shows what was last picked on any of them. Scenes and Media are each window's own screen (screenTab),
+  // so a pick here is passed to the others (main.js screen-pick; they take it in the 'cmd' handler). Surf has surfMirror.
+  const pickScreen = (t) => { if (S.mode === 'mirror' && (t === 'scenes' || t === 'media')) api.cmd({ type: 'screen-pick', tab: t }); };
   // ---- Media's own screen. Scenes, Media, Surf and Share each put something on this screen; picking Media with no video up used
   // to leave the scene showing, as if nothing had happened. Now it shows Media's backdrop: what's playing (music, with its
   // spectrum), or how to start. screenTab: the last of those four picked here (Hub and Settings don't change it). ----
@@ -786,25 +815,232 @@
   for (let i = 0; i < 64; i++) { const b = document.createElement('i'); mbEl.querySelector('.mbBars').append(b); mbBars.push(b); }       // a mirrored skyline: the bass in the middle
   let mbOn = false, mbKey = '', whereSent = '';
   // The sleeve shows the song's own cover when it has one (in its tags, or a cover.jpg beside it: main.js song-tags), over the
-  // lights drawn from its title. Only for this PC's own songs: a friend's music keeps the drawn sleeve.
+  // lights drawn from its title. For this PC's own songs, and another app's (Spotify, Apple Music, a browser...: p is then
+  // 'app:<n>', its cover's number: main.js appNowWatch, which reads it from Windows' media controls); a friend's music keeps the
+  // drawn sleeve. Another app's cover colours the screen as well (coverColors).
   const mbSleeve = mbEl.querySelector('.mbSleeve'), mbCover = mbEl.querySelector('.mbCover'), mbArts = new Map();       // path -> data: URL ('' for none), the last few
   let mbArtFor = null;
   function sleeveArt(p) {
     if (p === mbArtFor) return;
     mbArtFor = p;
-    const show = (url) => {
+    const sp = p.startsWith('app:');
+    const show = (url, done) => {
       if (url) mbCover.style.backgroundImage = `linear-gradient(to top, rgba(0,0,0,.42), transparent 34%), url("${url}")`;       // (darker at the foot, for the track number)
       mbSleeve.classList.toggle('art', !!url);       // (going without: it fades out, and the picture stays under it until the next)
+      if (!url) mbBack.classList.remove('on');       // the same cover across the screen behind it, once its blurred copy is made
+      else coverBackdrop(url).then((b) => { if (mbArtFor !== p) return; if (b) mbBack.style.setProperty('--art', `url("${b}")`); mbBack.classList.toggle('on', !!b); });
+      if (done) tintFrom(sp ? url : '');       // (not while the next one loads: the colours stay till it's there)
     };
-    if (!p) { show(''); return; }
-    if (mbArts.has(p)) { show(mbArts.get(p)); return; }
-    show('');
-    api.songTags(p, true).then((t) => {
-      mbArts.set(p, (t && t.art) || '');
-      if (mbArts.size > 12) mbArts.delete(mbArts.keys().next().value);
-      if (mbArtFor === p) show(mbArts.get(p));
-    }).catch(() => {});
+    if (!p || p === 'app:0') { show('', true); return; }
+    if (mbArts.has(p)) { show(mbArts.get(p), true); return; }
+    show('', false);
+    artFor(p).then((url) => { if (mbArtFor === p) show(url, true); });
   }
+  function artFor(p) {       // a song's cover as a data: URL ('' for none): p as for sleeveArt
+    if (!p || p === 'app:0') return Promise.resolve('');
+    if (mbArts.has(p)) return Promise.resolve(mbArts.get(p));
+    return (p.startsWith('app:') ? api.appArt().then((a) => (a && a.url) || '') : api.songTags(p, true).then((t) => (t && t.art) || '')).then((url) => {
+      mbArts.set(p, url);
+      if (mbArts.size > 12) mbArts.delete(mbArts.keys().next().value);
+      return url;
+    }).catch(() => '');
+  }
+  // The song that's on, for its cover: another app's when none of Drift's own is on, as syncMediaBack picks it; a friend's has none
+  function nowArtPath() {
+    const an = S.appNow, sp = !musicOn() && an && an.show && an.title ? an : null;
+    if (sp) return 'app:' + (sp.key || 0);
+    const list = musicOn() && !theirMusic() && filesOn() ? S.music.playlist : [], at = (S.nowPlaying || {}).index ?? -1;
+    return list.length && at >= 0 ? list[at] || '' : '';
+  }
+  // the "What's playing" palette follows it: each window reads the same cover, so every monitor gets the same colours
+  function syncContentPal() {
+    if (S.palette !== 'content') return;
+    const live = contentLive ? contentLive.url : '', p = live ? 'live:' + live : nowArtPath();
+    if (p === contentFor) return;
+    contentFor = p;
+    (live ? Promise.resolve(live) : artFor(p)).then((url) => (url ? coverColors(url) : null)).then((pal) => {
+      if (contentFor !== p || !pal || S.palette !== 'content') return;
+      if (contentHex && pal.join() === contentHex.join()) return;       // (a page that's still, or barely changed: nothing to ease to)
+      contentFrom = contentPal ? currentColors() : rgb('aurora'); contentPal = pal.map(hex); contentHex = pal; contentAt = performance.now();
+      syncUI();
+      setTimeout(() => { setAccent(); if (!live && panel.classList.contains('open')) makeThumbs(); }, 2100);       // (once it has eased in; not the tiles again every few seconds for a page)
+    });
+  }
+  // A cover blurred for the screen's backdrop (style.css .mbBackArt): drawn once into a 64 × 64 canvas with a blur, a little
+  // larger than it so the blur's soft edges fall outside, and kept as a small JPEG that the browser scales up across the screen.
+  const mbBack = mbEl.querySelector('.mbBackArt'), mbBlurs = new Map();       // cover URL -> its blurred copy ('' if it wouldn't load)
+  function coverBackdrop(url) {
+    if (mbBlurs.has(url)) return Promise.resolve(mbBlurs.get(url));
+    return new Promise((res) => {
+      const done = (b) => { mbBlurs.set(url, b); if (mbBlurs.size > 12) mbBlurs.delete(mbBlurs.keys().next().value); res(b); };
+      const img = new Image();
+      img.onerror = () => done('');
+      img.onload = () => {
+        try {
+          const c = document.createElement('canvas'); c.width = c.height = 64;
+          const g = c.getContext('2d'); g.filter = 'blur(3px) saturate(1.2)'; g.drawImage(img, -10, -10, 84, 84);
+          done(c.toDataURL('image/jpeg', 0.9));
+        } catch { done(''); }
+      };
+      img.src = url;
+    });
+  }
+  // A cover's colours, for Media's screen (--mbr0..3, which style.css tones down until something plays, as it does the palette's):
+  // its strongest colour for the lights and the glow, one of another hue for the second light, and two darks of the first for
+  // the background. Read once per cover, from a 32 × 32 copy of it. Only setting them has the screen painted again: once a song.
+  let tintFor = '';
+  function tintFrom(url) {
+    if (url === tintFor) return;
+    tintFor = url;
+    if (!url) { if (coverPal) { coverPal = null; setAccent(); } return; }
+    coverColors(url).then((pal) => { if (tintFor === url) { coverPal = pal; setAccent(); } });
+  }
+  function coverColors(url) {
+    const hsl = (r, g, b) => {
+      r /= 255; g /= 255; b /= 255;
+      const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn;
+      if (!d) return [0, 0, l];
+      const s = d / (1 - Math.abs(2 * l - 1)), h = mx === r ? ((g - b) / d + 6) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+      return [h / 6, s, l];
+    };
+    const hex = (h, s, l) => {
+      const f = (n) => { const k = (n + h * 12) % 12, a = s * Math.min(l, 1 - l); return Math.round(255 * (l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)))).toString(16).padStart(2, '0'); };
+      return '#' + f(0) + f(8) + f(4);
+    };
+    const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+    return new Promise((res) => {
+      const img = new Image();
+      img.onerror = () => res(null);
+      img.onload = () => {
+        try {
+          const c = document.createElement('canvas'); c.width = c.height = 32;
+          const g = c.getContext('2d', { willReadFrequently: true }); g.drawImage(img, 0, 0, 32, 32);
+          const d = g.getImageData(0, 0, 32, 32).data, bins = Array.from({ length: 12 }, () => ({ w: 0, h: 0, s: 0, l: 0 }));
+          for (let i = 0; i < d.length; i += 4) {
+            const [h, s, l] = hsl(d[i], d[i + 1], d[i + 2]);
+            if (s < 0.18 || l < 0.08 || l > 0.94) continue;       // greys, near-black and near-white say nothing of its colour
+            const w = s * (1 - Math.abs(l - 0.5)), bin = bins[Math.floor(h * 12) % 12];       // (vivid mid-tones count most)
+            bin.w += w; bin.h += h * w; bin.s += s * w; bin.l += l * w;
+          }
+          const top = bins.map((x, i) => ({ ...x, i })).filter((x) => x.w > 0).sort((a, b) => b.w - a.w);
+          if (!top.length || top[0].w < 3) { res(['#07080a', '#262a30', '#9aa3ad', '#eef1f4']); return; }       // a cover with no colour to speak of: greys
+          const one = top[0], h1 = one.h / one.w, s1 = one.s / one.w, l1 = one.l / one.w;
+          const far = top.find((x) => Math.min(Math.abs(x.i - one.i), 12 - Math.abs(x.i - one.i)) >= 2 && x.w >= one.w * 0.2);       // another hue, 60° or more away
+          const h2 = far ? far.h / far.w : (h1 + 0.1) % 1, s2 = far ? far.s / far.w : s1;
+          res([hex(h1, Math.min(s1, 0.5), 0.05), hex(h1, Math.min(s1, 0.6), 0.2), hex(h1, clamp(s1, 0.45, 0.9), clamp(l1, 0.5, 0.65)), hex(h2, clamp(s2, 0.4, 0.85), 0.72)]);
+        } catch { res(null); }
+      };
+      img.src = url;
+    });
+  }
+  // Three scenes side by side, the camera panning between them with the arrows at the screen's edges: the song's numbers on the
+  // left (mbStats: Deezer), the song in the middle, and who sings it on the right (mbBio: Wikipedia's page on the artist, or a
+  // band's lead singer, main.js artistBio). The links open their pages in Surf. A new song brings its own; a scene with nothing
+  // to show loses its arrow, and the camera comes back to the song. (Tour dates, set aside: docs/plans/tour-dates.md)
+  const mbWorldCard = mbEl.querySelector('.mbCard'), mbBioEl = mbEl.querySelector('.mbBio'), mbNumsEl = mbEl.querySelector('.mbNums'), mbSongWiki = mbEl.querySelector('.mbInfo .mbWiki');
+  const mbPanR = mbEl.querySelector('.mbPan.r'), mbPanL = mbEl.querySelector('.mbPan.l');
+  let mbBioFor = null, mbBioNow = null, mbStatsNow = null, mbScene = 'song';
+  mbBioEl.inert = mbNumsEl.inert = true;
+  const panBtn = (b, label, aria) => { b.hidden = !label; b.querySelector('span').textContent = label || ''; b.setAttribute('aria-label', aria || label || ''); };
+  function mbPan(to) {
+    if ((to === 'bio' && !mbBioNow) || (to === 'nums' && !mbStatsNow)) to = 'song';
+    if (to === 'nums' && mbScene !== 'nums') for (const c of mbNumsEl.querySelectorAll('.mbNum')) { c.style.animation = 'none'; void c.offsetWidth; c.style.animation = ''; }       // (the cards come in again as the camera arrives)
+    mbScene = to;
+    mbEl.classList.toggle('bio', to === 'bio'); mbEl.classList.toggle('nums', to === 'nums');
+    for (const [el, s] of [[mbWorldCard, 'song'], [mbBioEl, 'bio'], [mbNumsEl, 'nums']]) { el.inert = to !== s; el.setAttribute('aria-hidden', String(to !== s)); }
+    if (to === 'song') { panBtn(mbPanR, mbBioNow && mbBioNow.name, mbBioNow && `About ${mbBioNow.name}`); panBtn(mbPanL, mbStatsNow && 'By the numbers'); }
+    else if (to === 'bio') { panBtn(mbPanR, ''); panBtn(mbPanL, 'The song'); }
+    else { panBtn(mbPanR, 'The song'); panBtn(mbPanL, ''); }
+  }
+  mbPanR.addEventListener('click', () => mbPan(mbScene === 'song' ? 'bio' : 'song'));
+  mbPanL.addEventListener('click', () => mbPan(mbScene === 'song' ? 'nums' : 'song'));
+  function mbBio(artist) {
+    if (artist === mbBioFor) return;
+    mbBioFor = artist; showBio(null);
+    if (artist) api.artistBio(artist).then((b) => { if (mbBioFor === artist) showBio(b); }).catch(() => {});
+  }
+  function showBio(b) {
+    mbBioNow = b || null;
+    mbSongWiki.hidden = !b;
+    if (b) mbSongWiki.querySelector('span').textContent = `${b.band || b.name} on Wikipedia`;
+    if (b) {
+      mbBioEl.querySelector('.mbBioKick').textContent = b.band ? `Lead singer of ${b.band}` : 'About the artist';
+      mbBioEl.querySelector('.mbBioName').textContent = b.name;
+      mbBioEl.querySelector('.mbBioDesc').textContent = b.desc;
+      mbBioEl.querySelector('.mbAbout').textContent = b.about;
+      mbBioEl.querySelector('.mbPicName').textContent = b.band || b.name;
+      const pic = mbBioEl.querySelector('.mbPic'), port = mbBioEl.querySelector('.mbPortrait');
+      pic.style.backgroundImage = b.pic ? `url("${b.pic}")` : '';
+      pic.classList.toggle('on', !!b.pic);
+      port.querySelector('.mbInitials')?.remove();
+      if (!b.pic) port.prepend(Object.assign(document.createElement('div'), { className: 'mbInitials', textContent: b.name.split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase() }));
+    }
+    mbPan(mbScene);       // (no page: back to the song)
+    setMbNote();
+  }
+  // The line under the artist: what Wikipedia says of the song (main.js songAbout), else of the singer (the bio's first sentence
+  // or two), else how it's playing (mbNoteBase, from syncMediaBack). Each fills in as its answer comes.
+  let mbNoteBase = '', mbSongFor = null, mbSongText = '';
+  function mbSongNote(title, artist) {
+    const k = title && artist ? title + '\n' + artist : '';
+    if (k === mbSongFor) return;
+    mbSongFor = k; mbSongText = '';
+    if (k) api.songAbout(title, artist).then((t) => { if (mbSongFor === k) { mbSongText = t || ''; setMbNote(); } }).catch(() => {});
+  }
+  // The scene at the left, the song by the numbers, from Deezer (main.js deezerStats): how popular it is there, its artist's fans,
+  // when it came out, where it sits on its album, its genre, its length and, when Deezer knows it, its tempo. Each a card. A song
+  // Deezer doesn't have has no arrow to it.
+  let mbStatsFor = null;
+  function mbStats(title, artist) {
+    const k = title && artist ? title + '\n' + artist : '';
+    if (k === mbStatsFor) return;
+    mbStatsFor = k;
+    if (!k) { drawStats(null); return; }
+    mbNumsEl.querySelector('.mbNumsGrid').replaceChildren();       // (the next song's: the camera stays where it is till they come, or don't)
+    api.songStats(title, artist).then((s) => { if (mbStatsFor === k) drawStats(s, title, artist); }).catch(() => { if (mbStatsFor === k) drawStats(null); });
+  }
+  function drawStats(s, title, artist) {
+    mbStatsNow = s || null;
+    const grid = mbNumsEl.querySelector('.mbNumsGrid'), dz = mbNumsEl.querySelector('.mbDz');
+    dz.hidden = !(s && s.link);
+    if (!s) { grid.replaceChildren(); mbPan(mbScene); return; }
+    mbNumsEl.querySelector('.mbNumsTitle').textContent = title;
+    mbNumsEl.querySelector('.mbNumsArtist').textContent = artist;
+    const el = (tag, cls, text) => Object.assign(document.createElement(tag), { className: cls || '', textContent: text || '' });
+    const card = (label, value, under, wide) => {
+      const c = el('div', 'mbNum' + (wide ? ' wide' : ''));
+      c.append(el('small', '', label), typeof value === 'string' ? el('b', '', value) : value);
+      if (under) c.append(typeof under === 'string' ? el('span', '', under) : under);
+      return c;
+    };
+    const out = [];
+    if (s.rank) {       // (Deezer's rank runs to a million: shown out of 100)
+      const bar = el('span', 'mbMeter'), fill = el('i');
+      fill.style.width = Math.max(3, Math.min(100, s.rank / 10000)).toFixed(1) + '%'; bar.append(fill);
+      out.push(card('Popularity on Deezer', `${Math.max(1, Math.round(s.rank / 10000))} / 100`, bar, true));
+    }
+    if (s.fans) out.push(card('Fans', new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(s.fans), s.albums > 1 ? `${s.albums} albums on Deezer` : ''));
+    if (/^\d{4}-\d\d-\d\d$/.test(s.released)) {
+      const [y, m, d] = s.released.split('-').map(Number), at = new Date(y, m - 1, d), yrs = Math.floor((Date.now() - at) / (365.25 * 864e5));
+      out.push(card('Released', at.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }), yrs >= 1 ? new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' }).format(-yrs, 'year') : 'This year'));
+    }
+    if (s.albumType === 'single' || s.of === 1) out.push(card('Released as', 'Single', s.album));
+    else if (s.pos && s.of) out.push(card(s.albumType === 'ep' ? 'On the EP' : 'On the album', `${s.pos} of ${s.of}`, s.album));
+    if (s.genre) out.push(card('Genre', s.genre));
+    if (s.duration) out.push(card('Length', `${Math.floor(s.duration / 60)}:${String(s.duration % 60).padStart(2, '0')}`));
+    if (s.bpm) out.push(card('Tempo', `${s.bpm} BPM`));
+    out.forEach((c, i) => c.style.setProperty('--i', i));
+    grid.replaceChildren(...out);
+    mbPan(mbScene);       // (its arrow: there are numbers now)
+  }
+  mbNumsEl.querySelector('.mbDz').addEventListener('click', (e) => { e.preventDefault(); if (mbStatsNow && mbStatsNow.link) surf('go', { text: mbStatsNow.link }); });
+  const firstWords = (s) => { const m = /^[\s\S]{40,260}?[.!?](?=\s+[A-Z]|$)/.exec(s || ''); return m ? m[0] : (s || '').length > 260 ? s.slice(0, 260).replace(/\s+\S*$/, '') + '…' : s || ''; };
+  function setMbNote() {
+    const el = mbEl.querySelector('.mbNote'), t = mbSongText || (mbBioNow && mbSongFor ? firstWords(mbBioNow.about) : '') || mbNoteBase;
+    if (el.textContent !== t) el.textContent = t;
+  }
+  mbSongWiki.addEventListener('click', (e) => { e.preventDefault(); if (mbBioNow) surf('go', { text: mbBioNow.bandUrl || mbBioNow.url }); });
+  mbBioEl.querySelector('.mbWiki').addEventListener('click', (e) => { e.preventDefault(); if (mbBioNow) surf('go', { text: mbBioNow.url }); });
   function syncMediaBack() {
     const surfUp = document.body.classList.contains('web');
     if (surfUp) screenTab = 'surf'; else if (bcHere()) screenTab = 'broadcast';       // (put up some other way: a link, a friend's broadcast)
@@ -813,21 +1049,24 @@
     const on = screenTab === 'media' && !videoOn() && !surfUp && !bcHere();
     if (on !== mbOn) { mbOn = on; mbEl.classList.toggle('on', on); }
     if (!on) return;
-    // a video playing on another monitor shares the GPU with this screen: its drifting lights hold still meanwhile (style.css .rest)
+    // a video playing on another monitor shares the GPU with this screen: its drifting lights hold still meanwhile (tickMediaBack)
     const vidElsewhere = S.mode === 'mix' && !!S.videoUrl && !S.video.paused && Object.entries(S.perDisplay || {}).some(([k, v]) => k !== me.key && v === 'video');
     mbEl.classList.toggle('rest', vidElsewhere);
-    const tm = theirMusic(), music = musicOn();
-    const title = tm ? (tm.src === 'files' ? tm.title || 'Music' : (PRESETS.find((x) => x.id === tm.preset) || { name: 'Ambient' }).name) : (S.nowPlaying || {}).title || 'Music';
-    const artist = !music ? '' : tm ? (tm.src === 'files' ? tm.artist || '' : '') : (S.nowPlaying || {}).artist || '';
+    // another app's song (Spotify, Apple Music, a browser...: main.js appNowWatch) when none of Drift's own is on and it has played (appNowShown)
+    const tm = theirMusic(), an = S.appNow, sp = !musicOn() && an && an.show && an.title ? an : null, music = musicOn() || !!sp;
+    const playingNow = sp ? !!sp.playing : musicPlaying();
+    const title = sp ? sp.title : tm ? (tm.src === 'files' ? tm.title || 'Music' : (PRESETS.find((x) => x.id === tm.preset) || { name: 'Ambient' }).name) : (S.nowPlaying || {}).title || 'Music';
+    const artist = !music ? '' : sp ? sp.artist || '' : tm ? (tm.src === 'files' ? tm.artist || '' : '') : (S.nowPlaying || {}).artist || '';
     const list = !tm && filesOn() ? S.music.playlist : [], at = (S.nowPlaying || {}).index ?? -1;
-    sleeveArt(music && list.length && at >= 0 ? list[at] || '' : '');
-    const k = JSON.stringify([music, title, artist, musicPlaying(), !!tm, at, list.length, !!S.music.shuffle]);
+    sleeveArt(sp ? 'app:' + (sp.key || 0) : music && list.length && at >= 0 ? list[at] || '' : '');
+    mbBio(artist);
+    const k = JSON.stringify([music, title, artist, playingNow, !!tm, !!sp, sp && sp.album, sp && sp.app, sp && spLead(), at, list.length, !!S.music.shuffle]);
     if (k === mbKey) return;
     mbKey = k;
     mbEl.classList.toggle('music', music);
     if (!music) mbSleeve.style.rotate = '';       // (the lean is only while music plays: tickMediaBack)
     mbEl.querySelector('.mbArtist').textContent = artist;
-    mbEl.classList.toggle('playing', music && musicPlaying());
+    mbEl.classList.toggle('playing', music && playingNow);
     // the sleeve's art: where its two lights sit and which way it's lit, from the title, so each song has its own cover
     let hh = 7; for (const ch of music ? title : '') hh = (Math.imul(hh, 31) + ch.charCodeAt(0)) >>> 0;
     const r = (n) => { hh = (Math.imul(hh ^ (hh >>> 15), 2246822507) + n) >>> 0; return (hh % 1000) / 1000; };
@@ -836,8 +1075,8 @@
     sl.setProperty('--bx', (52 + r(3) * 40).toFixed(1) + '%'); sl.setProperty('--by', (55 + r(4) * 40).toFixed(1) + '%');
     sl.setProperty('--rot', Math.round(110 + r(5) * 140) + 'deg');
     const two = (n) => String(n).padStart(2, '0');
-    mbEl.querySelector('.mbNo').textContent = !music ? 'Drift · Media' : list.length && at >= 0 ? `Track ${two(at + 1)} / ${two(list.length)}` : tm ? 'Listening along' : 'Ambient';
-    mbEl.querySelector('.mbKickTxt').textContent = music ? (musicPlaying() ? 'Now playing' : 'Paused') : 'Media';
+    mbEl.querySelector('.mbNo').textContent = !music ? 'Drift · Media' : sp ? sp.album || sp.app || 'Music' : list.length && at >= 0 ? `Track ${two(at + 1)} / ${two(list.length)}` : tm ? 'Listening along' : 'Ambient';
+    mbEl.querySelector('.mbKickTxt').textContent = music ? (playingNow ? (sp && sp.app ? `Now playing on ${sp.app}` : 'Now playing') : 'Paused') : 'Media';
     mbEl.querySelector('.mbTitle').textContent = music ? title : 'Nothing playing';
     const next = mbEl.querySelector('.mbNext');
     if (!music || !list.length || at < 0 || list.length < 2) next.replaceChildren();
@@ -851,8 +1090,12 @@
       }
       next.replaceChildren(Object.assign(document.createElement('h4'), { textContent: 'Up next' }), ...rows);
     }
-    mbEl.querySelector('.mbNote').textContent = music ? (tm ? `${(S.p2p || {}).host || 'Your friend'}'s music, playing along with you` : 'Songs in the same folder play one after another. Pick a video to watch it here.')
+    mbSongNote(music && !tm ? title : '', music && !tm ? artist : '');
+    mbStats(music && !tm ? title : '', music && !tm ? artist : '');
+    mbNoteBase = music ? (sp ?`Playing in ${sp.app || 'another app'}.${spLead() ? ' The toolbar\'s controls are Spotify\'s while it plays.' : ''} Pick a song or a video to play one of yours here instead.`
+      : tm ? `${(S.p2p || {}).host || 'Your friend'}'s music, playing along with you` : 'Songs in the same folder play one after another. Pick a video to watch it here.')
       : 'Pick a video or a song in the panel to play it on this screen.';
+    setMbNote();
   }
   // Each frame while it's up, the music moves it the way it moves the scenes: the bass swells the light behind it and the treble
   // the other light (uAudio), each beat kicks the sleeve, lifts the bars and washes light up from the floor (uBeat), a ring leaves
@@ -871,10 +1114,32 @@
       m.aim[1] = Math.max(-1, Math.min(1, (e.clientY - (r.top + r.height / 2)) / (innerHeight / 2)));
     }
   });
+  let mbDrift = 0; const mbAt = ['', ''];
+  const mbEqBars = [...mbEl.querySelectorAll('.mbEq i')], mbEqAt = ['', '', ''], MB_EQ = [[0, 8], [8, 24], [24, 48]];       // (the spectrum's 64 bands, low to high: which each bar follows)
+  const thereAndBack = (t, secs) => { const p = (t / secs) % 2, x = p < 1 ? p : 2 - p; return x * x * (3 - 2 * x); };       // 0 → 1 → 0, eased (as CSS's ease-in-out alternate)
   function tickMediaBack() {
-    if (!mbOn || !mbEl.classList.contains('music')) return;
+    if (!mbOn) return;
+    const now = performance.now(), dt = Math.min(0.1, (now - (mbT || now)) / 1000); mbT = now;
+    // the lights drift slowly about, there and back over 38 s and 46 s (here, not a CSS animation: that ran at the monitor's rate
+    // whatever the frame cap), a whole pixel at a time: a few steps a second, where a fraction of one each frame had it all drawn
+    // again for nothing. Resting (a video playing on another monitor: syncMediaBack) they hold where they are.
+    if (!stillMotion.matches && !mbEl.classList.contains('rest')) {
+      mbDrift += dt;
+      const vm = Math.max(innerWidth, innerHeight) / 100, a = thereAndBack(mbDrift, 38), b = thereAndBack(mbDrift, 46);
+      const ta = `${Math.round(14 * a * vm)}px ${Math.round(10 * a * vm)}px`, tb = `${Math.round(-12 * b * vm)}px ${Math.round(-8 * b * vm)}px`;
+      if (ta !== mbAt[0]) mbOrbs[0].style.translate = mbAt[0] = ta;
+      if (tb !== mbAt[1]) mbOrbs[1].style.translate = mbAt[1] = tb;
+    }
+    if (!mbEl.classList.contains('music')) return;
     for (let i = 0; i < 32; i++) { const t = `scaleY(${(0.02 + 0.98 * Math.min(1, (specNow[i * 2] + specNow[i * 2 + 1]) / 510)).toFixed(3)})`; mbBars[31 - i].style.transform = t; mbBars[32 + i].style.transform = t; }
-    const playing = mbEl.classList.contains('playing'), now = performance.now(), dt = Math.min(0.1, (now - (mbT || now)) / 1000); mbT = now;
+    const playing = mbEl.classList.contains('playing');
+    // the equaliser beside "Now playing": the lows, the mids and the highs, a quarter of its height to all of it (each written only when it changes)
+    const eqOn = playing && !stillMotion.matches;
+    for (let k = 0; k < 3; k++) {
+      let t = '';
+      if (eqOn) { const [a, b] = MB_EQ[k]; let s = 0; for (let i = a; i < b; i++) s += specNow[i]; t = `scaleY(${(0.25 + 0.75 * Math.min(1, s / (b - a) / 200)).toFixed(2)})`; }
+      if (t !== mbEqAt[k]) mbEqBars[k].style.transform = mbEqAt[k] = t;
+    }
     const ages = beats.map((b) => (b && playing ? (Date.now() - b) / 1000 : 99)), beat = Math.exp(-ages[0] * 4) * Math.min(1, S.reactivity);
     const lo = Math.min(1.5, audio[0]), mid = Math.min(1.5, audio[1]), hi = Math.min(1.5, audio[2]);
     // set on the elements that use them, as scale and opacity: a custom property on #mediaBack had every style under it worked out again each frame
@@ -902,7 +1167,7 @@
     const dA = aTime - mbAT; mbAT = aTime;
     if (playing && !stillMotion.matches) { mbSpin = (mbSpin + dt * 200 + Math.max(0, Math.min(1, dA)) * 140) % 360; mbLabel.style.setProperty('--spin', mbSpin.toFixed(1) + 'deg'); }
   }
-  window.appUI = { tab: () => tab, setTab: (t) => { if (panel.classList.contains('open')) setTab(t); else { tab = t; if (!SIDE_TABS.includes(t)) screenTab = t; tellTab(); syncUI(); } }, open: () => panel.classList.contains('open'), key: me.key };       // (a closed panel stays closed)       // (broadcast.js: its tab comes and goes)
+  window.appUI = { tab: () => tab, setTab: (t) => { if (panel.classList.contains('open')) setTab(t); else { tab = t; if (!SIDE_TABS.includes(t)) screenTab = t; pickScreen(t); tellTab(); syncUI(); } }, open: () => panel.classList.contains('open'), key: me.key };       // (a closed panel stays closed)       // (broadcast.js: its tab comes and goes)
   panel.addEventListener('mouseenter', () => { overPanel = true; });
   panel.addEventListener('mouseleave', () => { overPanel = false; armHide(); });
   let lastMove = [0, 0];
@@ -915,6 +1180,7 @@
   addEventListener('mousedown', (e) => {
     if (e.target === vidEl || e.target === mirEl || (gpuEl && e.target === gpuEl) || surfBar.contains(e.target)) return;
     if ($('#bcView').contains(e.target)) { panel.classList.remove('open'); return; }       // the Broadcast scene's tiles and bar: a click is for them (it only puts the panel's page away)
+    if (e.target.closest('#mediaBack a, #mediaBack button')) return;       // the Media screen's links and arrows (mbPan)
     if (!panel.contains(e.target) && !confirmEl.contains(e.target) && !$('#mixer').contains(e.target)) { if (panel.classList.contains('open')) { panel.classList.remove('open'); } else showPanel(); } });
 
   const fill = (el) => el.style.setProperty('--fill', ((el.value - el.min) / (el.max - el.min)) * 100 + '%');
@@ -940,6 +1206,7 @@
   }
   new ResizeObserver(() => placeInk(true)).observe($('.tabGroup'));
   function syncUI() {
+    syncContentPal();
     setAccent();
     $('#cycleSecs').value = String(S.cycleSecs); $('#cycleSecs').disabled = S.palette !== 'cycle';
     $('#overlay').value = S.overlay; $('#algoInfo').checked = !!S.algoInfo;
@@ -955,6 +1222,7 @@
     $$('.sw').forEach((x) => x.classList.toggle('active', x.dataset.id === S.palette));
     const cc = customNow();
     $('.sw.cus').style.background = `linear-gradient(90deg,${cc.join(',')})`;
+    $('.sw.art').style.background = contentHex ? `linear-gradient(90deg,${contentHex.join(',')})` : '';       // (style.css's rainbow until a cover has been read)
     $('#customRow').classList.toggle('on', S.palette === 'custom');
     $$('#customRow input').forEach((el) => { if (document.activeElement !== el) el.value = cc[+el.dataset.i]; });
     $$('#mode button').forEach((x) => x.classList.toggle('active', x.dataset.v === S.mode));
@@ -980,6 +1248,11 @@
     $('#catCountRow').hidden = !S.catsUnlocked;
     $('#catName').textContent = S.catsUnlocked ? 'Summon the cats' : 'Summon the cat';
     for (const k of ['autoCycle', 'quality', 'fps']) $('#' + k).value = String(S[k]);
+    $('#surfFit').value = [...$('#surfFit').options].some((o) => o.value === S.surfFit) ? S.surfFit : 'own';       // (a monitor that's been unplugged: shown as the default)
+    const sbTheme = S.surfTheme || 'glass';       // Surf's bar wears its style as a class (style.css #surfBar.t-*)
+    $('#surfTheme').value = sbTheme;
+    for (const c of [...$('#surfBar').classList]) if (c.startsWith('t-') && c !== 't-' + sbTheme) $('#surfBar').classList.remove(c);
+    $('#surfBar').classList.add('t-' + sbTheme);
     for (const k of ['cycleShuffle', 'clock', 'breathing', 'cat', 'keepAwake', 'onTop', 'autoUpdate', 'surfGpu', 'ambientYields']) $('#' + k).checked = !!S[k];
     $('#hsCard').hidden = !S.hosting;       // the hub's Surf stream: its host's to set
     if (S.hubSurf) { $('#hsNoDl').checked = !!S.hubSurf.noDownloads; $('#hsSpecs').checked = !!S.hubSurf.showSpecs; $('#hsBrowsing').checked = !!S.hubSurf.showBrowsing; if (document.activeElement !== $('#hsLan')) $('#hsLan').value = S.hubSurf.allowLan || ''; }
@@ -1113,7 +1386,8 @@
     if (vidEl) vidEl.volume = mixSurf();       // the Surf stream: the mixer's Surf level here (it keeps playing on other tabs: decision §11.1)
     if (vidEl && live && (w.sid !== gsid || !gLive)) { gsid = w.sid; ask(); }       // a new page, or the connection came back
     gLive = live;
-    document.body.classList.toggle('web', (here && !!webEls.size) || (!!vidEl && here) || !!mirEl || !!gpuEl);
+    webUp = (here && !!webEls.size) || (!!vidEl && here) || !!mirEl || !!gpuEl;       // (each of them fills the screen, opaque: frame() stops drawing the scene under it)
+    document.body.classList.toggle('web', webUp);
     document.body.classList.toggle('surfing', here || mirroring);       // the bar: everyone can steer a hub's Surf stream
     syncSsLine(w, here);
     if (!here && !mirroring) surfBar.classList.remove('show');
@@ -1269,11 +1543,48 @@
   surfEdge.addEventListener('mouseenter', () => { surfBar.classList.add('show'); surfHideSoon(1500); });
   surfBar.addEventListener('mouseenter', () => { sbOver = true; surfBar.classList.add('show'); });
   surfBar.addEventListener('mouseleave', () => { sbOver = false; surfHideSoon(); });
-  const tabsHtml = (w, cls) => (w.tabs || []).map((t) => `<button class="${cls}${t.id === w.active ? ' active' : ''}" data-id="${t.id}" title="${esc(t.title)}"><span>${esc(t.title)}</span><i data-x="1" title="Close this tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" pointer-events="none"><path d="M7 7l10 10M17 7L7 17"/></svg></i></button>`).join('');
+  // A tab's icon: the site's own (web.js favicon, a small PNG), Drift's globe for the start page, or else the first letter of its
+  // name on a colour picked from it (the same on every PC)
+  const SB_GLOBE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.6 3.8 5.6 3.8 9s-1.2 6.4-3.8 9c-2.6-2.6-3.8-5.6-3.8-9s1.2-6.4 3.8-9z"/></svg>';
+  const SB_AUDIO = '<svg class="sbAud" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-label="Playing sound"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4.2 4.2 0 0 1 0 6M18 6.5a8 8 0 0 1 0 11"/></svg>';
+  function sbIcon(t) {
+    if (t.home) return SB_GLOBE;
+    if (t.icon && /^data:image\/png;base64,/.test(t.icon)) return `<img src="${t.icon}" alt="">`;
+    const name = String(t.title || '?').trim() || '?';
+    let h = 0; for (const ch of name) h = (h * 31 + ch.codePointAt(0)) % 360;
+    return `<b style="--h:${h}">${esc([...name][0])}</b>`;
+  }
+  const tabsHtml = (w) => (w.tabs || []).map((t) => `<button class="sbTab${t.id === w.active ? ' active' : ''}" data-id="${t.id}" title="${esc(t.title)}" role="tab" aria-selected="${t.id === w.active}">`
+    + `<span class="sbFav${t.loading ? ' spin' : ''}">${sbIcon(t)}</span><span class="sbTitle">${esc(t.title)}</span>${t.audible ? SB_AUDIO : ''}`
+    + `<i data-x="1" title="Close tab (Ctrl+W)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" pointer-events="none"><path d="M6 6l12 12M18 6L6 18"/></svg></i></button>`).join('');
+  // the address as a browser shows it until it's clicked: no https:// or www., the site bright and the rest of it dimmed
+  function sbPretty(url) {
+    let u; try { u = new URL(url); } catch { return ''; }
+    if (!/^https?:$/.test(u.protocol)) return '';
+    const host = u.host.replace(/^www\./, ''), rest = (u.pathname === '/' ? '' : u.pathname) + u.search + u.hash;
+    return `${u.protocol === 'http:' ? '<span class="sbPath">http://</span>' : ''}<b>${esc(host)}</b><span class="sbPath">${esc(rest)}</span>`;       // (the Minimal style shows the site alone)
+  }
+  const SB_CHIP = {
+    search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.4-4.4"/></svg>',
+    lock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10.5" width="14" height="10" rx="2.2"/><path d="M8.5 10.5V7.5a3.5 3.5 0 0 1 7 0v3"/></svg>',
+    warn: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4l9 16H3z"/><path d="M12 10v4.5M12 17.4v.1"/></svg>',
+    ext: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>',
+  };
+  let sbChipKey = '';
   function syncSurfBar() {
     const w = S.web || {}, k = JSON.stringify([w.tabs, w.active]);
-    if (k !== sbKey) { sbKey = k; $('#sbTabs').innerHTML = tabsHtml(w, 'sbTab glass') + '<button class="sbAdd glass round" data-new="1" title="New tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>'; }
+    if (k !== sbKey) { sbKey = k; $('#sbTabs').innerHTML = tabsHtml(w) + '<button class="sbAdd" data-new="1" title="New tab (Ctrl+T)" aria-label="New tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>'; }
     $('#sbBack').classList.toggle('off', !w.back); $('#sbFwd').classList.toggle('off', !w.fwd);
+    const front = (w.tabs || []).find((t) => t.id === w.active) || {}, busy = !!front.loading && !w.out;
+    const rb = $('#sbReload');       // reload, or stop while the page is loading
+    rb.classList.toggle('stop', busy); rb.title = busy ? 'Stop loading this page' : 'Reload (Ctrl+R)'; rb.setAttribute('aria-label', busy ? 'Stop' : 'Reload');
+    surfBar.classList.toggle('loading', busy);
+    // what kind of page it is, at the start of the address bar: the start page (a search), a secure page, one that isn't, or one open in the PC's browser
+    const raw = w.url || '', isHome = /^drift:\/\/home\//i.test(raw) || !raw;
+    const chip = w.out ? ['ext', `In ${w.out}`, `Open in ${w.out}`] : isHome ? ['search', '', 'Search the web or type an address']
+      : /^https:/i.test(raw) ? ['lock', '', 'Connection is secure'] : /^http:/i.test(raw) ? ['warn', 'Not secure', 'Your connection to this site is not secure'] : ['search', '', ''];
+    const ck = chip.join('|');
+    if (ck !== sbChipKey) { sbChipKey = ck; const c = $('#sbChip'); c.className = 'sbChip' + (chip[0] === 'warn' ? ' warn' : chip[0] === 'ext' ? ' ext' : ''); c.innerHTML = SB_CHIP[chip[0]] + (chip[1] ? `<span>${esc(chip[1])}</span>` : ''); c.title = chip[2]; }
     const ob = $('#sbOut');       // open the page in the PC's own browser: for the host, when there is one
     ob.hidden = !!w.stream || !w.ext;
     ob.title = w.out ? `Open in ${w.out}: close its window to come back to Surf` : `Open this page in ${w.ext || 'your browser'} (for sign-ins Surf can't do, like Google). Friends watch it but can't click in it`;
@@ -1284,6 +1595,9 @@
     mb.title = S.surfMirror ? 'Showing this page on your other monitors too. Click to stop' : 'Show this page on your other monitors too';
     const u = $('#sbUrl'), url = /^drift:\/\/home\//i.test(w.url || '') ? '' : w.url || '';       // Drift's start page: an empty box to type in
     if (document.activeElement !== u && u.value !== url) u.value = url;
+    const view = $('#sbUrlView'), pretty = w.out ? '' : sbPretty(url);
+    if (view.dataset.k !== pretty) { view.dataset.k = pretty; view.innerHTML = pretty; }
+    $('#sbOmni').classList.toggle('pretty', !!pretty);
   }
   const tabClick = (e) => {
     const b = e.target.closest('[data-id]');
@@ -1294,7 +1608,8 @@
   $('#sbTabs').addEventListener('auxclick', (e) => { const b = e.target.closest('[data-id]'); if (b && e.button === 1) surf('close', { id: +b.dataset.id }); });       // middle click closes
   $('#sbBack').addEventListener('click', () => surf('back'));
   $('#sbFwd').addEventListener('click', () => surf('fwd'));
-  $('#sbReload').addEventListener('click', () => surf('reload'));
+  $('#sbReload').addEventListener('click', (e) => surf(e.currentTarget.classList.contains('stop') ? 'stop' : 'reload'));
+  $('#sbTabs').addEventListener('dblclick', (e) => { if (e.target === e.currentTarget) { surf('new'); $('#sbUrl').value = ''; $('#sbUrl').focus(); } });       // the empty strip, as in a browser: a new tab
   $('#sbHome').addEventListener('click', () => surf('home'));
   $('#sbOut').addEventListener('click', () => { surf('outside'); surfHideSoon(300); });
   $('#sbMirror').addEventListener('click', () => api.patch({ surfMirror: !S.surfMirror }));
@@ -1593,6 +1908,19 @@
   const bcAt = (e) => { const b = bcBox(); if (!b) return null; const x = (e.clientX - b.l) / b.w, y = (e.clientY - b.t) / b.h; return x >= 0 && x <= 1 && y >= 0 && y <= 1 ? { x, y } : null; };
   let bcPtrAt = 0, bcPtrSent = false, bcPingAt = 0;
   const bcSharing = () => !!(bcFull && (bcInfo(bcFull) || {}).share);
+  // The "What's playing" colours: while the broadcast grid is on this screen, a small picture of the one watched full screen (or
+  // the first one with a picture) every few seconds, to main.js (content-pic-in), which hands it to every window
+  const bcPicCan = document.createElement('canvas'); bcPicCan.width = bcPicCan.height = 32;
+  setInterval(() => {
+    if (S.palette !== 'content' || !bcHere()) return;
+    const ok = (t) => t && ((t.vid && t.vid.videoWidth) || (t.img && t.img.complete && t.img.naturalWidth));
+    const tl = ok(bcTiles.get(bcFull)) ? bcTiles.get(bcFull) : [...bcTiles.values()].find(ok);
+    if (!tl) return;
+    try {
+      bcPicCan.getContext('2d').drawImage(tl.vid && tl.vid.videoWidth ? tl.vid : tl.img, 0, 0, 32, 32);
+      api.cmd({ type: 'content-pic-in', url: bcPicCan.toDataURL('image/jpeg', 0.85) });
+    } catch { /* a picture that can't be read back */ }
+  }, 4000);
   function bcPoint(e) {
     if (!bcSharing()) { if (selfCtx === 'bc') selfOff(); return; }
     const q = e && bcAt(e);
@@ -2327,6 +2655,8 @@
   $('#volume').addEventListener('input', (e) => { fill(e.target); P({ music: { volume: +e.target.value } }); });
   $$('[data-nature]').forEach((x) => x.addEventListener('input', () => { fill(x); P({ music: { nature: { [x.dataset.nature]: +x.value } } }); }));
   for (const k of ['autoCycle', 'quality', 'fps']) $('#' + k).addEventListener('change', (e) => P({ [k]: +e.target.value }));
+  $('#surfFit').addEventListener('change', (e) => P({ surfFit: e.target.value }));
+  $('#surfTheme').addEventListener('change', (e) => P({ surfTheme: e.target.value }));
   for (const k of ['cycleShuffle', 'clock', 'breathing', 'cat', 'keepAwake', 'onTop', 'autoUpdate', 'surfGpu', 'ambientYields']) $('#' + k).addEventListener('change', (e) => P({ [k]: e.target.checked }));
   $('#shuffle').addEventListener('change', (e) => P({ music: { shuffle: e.target.checked } }));
   // Settings → Updates: what the updater is doing, and the one button that does the next thing
@@ -2512,7 +2842,7 @@
     const what = e.currentTarget.dataset.what;
     if (what === 'video') api.cmd({ type: 'stop-video', key: me.key });
     else if (what === 'music') P({ music: { source: S.music.ambientOff ? 'off' : 'generative', playing: true } });       // (as Stop music does)
-    if (what) { screenTab = 'media'; syncUI(); }
+    if (what) { screenTab = 'media'; pickScreen('media'); syncUI(); }
   });
   $('#exit').addEventListener('click', askQuit);
   $('#confirmYes').addEventListener('click', () => { if (asking) asking.done(true); });
@@ -2602,7 +2932,7 @@
     }
     else if (k === ' ') { e.preventDefault(); ctxToggle(); }
     else if (k === 'n' || k === 'N') ctxStep(1);
-    else if (k === 'p' || k === 'P') { const ids = [...Object.keys(PALETTES), 'cycle', ...(Array.isArray(S.customColors) ? ['custom'] : [])]; const n = ids[(ids.indexOf(S.palette) + 1) % ids.length]; P({ palette: n }); toast(n === 'cycle' ? 'Colour cycle' : n === 'custom' ? 'Your colours' : PALETTES[n].name, 1200); }
+    else if (k === 'p' || k === 'P') { const ids = [...Object.keys(PALETTES), 'cycle', 'content', ...(Array.isArray(S.customColors) ? ['custom'] : [])]; const n = ids[(ids.indexOf(S.palette) + 1) % ids.length]; P({ palette: n }); toast(n === 'cycle' ? 'Colour cycle' : n === 'custom' ? 'Your colours' : PALETTES[n].name, 1200); }
     else if ((k === 's' || k === 'S') && videoOn()) { subAsk = true; api.cmd({ type: 'sub-toggle' }); }
     else if ((k === 'v' || k === 'V') && videoOn()) subCycle();
     else if ((k === 'z' || k === 'Z') && videoOn()) subNudge(-0.1);
@@ -2634,6 +2964,17 @@
     if (c.type === 'show-panel') { tab = c.tab === 'video' || c.tab === 'music' ? 'media' : c.tab; tellTab(); showPanel(true); clearTimeout(hideTimer); syncUI(); }
     else if (c.type === 'toast') { if (isCenter || panel.classList.contains('show')) toast(c.text, Math.max(3200, Math.min(9000, c.text.length * 70))); }     // one screen is enough
     else if (c.type === 'media-ask') askMedia(c);
+    else if (c.type === 'content-pic') {       // the Surf page's or a broadcast's picture, for the "What's playing" colours (main.js contentTick)
+      if ((contentLive ? contentLive.url : '') === (c.url || '')) return;
+      contentLive = c.url ? { from: c.from, url: c.url } : null;
+      syncContentPal();
+    }
+    else if (c.type === 'screen-pick') {       // Mirror: Scenes or Media was picked on another monitor (pickScreen): this one shows it too
+      if (S.mode !== 'mirror') return;
+      screenTab = c.tab;
+      if (tab !== c.tab && !SIDE_TABS.includes(tab)) { tab = c.tab; tellTab(); }       // (the panel follows, unless it's on Hub or Settings)
+      syncUI();
+    }
     else if (c.type === 'ask-quit') { if (asking && asking.quit) api.cmd({ type: 'quit' }); else askQuit(); }       // (asked twice: Alt+F4 again closes)
     else if (c.type === 'rtc') onRtc(c);
     else if (c.type === 'ss-rtc') { if (c.d && typeof c.d === 'object') ssRtc(c.d).catch((e) => console.log('Surf stream set-up: ' + e.message)); }

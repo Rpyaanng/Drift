@@ -15,7 +15,7 @@
 // keeps running whether or not any window of this PC shows it, and is captured from the page itself to stream to the hub's
 // members. Everyone in the hub can drive it, so its profile refuses what would happen on this PC instead of theirs: pop-up
 // windows, file pickers, page dialogs, permissions, this PC's own network (surf-lan.js), and downloads the host hasn't agreed to.
-const { app, session, ipcMain, webContents, BrowserWindow, sharedTexture, screen } = require('electron');
+const { app, session, ipcMain, webContents, BrowserWindow, sharedTexture, screen, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -78,6 +78,7 @@ const browsers = new Map();       // session -> { scriptlets(e, url), gain(), no
 ipcMain.on('surf-scriptlets', (e, u) => { const b = browsers.get(e.sender.session); if (b) b.scriptlets(e, u); else e.returnValue = ''; });
 ipcMain.on('surf-gain', (e) => { const b = browsers.get(e.sender.session); e.returnValue = b ? b.gain() : 1; });
 ipcMain.on('surf-hub-note', (e, what) => { const b = browsers.get(e.sender.session); if (b && b.note) b.note(e.sender, String(what || '').slice(0, 20)); });       // (surf-hub-guard.js)
+ipcMain.on('surf-video', (e, m) => { const b = browsers.get(e.sender.session); if (b && b.video && m && typeof m === 'object') b.video(e.sender, { playing: m.playing === true, more: typeof m.more === 'boolean' ? m.more : undefined }); });       // (surf-frames.js)
 let uaSet = false;
 
 // hooks (all supplied by the main process):
@@ -167,13 +168,18 @@ module.exports = function createWeb(hooks, opts = {}) {
         new Promise((r) => setTimeout(() => r(''), 3000)),       // (a page isn't held up for long)
       ]).then((c) => { e.returnValue = typeof c === 'string' ? c : ''; }, () => { e.returnValue = ''; });
     };
-    browsers.set(ses, { scriptlets, gain, note: headless ? (_wc, what) => { if (hooks.note) hooks.note(what); } : null });
+    // video: a page of one of this browser's tabs says a video in it plays (surf-frames.js). The PC's own Surf only: the hub's draws
+    // for its stream, which reaches this PC's monitors as a video of Drift's own.
+    const video = headless ? null : (wc, m) => { if (hooks.video && tabs.some((t) => live(t) && t.wc === wc)) hooks.video(m); };
+    browsers.set(ses, { scriptlets, gain, note: headless ? (_wc, what) => { if (hooks.note) hooks.note(what); } : null, video });
     ses.registerPreloadScript({ type: 'frame', id: 'drift-scriptlets', filePath: path.join(__dirname, 'surf-scriptlets.js') });
     // In every page and frame: password boxes can't be turned into plain text, so nobody watching can read a password (see surf-guard.js)
     ses.registerPreloadScript({ type: 'frame', id: 'drift-password-guard', filePath: path.join(__dirname, 'surf-guard.js') });
     ses.registerPreloadScript({ type: 'frame', id: 'drift-select', filePath: path.join(__dirname, 'surf-select.js') });       // (does nothing outside offscreen pages)
     // The volume mixer's Surf level, in every page and frame (see surf-volume.js): asked for as each one starts, and sent on when it changes
     ses.registerPreloadScript({ type: 'frame', id: 'drift-volume', filePath: path.join(__dirname, 'surf-volume.js') });
+    // A video playing in a page, and its frames coming late (see surf-frames.js): Drift's other screens then go easier on the GPU
+    if (!headless) ses.registerPreloadScript({ type: 'frame', id: 'drift-frames', filePath: path.join(__dirname, 'surf-frames.js') });
     if (headless) {
       // The hub's browser: no file pickers or page dialogs (they'd open on this PC's screen, where nobody else can answer them),
       // and a note the first time someone types into a password box (see surf-hub-guard.js)
@@ -282,6 +288,28 @@ module.exports = function createWeb(hooks, opts = {}) {
       page.on('will-navigate', (e, u) => { if (!isPage(u)) e.preventDefault(); });
     });
   }
+  // A tab's icon, for its place in the bar: fetched through the page's own session (its proxy and network guard apply) and made a
+  // small PNG, so Drift's windows show it without loading anything from the site (their CSP allows data: pictures only), and the
+  // hub's watchers get it in the stream's state. Pictures nativeImage can't read (SVG icons) leave the tab its letter.
+  async function favicon(t, page, urls) {
+    const list = (urls || []).filter((u) => isWeb(u)).sort((a, b) => /\.svg(\?|$)/i.test(a) - /\.svg(\?|$)/i.test(b));
+    for (const u of list.slice(0, 3)) {
+      try {
+        const r = await page.session.fetch(u, { signal: AbortSignal.timeout(5000) });
+        if (!r.ok) continue;
+        const buf = Buffer.from(await r.arrayBuffer());
+        if (buf.length > 512 * 1024) continue;
+        let img = nativeImage.createFromBuffer(buf);
+        if (img.isEmpty()) continue;
+        if (img.getSize().width > 32) img = img.resize({ width: 32, height: 32, quality: 'best' });
+        const png = img.toPNG();
+        if (png.length > 8192 || t.wc !== page) return;
+        const icon = 'data:image/png;base64,' + png.toString('base64');
+        if (icon !== t.icon) { t.icon = icon; hooks.changed(); }
+        return;
+      } catch { /* the next one, if there is one */ }
+    }
+  }
   // The window says which tab a page it made is for.
   function attached(hostWc, tabId, wcId, tries = 10) {
     const f = fresh.get(wcId), t = tabs.find((x) => x.id === tabId);
@@ -306,7 +334,13 @@ module.exports = function createWeb(hooks, opts = {}) {
     const ready = () => { if (!mine() || t.ready || !isPage(page.getURL())) return; t.ready = true; if (t.id === active) restream(); };       // its first real page is in
     const moved = () => { if (!mine()) return; const u = page.getURL(); if (isPage(u)) { if (u !== t.url) home.visit(u); t.url = u; } ready(); hooks.changed(); };
     page.on('did-navigate', moved);
-    page.on('did-stop-loading', () => { if (mine() && !t.ready) { ready(); hooks.changed(); } });
+    page.on('did-start-loading', () => { if (mine() && !t.loading) { t.loading = true; hooks.changed(); } });       // the tab's spinner and the bar's stop button
+    page.on('did-stop-loading', () => { if (!mine()) return; const was = t.loading; t.loading = false; if (!t.ready) ready(); if (was || !t.ready) hooks.changed(); });
+    page.on('did-start-navigation', (e, u, inPage, main) => {       // another site: its icon, not the last one's
+      const d = e && e.url !== undefined ? { u: e.url, inPage: e.isSameDocument, main: e.isMainFrame } : { u, inPage, main };
+      if (mine() && d.main && !d.inPage && t.icon && site(d.u) !== site(t.url)) { t.icon = ''; hooks.changed(); }
+    });
+    page.on('page-favicon-updated', (_e, urls) => { if (mine()) favicon(t, page, urls); });
     page.on('did-navigate-in-page', (_e, _u, main) => { if (main) moved(); });
     page.on('page-title-updated', (_e, title) => { if (!mine()) return; t.title = String(title || '').slice(0, 200); hooks.changed(); });
     page.on('enter-html-full-screen', () => { if (mine()) t.full = true; });
@@ -325,7 +359,7 @@ module.exports = function createWeb(hooks, opts = {}) {
     });
     page.on('destroyed', () => {       // its tab was closed, or the monitors changed under it
       if (!mine()) return;
-      t.wc = null; t.full = false; t.ready = false;
+      t.wc = null; t.full = false; t.ready = false; t.loading = false;
       if (!t.pending) t.pending = t.url;       // if it is still wanted, it loads again where it turns up next
       if (t.id === active) restream();
       hooks.changed();
@@ -577,6 +611,7 @@ module.exports = function createWeb(hooks, opts = {}) {
     else if (m.do === 'back') nav(-1);
     else if (m.do === 'fwd') nav(1);
     else if (m.do === 'reload') { if (alive()) cur().wc.reload(); }
+    else if (m.do === 'stop') { if (alive()) cur().wc.stop(); }
     else if (m.do === 'hard') { if (alive()) cur().wc.reloadIgnoringCache(); }
     else if (m.do === 'reopen') { const u = closed.pop(); if (u) { newTab(u); up(k); } }
     else if (m.do === 'step') { const i = tabs.indexOf(cur()), n = Math.sign(+m.n || 0); if (n && i >= 0) select(tabs[(i + n + tabs.length) % tabs.length].id); }
@@ -587,8 +622,16 @@ module.exports = function createWeb(hooks, opts = {}) {
 
   // ---- sharing ----
   const label = (t) => t.title || (isHome(t.url || t.pending) ? 'New tab' : site(t.url || t.pending)) || 'New tab';
+  // each tab in the bar: its name, its site's icon, whether it's loading or playing sound, and whether it's the start page
+  const tabView = (x) => {
+    const u = x.url || x.pending || '', r = { id: x.id, title: label(x) };
+    if (isHome(u)) r.home = true; else if (x.icon) r.icon = x.icon;
+    if (x.loading && live(x)) r.loading = true;
+    if (live(x) && x.wc.isCurrentlyAudible()) r.audible = true;
+    return r;
+  };
   const hist = (d) => { if (!alive()) return false; const h = cur().wc.navigationHistory; return d < 0 ? canBack(h) : h.canGoForward(); };
-  const view = () => { const t = cur() || {}; return { sid, out: out ? out.name : '', url: out ? '' : t.url || t.pending || '', title: out ? out.title || out.name : t.title || '', tabs: tabs.map((x) => ({ id: x.id, title: label(x) })), active, back: hist(-1), fwd: hist(1) }; };
+  const view = () => { const t = cur() || {}; return { sid, out: out ? out.name : '', url: out ? '' : t.url || t.pending || '', title: out ? out.title || out.name : t.title || '', tabs: tabs.map(tabView), active, back: hist(-1), fwd: hist(1) }; };
   // What friends are told about the browser. The picture and sound of the tab in front reach them as a stream, named by `sid`.
   const shared = () => (on && !parked && (alive() || (out && out.id)) && sid ? view() : null);
   // The frame whose picture and sound `hostWc` (the Drift window holding the browser) may capture to send to friends.
@@ -847,5 +890,5 @@ module.exports = function createWeb(hooks, opts = {}) {
   }
 
   return { home, host, attached, act, show, hide, close, nav, shared, frame, source, input, info, blockChanged, forget, outside: goOutside, saved, restore, viewer, gpuChanged, resized, gainChanged,
-    start, captureFrame, audioChanged, hover: () => hover.who, running: () => on, stop: () => { close(); if (lan) lan.close(); } };
+    start, captureFrame, audioChanged, pageWc: () => (on && !out && alive() ? cur().wc : null) /* the tab in front: main.js contentTick pictures it */, hover: () => hover.who, running: () => on, stop: () => { close(); if (lan) lan.close(); } };
 };
