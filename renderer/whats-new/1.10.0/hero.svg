@@ -1,0 +1,132 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 640" width="1600" height="640" font-family="Segoe UI, system-ui, sans-serif" role="img" aria-label="A blackjack table under a green lamp in a dark room, three players' hands on the felt, a board of the hub's biggest pots beside it, and a green cat sitting on the rail">
+  <defs>
+    <radialGradient id="pool" cx="800" cy="300" r="620" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4fd4a3" stop-opacity=".34"/>
+      <stop offset=".45" stop-color="#22c08a" stop-opacity=".1"/>
+      <stop offset="1" stop-color="#22c08a" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="cone" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#bff5dd" stop-opacity=".22"/>
+      <stop offset="1" stop-color="#22c08a" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="felt" cx="800" cy="300" r="560" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1f7357"/>
+      <stop offset=".5" stop-color="#0f4a3a"/>
+      <stop offset="1" stop-color="#062019"/>
+    </radialGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#22c08a"/>
+      <stop offset="1" stop-color="#b58cff"/>
+    </linearGradient>
+    <filter id="soft" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="14"/></filter>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="5"/></filter>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="4" stdDeviation="4" flood-color="#000" flood-opacity=".45"/></filter>
+    <!-- Drift's mark: the two waves of its icon, flat -->
+    <g id="waves">
+      <path fill="#22c08a" d="M16.0 293.2 C26.0 284.3 56.0 256.6 76.0 240.1 C96.0 223.7 116.0 206.2 136.0 194.6 C156.0 183.1 176.0 173.2 196.0 170.9 C216.0 168.5 236.0 173.1 256.0 180.7 C276.0 188.3 296.0 204.8 316.0 216.4 C336.0 228.0 356.0 244.7 376.0 250.4 C396.0 256.2 416.0 257.2 436.0 251.0 C456.0 244.9 486.0 219.7 496.0 213.4 C486.0 220.4 456.0 246.5 436.0 255.4 C416.0 264.3 396.0 268.6 376.0 266.9 C356.0 265.1 336.0 254.3 316.0 245.0 C296.0 235.7 276.0 219.5 256.0 210.9 C236.0 202.3 216.0 194.0 196.0 193.5 C176.0 193.0 156.0 199.2 136.0 207.7 C116.0 216.2 96.0 230.4 76.0 244.7 C56.0 258.9 26.0 285.1 16.0 293.2 Z"/>
+      <path fill="#22c08a" opacity=".72" d="M16.0 293.2 C26.0 285.1 56.0 258.9 76.0 244.7 C96.0 230.4 116.0 216.2 136.0 207.7 C156.0 199.2 176.0 193.0 196.0 193.5 C216.0 194.0 236.0 202.3 256.0 210.9 C276.0 219.5 296.0 235.7 316.0 245.0 C336.0 254.3 356.0 265.1 376.0 266.9 C396.0 268.6 416.0 264.3 436.0 255.4 C456.0 246.5 486.0 220.4 496.0 213.4 C486.0 221.5 456.0 250.2 436.0 261.7 C416.0 273.2 396.0 280.6 376.0 282.5 C356.0 284.4 336.0 279.8 316.0 273.0 C296.0 266.3 276.0 251.4 256.0 242.1 C236.0 232.8 216.0 220.6 196.0 217.2 C176.0 213.8 156.0 215.7 136.0 221.5 C116.0 227.4 96.0 240.5 76.0 252.4 C56.0 264.3 26.0 286.4 16.0 293.2 Z"/>
+      <path fill="#c9b0ff" d="M16.0 340.5 C25.2 332.2 52.6 305.5 70.9 290.6 C89.2 275.6 107.5 259.5 125.9 250.9 C144.2 242.3 162.5 238.0 180.8 238.9 C199.1 239.9 217.4 248.6 235.7 256.7 C254.0 264.7 272.3 279.0 290.6 287.4 C309.0 295.8 327.3 304.9 345.6 306.9 C363.9 308.9 382.2 305.4 400.5 299.5 C418.8 293.6 446.3 276.2 455.4 271.5 C446.3 277.1 418.8 296.4 400.5 304.8 C382.2 313.3 363.9 320.8 345.6 322.3 C327.3 323.7 309.0 319.5 290.6 313.4 C272.3 307.3 254.0 294.1 235.7 285.7 C217.4 277.2 199.1 266.1 180.8 262.7 C162.5 259.4 144.2 260.1 125.9 265.5 C107.5 271.0 89.2 283.0 70.9 295.5 C52.6 308.0 25.2 333.0 16.0 340.5 Z"/>
+      <path fill="#c9b0ff" opacity=".72" d="M16.0 340.5 C25.2 333.0 52.6 308.0 70.9 295.5 C89.2 283.0 107.5 271.0 125.9 265.5 C144.2 260.1 162.5 259.4 180.8 262.7 C199.1 266.1 217.4 277.2 235.7 285.7 C254.0 294.1 272.3 307.3 290.6 313.4 C309.0 319.5 327.3 323.7 345.6 322.3 C363.9 320.8 382.2 313.3 400.5 304.8 C418.8 296.4 446.3 277.1 455.4 271.5 C446.3 278.2 418.8 300.6 400.5 311.4 C382.2 322.2 363.9 332.0 345.6 336.5 C327.3 341.1 309.0 342.1 290.6 338.7 C272.3 335.4 254.0 324.8 235.7 316.5 C217.4 308.2 199.1 294.9 180.8 289.1 C162.5 283.3 144.2 279.4 125.9 281.8 C107.5 284.2 89.2 293.8 70.9 303.6 C52.6 313.4 25.2 334.4 16.0 340.5 Z"/>
+    </g>
+    <!-- a card's face and its back (44 x 62) -->
+    <g id="face"><rect width="44" height="62" rx="5" fill="#fbf8f1" stroke="#000" stroke-opacity=".1"/></g>
+    <g id="back"><rect width="44" height="62" rx="5" fill="#f4efe6"/><rect x="3.5" y="3.5" width="37" height="55" rx="3" fill="#0b2a28" stroke="#22c08a" stroke-opacity=".7"/><svg x="6" y="20" width="32" height="22" viewBox="10 160 492 190"><use href="#waves"/></svg></g>
+    <!-- a chip, seen from above -->
+    <g id="chip"><circle r="15" fill="#22c08a"/><circle r="15" fill="none" stroke="#f4f1ea" stroke-width="4" stroke-dasharray="5 7"/><circle r="9" fill="#1a9e72"/></g>
+    <!-- Drift's cat (#coCat in renderer/index.html), flat green: its outline, ears, paws and face. Bottom of the paws at y 858 -->
+    <g id="catFlat" stroke-linejoin="round" stroke-linecap="round">
+      <path d="M1150 800C1300 812 1452 730 1456 590C1459 494 1400 440 1335 448C1284 455 1266 502 1284 532C1300 558 1334 582 1327 640C1319 702 1268 742 1196 762Z" fill="#22c08a" stroke="#1a1230" stroke-width="34"/>
+      <path d="M345 355C340 250 380 150 440 125C510 105 590 160 645 225C710 205 790 205 845 225C900 160 980 105 1050 125C1110 150 1145 250 1140 355C1220 430 1260 560 1245 660C1230 760 1170 820 1080 835C900 860 600 860 420 835C320 820 250 740 240 620C235 520 270 420 345 355Z" fill="#22c08a" stroke="#1a1230" stroke-width="34"/>
+      <path d="M425 335C425 262 445 205 468 198C508 194 552 224 580 258C524 274 474 300 425 335Z" fill="#128a62"/>
+      <path d="M1059 335C1059 262 1039 205 1016 198C976 194 932 224 904 258C960 274 1010 300 1059 335Z" fill="#128a62"/>
+      <path d="M408 820C400 760 450 722 512 722C576 722 620 762 618 812C616 850 560 858 510 858C450 858 412 852 408 820Z" fill="#22c08a" stroke="#1a1230" stroke-width="30"/>
+      <path d="M918 820C910 760 960 722 1022 722C1086 722 1130 762 1128 812C1126 850 1070 858 1020 858C960 858 922 852 918 820Z" fill="#22c08a" stroke="#1a1230" stroke-width="30"/>
+      <path d="M478 790v40M548 790v40M988 790v40M1058 790v40" fill="none" stroke="#1a1230" stroke-width="12" opacity=".7"/>
+      <ellipse cx="470" cy="630" rx="58" ry="30" fill="#ff8fb8" opacity=".45"/><ellipse cx="1025" cy="630" rx="58" ry="30" fill="#ff8fb8" opacity=".45"/>
+      <path d="M690 552C690 594 738 596 750 562C762 596 810 594 810 552" fill="none" stroke="#1a1230" stroke-width="22"/>
+    </g>
+    <g id="catOpen"><circle cx="545" cy="530" r="70" fill="#f4fff4" stroke="#1a1230" stroke-width="26"/><circle cx="950" cy="530" r="70" fill="#f4fff4" stroke="#1a1230" stroke-width="26"/><circle cx="553" cy="536" r="32" fill="#1b1030"/><circle cx="958" cy="536" r="32" fill="#1b1030"/><circle cx="541" cy="522" r="10" fill="#fff"/><circle cx="946" cy="522" r="10" fill="#fff"/></g>
+    <!-- the felt's printing follows its edge (an ellipse round 800, 200) -->
+    <path id="arcBj" d="M601.2 277.9 A229.6 155.8 0 0 0 998.8 277.9"/>
+    <path id="arcRule" d="M588.8 296.7 A254.8 172.9 0 0 0 1011.2 296.7"/>
+    <path id="arcIns" d="M628.1 366.5 A299.6 203.3 0 0 0 971.9 366.5"/>
+  </defs>
+
+  <!-- the room and the lamp -->
+  <rect width="1600" height="640" fill="#050911"/>
+  <rect width="1600" height="640" fill="url(#pool)"/>
+  <path d="M770 46 L830 46 L1120 640 L480 640 Z" fill="url(#cone)"/>
+  <path d="M752 0 L848 0 L862 44 L738 44 Z" fill="#111a22"/>
+  <ellipse cx="800" cy="45" rx="64" ry="7" fill="#c7f7e3" opacity=".9"/>
+  <ellipse cx="800" cy="48" rx="120" ry="26" fill="#22c08a" opacity=".35" filter="url(#soft)"/>
+
+  <!-- the table: the felt, its rail and the accent line round it -->
+  <path d="M227 200 A573 393 0 0 0 1373 200" fill="none" stroke="#1d1510" stroke-width="26"/>
+  <path d="M214 200 A586 406 0 0 0 1386 200" fill="none" stroke="#22c08a" stroke-width="7" opacity=".5" filter="url(#glow)"/>
+  <path d="M214 200 A586 406 0 0 0 1386 200" fill="none" stroke="#7fe7bf" stroke-width="2.2"/>
+  <path d="M240 200 L1360 200 A560 380 0 0 1 240 200 Z" fill="url(#felt)"/>
+
+  <!-- printed on the felt -->
+  <g opacity=".3"><svg x="766" y="284" width="68" height="26.3" viewBox="10 160 492 190"><use href="#waves"/></svg></g>
+  <text x="804" y="326" text-anchor="middle" font-size="10.5" font-weight="600" letter-spacing="8" fill="#e5d9ff" opacity=".34">DRIFT</text>
+  <text font-size="15" font-weight="700" letter-spacing="4" fill="#9fe6c7" opacity=".6"><textPath href="#arcBj" startOffset="50%" text-anchor="middle">BLACKJACK PAYS 3 TO 2</textPath></text>
+  <text font-size="8.5" font-weight="700" letter-spacing="2.5" fill="#d9ccff" opacity=".45"><textPath href="#arcRule" startOffset="50%" text-anchor="middle">DEALER MUST DRAW TO 16 AND STAND ON ALL 17s</textPath></text>
+  <path d="M620 374.3 A313.6 212.8 0 0 0 980 374.3 L960.6 355.6 A280 190 0 0 1 639.4 355.6 Z" fill="#22c08a" fill-opacity=".07" stroke="#d9ccff" stroke-opacity=".35" stroke-width="1.4"/>
+  <text font-size="12" font-weight="700" letter-spacing="3.5" fill="#d9ccff" opacity=".5"><textPath href="#arcIns" startOffset="50%" text-anchor="middle">INSURANCE PAYS 2 TO 1</textPath></text>
+
+  <!-- the dealer's side: discard holder, chip rack, dealer's cards, the sign, the shoe -->
+  <g transform="translate(300 212) rotate(6)"><rect width="40" height="66" rx="5" fill="#fff" fill-opacity=".06" stroke="#fff" stroke-opacity=".18"/><rect x="4" y="34" width="32" height="28" rx="3" fill="#f1ece2" opacity=".85"/></g>
+  <g filter="url(#shadow)">
+    <rect x="560" y="206" width="150" height="30" rx="6" fill="#1a1f2b"/>
+    <g fill-opacity=".95"><rect x="566" y="211" width="14" height="20" rx="3" fill="#b58cff"/><rect x="584" y="211" width="14" height="20" rx="3" fill="#b58cff"/><rect x="602" y="211" width="14" height="20" rx="3" fill="#2a2a33"/><rect x="620" y="211" width="14" height="20" rx="3" fill="#2a2a33"/>
+      <rect x="638" y="211" width="14" height="20" rx="3" fill="#1fae7e"/><rect x="656" y="211" width="14" height="20" rx="3" fill="#1fae7e"/><rect x="674" y="211" width="14" height="20" rx="3" fill="#ece8de"/><rect x="692" y="211" width="12" height="20" rx="3" fill="#ece8de"/></g>
+  </g>
+  <g filter="url(#shadow)">
+    <g transform="translate(752 214)"><use href="#face"/><text x="6" y="17" font-size="14" font-weight="700" fill="#1d1b26">K</text><text x="7" y="30" font-size="11" fill="#1d1b26">♠</text><text x="22" y="49" font-size="22" text-anchor="middle" fill="#1d1b26">♠</text></g>
+    <g transform="translate(778 214)"><use href="#face"/><text x="6" y="17" font-size="14" font-weight="700" fill="#c3313f">7</text><text x="7" y="30" font-size="11" fill="#c3313f">♦</text><text x="22" y="49" font-size="22" text-anchor="middle" fill="#c3313f">♦</text></g>
+  </g>
+  <rect x="830" y="236" width="34" height="18" rx="9" fill="#000" opacity=".45"/><text x="847" y="249" font-size="11" font-weight="700" text-anchor="middle" fill="#fff">17</text>
+  <g transform="translate(900 210)"><rect width="128" height="42" rx="6" fill="#fff" fill-opacity=".1" stroke="#22c08a" stroke-opacity=".45"/>
+    <text x="64" y="17" font-size="9.5" font-weight="700" letter-spacing="2.2" text-anchor="middle" fill="#8ff0c8">HUB TABLE</text><text x="64" y="32" font-size="9.5" font-weight="600" text-anchor="middle" fill="#fff" opacity=".7">Min 10 · Max 500</text></g>
+  <g transform="translate(1180 214) rotate(-8)" filter="url(#shadow)"><rect width="56" height="96" rx="8" fill="#1a1d27"/><rect x="7" y="34" width="42" height="56" rx="4" fill="#1fae7e" opacity=".75"/></g>
+
+  <!-- three players: a blackjack, you on 19, a bust -->
+  <g filter="url(#shadow)">
+    <g transform="translate(452 352) rotate(-8)"><use href="#face"/><text x="6" y="17" font-size="14" font-weight="700" fill="#c3313f">K</text><text x="7" y="30" font-size="11" fill="#c3313f">♥</text><text x="22" y="49" font-size="22" text-anchor="middle" fill="#c3313f">♥</text></g>
+    <g transform="translate(478 356) rotate(4)"><use href="#face"/><text x="6" y="17" font-size="14" font-weight="700" fill="#1d1b26">A</text><text x="7" y="30" font-size="11" fill="#1d1b26">♠</text><text x="22" y="49" font-size="22" text-anchor="middle" fill="#1d1b26">♠</text></g>
+    <g transform="translate(766 430)"><use href="#face"/><text x="6" y="17" font-size="14" font-weight="700" fill="#1d1b26">10</text><text x="7" y="30" font-size="11" fill="#1d1b26">♣</text><text x="22" y="49" font-size="22" text-anchor="middle" fill="#1d1b26">♣</text></g>
+    <g transform="translate(792 430)"><use href="#face"/><text x="6" y="17" font-size="14" font-weight="700" fill="#c3313f">9</text><text x="7" y="30" font-size="11" fill="#c3313f">♦</text><text x="22" y="49" font-size="22" text-anchor="middle" fill="#c3313f">♦</text></g>
+    <g opacity=".6"><g transform="translate(1068 352) rotate(6)"><use href="#face"/><text x="6" y="17" font-size="14" font-weight="700" fill="#1d1b26">9</text><text x="7" y="30" font-size="11" fill="#1d1b26">♣</text><text x="22" y="49" font-size="22" text-anchor="middle" fill="#1d1b26">♣</text></g>
+      <g transform="translate(1092 356) rotate(9)"><use href="#face"/><text x="6" y="17" font-size="14" font-weight="700" fill="#1d1b26">7</text><text x="7" y="30" font-size="11" fill="#1d1b26">♠</text><text x="22" y="49" font-size="22" text-anchor="middle" fill="#1d1b26">♠</text></g>
+      <g transform="translate(1116 362) rotate(12)"><use href="#face"/><text x="6" y="17" font-size="14" font-weight="700" fill="#c3313f">6</text><text x="7" y="30" font-size="11" fill="#c3313f">♥</text><text x="22" y="49" font-size="22" text-anchor="middle" fill="#c3313f">♥</text></g></g>
+  </g>
+  <g transform="translate(470 368) rotate(-6)"><rect x="-4" y="0" width="106" height="24" rx="5" fill="url(#gold)"/><text x="49" y="17" font-size="13" font-weight="800" letter-spacing="1.5" text-anchor="middle" fill="#fff">BLACKJACK</text></g>
+  <g transform="translate(1100 372) rotate(-6)"><rect x="0" y="0" width="58" height="22" rx="5" fill="#14161e" opacity=".9"/><text x="29" y="16" font-size="12" font-weight="800" letter-spacing="1.5" text-anchor="middle" fill="#fff">BUST</text></g>
+  <rect x="784" y="497" width="34" height="18" rx="9" fill="#000" opacity=".45"/><text x="801" y="510" font-size="11" font-weight="700" text-anchor="middle" fill="#fff">19</text>
+  <!-- betting circles with their chips -->
+  <circle cx="490" cy="440" r="21" fill="none" stroke="#ffd08a" stroke-opacity=".5" stroke-width="2"/><use href="#chip" x="490" y="440"/><use href="#chip" x="490" y="435"/>
+  <circle cx="800" cy="535" r="21" fill="none" stroke="#7fe7bf" stroke-opacity=".7" stroke-width="2"/><use href="#chip" x="800" y="535"/>
+  <circle cx="1105" cy="440" r="21" fill="none" stroke="#a9c8ff" stroke-opacity=".4" stroke-width="2"/>
+  <!-- their name tags -->
+  <g transform="translate(452 466)"><rect width="78" height="22" rx="11" fill="#080a10" opacity=".7" stroke="#ffd08a" stroke-opacity=".5"/><circle cx="11" cy="11" r="7" fill="#ffd08a"/><text x="24" y="15.5" font-size="11.5" font-weight="700" fill="#ffe2b5">Sam</text><text x="52" y="15.5" font-size="11" fill="#fff" opacity=".7">1.6k</text></g>
+  <g transform="translate(762 560)"><rect width="78" height="22" rx="11" fill="#0f4a3a" stroke="#7fe7bf" stroke-opacity=".7"/><circle cx="11" cy="11" r="7" fill="#22c08a"/><text x="24" y="15.5" font-size="11.5" font-weight="700" fill="#c8f7e3">You</text><text x="50" y="15.5" font-size="11" fill="#fff" opacity=".7">1,150</text></g>
+  <g transform="translate(1066 466)"><rect width="78" height="22" rx="11" fill="#080a10" opacity=".7" stroke="#a9c8ff" stroke-opacity=".45"/><circle cx="11" cy="11" r="7" fill="#a9c8ff"/><text x="24" y="15.5" font-size="11.5" font-weight="700" fill="#d6e4ff">Mia</text><text x="52" y="15.5" font-size="11" fill="#fff" opacity=".7">850</text></g>
+
+  <!-- a friend's pointer over the table -->
+  <g transform="translate(980 470) scale(1.5)"><path d="M3.2 4Q3.2 2.4 4.5 3.4L16.6 13.2Q17.8 14.3 16.2 14.6L10.8 15.2Q9.6 15.3 8.8 16.2L5.2 20.4Q3.2 22.4 3.2 19.8Z" fill="#a9c8ff" stroke="#fff" stroke-width="1.4"/></g>
+  <g transform="translate(1004 504)"><rect width="34" height="16" rx="8" fill="#a9c8ff"/><text x="17" y="12" font-size="10" font-weight="700" text-anchor="middle" fill="#14182a">Mia</text></g>
+
+  <!-- the hub's biggest pots -->
+  <g transform="translate(1384 420)">
+    <rect width="196" height="150" rx="14" fill="#080a10" opacity=".75" stroke="#22c08a" stroke-opacity=".35"/>
+    <text x="16" y="26" font-size="10.5" font-weight="700" letter-spacing="2.4" fill="#8ff0c8">BIGGEST POTS</text>
+    <rect x="8" y="38" width="180" height="30" rx="8" fill="#22c08a" opacity=".2"/>
+    <text x="22" y="58" font-size="13" font-weight="700" text-anchor="end" fill="#e3d6ff">1</text><circle cx="40" cy="53" r="9" fill="#ffd08a"/><text x="56" y="58" font-size="13" fill="#fff">Sam</text>
+    <rect x="96" y="45" width="22" height="15" rx="4" fill="url(#gold)"/><text x="107" y="56" font-size="8.5" font-weight="800" text-anchor="middle" fill="#fff">BJ</text><text x="180" y="58" font-size="13" font-weight="700" text-anchor="end" fill="#9fe6c7">+750</text>
+    <text x="22" y="92" font-size="13" font-weight="700" text-anchor="end" fill="#fff" opacity=".5">2</text><circle cx="40" cy="87" r="9" fill="#22c08a"/><text x="56" y="92" font-size="13" font-weight="700" fill="#9fe6c7">You</text><text x="180" y="92" font-size="13" font-weight="700" text-anchor="end" fill="#9fe6c7">+400</text>
+    <text x="22" y="124" font-size="13" font-weight="700" text-anchor="end" fill="#fff" opacity=".5">3</text><circle cx="40" cy="119" r="9" fill="#a9c8ff"/><text x="56" y="124" font-size="13" fill="#fff">Mia</text><text x="180" y="124" font-size="13" font-weight="700" text-anchor="end" fill="#9fe6c7">+225</text>
+  </g>
+
+  <!-- a cat on the rail -->
+  <g transform="translate(318 414) scale(.085) translate(-742 -858)"><use href="#catFlat"/><use href="#catOpen"/></g>
+</svg>
