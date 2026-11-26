@@ -119,6 +119,7 @@
   const sceneFor = (st) => (st.mode === 'mix' ? (st.perDisplay[me.key] || st.scene) : st.scene);
   let shown = sceneFor(S), fading = false;
   let webUp = false;       // a Surf page covers this screen (syncWeb): the scene under it isn't drawn
+  let bjOn = false;        // the Blackjack table is up on this screen (bjSync)
   const audio = [0, 0, 0], audioTarget = [0, 0, 0];
   const specTarget = new Float32Array(128).fill(0), specNow = new Float32Array(128).fill(0);
   for (let i = 64; i < 128; i++) specTarget[i] = specNow[i] = 128;
@@ -726,12 +727,15 @@
   const TAB_IDS = ['scenes', 'media', 'surf', 'hub', 'broadcast', 'settings'];
   const webHere = () => { const w = S.web || {}; return !!w.open && w.key === me.key; };
   let tab = webHere() ? 'surf' : TAB_IDS.includes(init.tab) && init.tab !== 'surf' ? init.tab : 'scenes';
-  const tileHtml = (s) => { const i = SCENES.indexOf(s); return `<button class="tile" data-id="${s.id}"><i class="rot" role="checkbox" aria-checked="true" title="Include in automatic scene changes"></i><kbd>${i < 9 ? i + 1 : ''}</kbd><span>${s.name}</span></button>`; };
+  // (a game has no rotation tick: the automatic changes never pick one, main.js GAMES)
+  const tileHtml = (s) => { const i = SCENES.indexOf(s); return `<button class="tile${s.game ? ' game' : ''}" data-id="${s.id}">${s.game ? '' : '<i class="rot" role="checkbox" aria-checked="true" title="Include in automatic scene changes"></i>'}<kbd>${i < 9 ? i + 1 : ''}</kbd><span>${s.name}</span></button>`; };
   $('#tiles').innerHTML = `<div class="tilegrid">${SCENES.filter((s) => !s.group).map(tileHtml).join('')}</div>`
     + `<h3 class="sub">Landscapes</h3><div class="tilegrid">${SCENES.filter((s) => s.group === 'land').map(tileHtml).join('')}</div>`
     + `<h3 class="sub">Algorithms</h3><div class="tilegrid">${SCENES.filter((s) => s.group === 'algo').map(tileHtml).join('')}</div>`
     + `<h3 class="sub">3D geometry</h3><div class="tilegrid">${SCENES.filter((s) => s.group === '3d').map(tileHtml).join('')}</div>`
-    + `<h3 class="sub">Mathematical geometry</h3><div class="tilegrid">${SCENES.filter((s) => s.group === 'geo').map(tileHtml).join('')}</div>`;
+    + `<h3 class="sub">Mathematical geometry</h3><div class="tilegrid">${SCENES.filter((s) => s.group === 'geo').map(tileHtml).join('')}</div>`
+    + `<h3 class="sub">Games room</h3><div class="tilegrid">${SCENES.filter((s) => s.group === 'games').map(tileHtml).join('')}</div>`;
+  const CYCLED = SCENES.filter((s) => !s.game);       // the scenes the automatic changes, and Next / Previous, go through
   $('#palettes').innerHTML = Object.entries(PALETTES).map(([id, p]) => `<button class="sw" data-id="${id}" title="${p.name}" style="background:linear-gradient(90deg,${p.c.join(',')})"></button>`).join('')
     + `<button class="sw cyc" data-id="cycle" title="Cycle through every colour" style="background:linear-gradient(90deg,${Object.values(PALETTES).map((p) => p.c[2]).join(',')})">↻</button>`
     + `<button class="sw art" data-id="content" title="What's playing: colours from the cover of the song that's on">♪</button>`
@@ -1045,7 +1049,8 @@
     const surfUp = document.body.classList.contains('web');
     if (surfUp) screenTab = 'surf'; else if (bcHere()) screenTab = 'broadcast';       // (put up some other way: a link, a friend's broadcast)
     else if (screenTab === 'surf' || screenTab === 'broadcast') screenTab = tab === 'media' ? 'media' : 'scenes';       // (put away: back to what's under it)
-    if (screenTab !== whereSent) { whereSent = screenTab; api.chat('where', screenTab).catch(() => {}); }       // friends' hub bars jump here when they click you (chat.js drawCall)
+    const whereNow = screenTab === 'scenes' && bjOn ? 'blackjack' : screenTab;       // (at the table: friends who click you sit down next to you)
+    if (whereNow !== whereSent) { whereSent = whereNow; api.chat('where', whereNow).catch(() => {}); }       // friends' hub bars jump here when they click you (chat.js drawCall)
     const on = screenTab === 'media' && !videoOn() && !surfUp && !bcHere();
     if (on !== mbOn) { mbOn = on; mbEl.classList.toggle('on', on); }
     if (!on) return;
@@ -1167,7 +1172,7 @@
     const dA = aTime - mbAT; mbAT = aTime;
     if (playing && !stillMotion.matches) { mbSpin = (mbSpin + dt * 200 + Math.max(0, Math.min(1, dA)) * 140) % 360; mbLabel.style.setProperty('--spin', mbSpin.toFixed(1) + 'deg'); }
   }
-  window.appUI = { tab: () => tab, setTab: (t) => { if (panel.classList.contains('open')) setTab(t); else { tab = t; if (!SIDE_TABS.includes(t)) screenTab = t; pickScreen(t); tellTab(); syncUI(); } }, open: () => panel.classList.contains('open'), key: me.key };       // (a closed panel stays closed)       // (broadcast.js: its tab comes and goes)
+  window.appUI = { toTable: () => { P(S.mode === 'mix' ? { perDisplay: { [me.key]: 'blackjack' } } : { scene: 'blackjack' }); window.appUI.setTab('scenes'); }, tab: () => tab, setTab: (t) => { if (panel.classList.contains('open')) setTab(t); else { tab = t; if (!SIDE_TABS.includes(t)) screenTab = t; pickScreen(t); tellTab(); syncUI(); } }, open: () => panel.classList.contains('open'), key: me.key };       // (a closed panel stays closed)       // (broadcast.js: its tab comes and goes)
   panel.addEventListener('mouseenter', () => { overPanel = true; });
   panel.addEventListener('mouseleave', () => { overPanel = false; armHide(); });
   let lastMove = [0, 0];
@@ -1181,6 +1186,7 @@
     if (e.target === vidEl || e.target === mirEl || (gpuEl && e.target === gpuEl) || surfBar.contains(e.target)) return;
     if ($('#bcView').contains(e.target)) { panel.classList.remove('open'); return; }       // the Broadcast scene's tiles and bar: a click is for them (it only puts the panel's page away)
     if (e.target.closest('#mediaBack a, #mediaBack button')) return;       // the Media screen's links and arrows (mbPan)
+    if (e.target.closest('#bjTable .bjFelt, #bjTable .bjBar')) return;       // the Blackjack table and its buttons (the room around it still brings the panel)
     if (!panel.contains(e.target) && !confirmEl.contains(e.target) && !$('#mixer').contains(e.target)) { if (panel.classList.contains('open')) { panel.classList.remove('open'); } else showPanel(); } });
 
   const fill = (el) => el.style.setProperty('--fill', ((el.value - el.min) / (el.max - el.min)) * 100 + '%');
@@ -1218,7 +1224,7 @@
     const skip = S.cycleSkip || [];                  // ticks for which scenes the automatic changes may pick
     $('#tiles').classList.toggle('rotating', S.autoCycle > 0);
     $$('.tile[data-id]').forEach((x) => { const on = !skip.includes(x.dataset.id); x.classList.toggle('skip', !on); const r = x.querySelector('.rot'); if (r) r.setAttribute('aria-checked', String(on)); });
-    $('#rotNote').textContent = S.autoCycle > 0 ? (skip.length >= SCENES.length - 1 ? 'Tick at least two scenes to rotate between.' : `Rotating through ${SCENES.length - skip.length} of ${SCENES.length} scenes. Untick a scene to leave it out.`) : '';
+    $('#rotNote').textContent = S.autoCycle > 0 ? (skip.length >= CYCLED.length - 1 ? 'Tick at least two scenes to rotate between.' : `Rotating through ${CYCLED.length - skip.length} of ${CYCLED.length} scenes. Untick a scene to leave it out. Games are never picked.`) : '';
     $$('.sw').forEach((x) => x.classList.toggle('active', x.dataset.id === S.palette));
     const cc = customNow();
     $('.sw.cus').style.background = `linear-gradient(90deg,${cc.join(',')})`;
@@ -1531,6 +1537,54 @@
     if (hubPtr() && e.target.tagName !== 'WEBVIEW') showSelf('ui', e.clientX, e.clientY, uiKind(e.target));
     else if (selfCtx) showSelf('');
   });
+
+  // ---------- the Blackjack scene's table (renderer/blackjack.js; main.js bjMove; docs/plans/blackjack.md) ----------
+  // Over the room the shader draws, on this screen while it shows the scene: every screen in Mix and Mirror, the middle one in
+  // Span (the others have the room's light without a table). While it's up main.js is told, and seats you: at the active hub's
+  // table when you're online in one, at your own otherwise. Online, the others' pointers over the table show on it, and yours goes to them.
+  const bjEl = $('#bjTable'), bjPtrBox = $('#bjPtrs'), bjPtrEls = new Map();
+  let bjPtrList = [], bjPtrAt = 0, bjPtrOut = false, bjColKey = '', bjHub = '';       // bjHub: the hub whose table it is ('' alone)
+  // at a hub's table, each seat wears its player's picture from the hub (renderer/chat.js face: their initial without one)
+  const bjT = window.driftBJ(bjEl, (m) => api.cmd({ type: 'bj', ...m }), { face: (id) => (bjHub && window.chatUI ? window.chatUI.face(bjHub, id, '') : null),
+    me: () => (window.chatUI ? window.chatUI.info().me.id || '' : '') });       // (you, on the hub's board of biggest pots)
+  const bjHere = () => shown === 'blackjack' && sceneFor(S) === 'blackjack' && (S.mode !== 'span' || isCenter) && !webUp && !mbOn && !bcHere();
+  function bjSync() {
+    bjColors();
+    const on = bjHere();
+    if (on === bjOn) return;
+    bjOn = on; bjEl.classList.toggle('on', on);
+    if (!on) { bjT.view(null); bjPtrList = []; drawPtrs(bjPtrBox, bjPtrEls, null, []); if (bjPtrOut) { bjPtrOut = false; api.cmd({ type: 'bj', op: 'ptr', x: -1, y: -1 }); } }
+    api.cmd({ type: 'bj', op: 'here', on, key: me.key });
+    syncMediaBack();       // (where you are, for friends' hub bars)
+  }
+  setInterval(bjSync, 250);
+  function bjCmd(c) {
+    if (c.note && bjOn) bjT.note(c.note);
+    if ('v' in c && bjOn) { bjHub = String(c.hub || ''); bjT.view(c.v || null, c.mode); }
+    if (Array.isArray(c.ptrs)) { bjPtrList = c.ptrs; drawPtrs(bjPtrBox, bjPtrEls, bjOn ? bjT.box() : null, bjPtrList); }
+  }
+  // The room's light is the palette's: the felt from its second colour (pulled a little toward a card table's green), the rail
+  // and the lamp from the accent, the chips from the darkest and lightest. Set again whenever the colours change.
+  function bjColors() {
+    const pc = currentColors(), a = accentHex(), key = a + pc.map((c) => toHex(c)).join('');
+    if (key === bjColKey) return;
+    bjColKey = key;
+    const [h, s] = rgbToHsl(pc[1]), dh = ((0.44 - h + 1.5) % 1) - 0.5, fh = h + dh * 0.25, fs = Math.max(0.3, Math.min(0.65, s));
+    const lamp = toHex(hex(a).map((v, i) => v * 0.7 + [1, 0.91, 0.78][i] * 0.3));
+    bjT.colors({ colorOf: (n) => window.driftPtrColor(n, a), self: window.driftSelfColor(a),
+      vars: { '--bjAccent': a, '--bjFelt': hslToHex(fh, fs, 0.2), '--bjFeltDeep': hslToHex(fh, fs, 0.075), '--bjHi': toHex(pc[3]), '--bjDark': toHex(pc[0]), '--bjLamp': lamp } });
+  }
+  addEventListener('resize', () => { if (bjPtrEls.size) drawPtrs(bjPtrBox, bjPtrEls, bjOn ? bjT.box() : null, bjPtrList); });
+  addEventListener('mousemove', (e) => {       // your pointer over the table, for the others at it (main.js sends it only online, with cursor sharing on)
+    if (!bjOn) return;
+    const b = bjT.box(), over = !!b && (bjT.felt.contains(e.target) || bjEl.contains(e.target));
+    const x = over ? (e.clientX - b.l) / b.w : -1, y = over ? (e.clientY - b.t) / b.h : -1;
+    if (!(x >= 0 && x <= 1 && y >= 0 && y <= 1)) { if (bjPtrOut) { bjPtrOut = false; api.cmd({ type: 'bj', op: 'ptr', x: -1, y: -1 }); } return; }
+    if (Date.now() - bjPtrAt < 40) return;       // at most 25 a second
+    bjPtrAt = Date.now(); bjPtrOut = true;
+    api.cmd({ type: 'bj', op: 'ptr', x: +x.toFixed(4), y: +y.toFixed(4) });
+  });
+  setInterval(() => { for (const q of bjPtrEls.values()) q.el.classList.toggle('idle', Date.now() - q.at > 6000); }, 1000);
 
   // ---------- the browser's bar: tabs, back and forward, home and the address. It floats at the top and keeps out of the way ----------
   const surf = (what, more) => api.cmd({ type: 'surf', do: what, ...more });
@@ -2852,7 +2906,12 @@
   confirmEl.addEventListener('mousedown', (e) => { if (e.target === confirmEl) closeAsk(); });      // a click outside the box means "stay"
 
   function stepScene(dir) {
-    if (S.mode === 'mix') { const i = SCENES.findIndex((x) => x.id === sceneFor(S)); P({ perDisplay: { [me.key]: SCENES[(i + dir + SCENES.length) % SCENES.length].id } }); }
+    if (S.mode === 'mix') {       // (from a game: on from where it sits in the list)
+      const cur = sceneFor(S), at = SCENES.findIndex((x) => x.id === cur);
+      let i = CYCLED.findIndex((x) => x.id === cur);
+      if (i < 0) i = dir > 0 ? CYCLED.filter((x) => SCENES.indexOf(x) < at).length - 1 : CYCLED.filter((x) => SCENES.indexOf(x) < at).length;
+      P({ perDisplay: { [me.key]: CYCLED[(i + dir + CYCLED.length * 2) % CYCLED.length].id } });
+    }
     else api.cmd({ type: 'step-scene', dir });
   }
   let toastTimer;
@@ -2992,6 +3051,7 @@
     else if (c.type === 'music-pos') musicPos = { t: +c.t || 0, d: +c.d || 0, at: performance.now() };
     else if (c.type === 'ptrs') showPtrs(Array.isArray(c.list) ? c.list : []);
     else if (c.type === 'vptrs') showVptrs(Array.isArray(c.list) ? c.list : []);
+    else if (c.type === 'bj') bjCmd(c);
     else if (c.type === 'web-url') toBar();       // Ctrl+L in the web page
     else if (c.type === 'chat-quick') { if (webEl) webEl.blur(); quickOverSurf(); }       // Enter in a Surf page that wasn't for the page (web.js "Enter")
     else if (c.type === 'web-esc') { if (webEl) webEl.blur(); window.focus(); tab = 'surf'; showPanel(true); syncUI(); }       // Esc in the web page: our controls, and the keys come back to us

@@ -50,6 +50,7 @@ window.SCENES = [
   { id: 'seaside', name: 'Ocean Sunset',  group: 'land' },
   { id: 'meadow',  name: 'Rolling Hills', group: 'land' },
   { id: 'canyon',  name: 'Canyon Night',  group: 'land' },
+  { id: 'blackjack', name: 'Blackjack', group: 'games', game: true },       // the Games room: never in the rotation (main.js GAMES)
 ];
 
 window.SHADER_VERT = `attribute vec2 a; void main(){ gl_Position = vec4(a, 0.0, 1.0); }`;
@@ -206,6 +207,25 @@ void main(){
 }`;
 
 window.SCENE_SRC = {
+
+// The Blackjack scene's room (the table itself is drawn over it: renderer/blackjack.js). A dark room in the palette's darkest
+// colour, one low lamp above the table in the accent (warmed a little, so cards read true), its light falling in a cone
+// through slow haze, and a soft dark edge. The music swells the lamp a touch.
+blackjack: `
+vec3 scene(vec2 uv, vec2 p){
+  vec3 lamp = mix(uC2, vec3(1.0, 0.9, 0.76), 0.3);
+  vec3 col = uC0 * 0.6 + uC1 * 0.06;
+  vec2 q = (p - vec2(0.0, 0.02)) * vec2(0.85, 1.5);
+  float pool = exp(-dot(q, q) * 3.4);
+  float w = (0.5 - p.y) * 0.34 + 0.1;
+  float cone = smoothstep(w, w * 0.4, abs(p.x)) * smoothstep(-0.25, 0.45, p.y);
+  float t = uTime * 0.035;
+  float haze = fbm(vec2(p.x * 2.4 + t, p.y * 3.2 - t * 0.7)) * fbm(vec2(p.x * 1.1 - t * 0.5, p.y * 1.7 + 4.0));
+  col += lamp * pool * (0.2 + 0.05 * uAudio.x) + lamp * cone * haze * 0.22;
+  col += lamp * exp(-dot(p - vec2(0.0, 0.5), p - vec2(0.0, 0.5)) * 30.0) * 0.25;       // the shade itself, glowing at the top
+  col *= 1.0 - 0.55 * smoothstep(0.35, 0.95, length(p * vec2(0.6, 1.0)));
+  return col;
+}`,
 
 aurora: `
 vec3 scene(vec2 uv, vec2 p){

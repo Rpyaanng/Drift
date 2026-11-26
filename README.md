@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>Turn every monitor you own into one calm, living picture, and share it with your friends.</b><br>
-  36 ambient scenes, your own videos and music, a web browser and a place to hang out with friends, all in one app.
+  36 ambient scenes and a blackjack table, your own videos and music, a web browser and a place to hang out with friends, all in one app.
 </p>
 
 <p align="center">
@@ -103,7 +103,7 @@ Drift's ambient sound, your music, or Spotify.
 | <img src="docs/images/scene-globe.jpg" alt="Wire Globe"><br>Wire Globe | <img src="docs/images/scene-tunnel.jpg" alt="Hex Tunnel"><br>Hex Tunnel | <img src="docs/images/scene-polyhedra.jpg" alt="Platonic Solids"><br>Platonic Solids | <img src="docs/images/scene-menger.jpg" alt="Menger Sponge"><br>Menger Sponge |
 
 <details>
-<summary><b>All 36 scenes</b></summary>
+<summary><b>All 37 scenes</b></summary>
 
 - **Ambient**: Aurora, Nebula, Silk, Deep Water, Starfield, Lava Lamp, Ridgelines, Ripples, Mandala, Bokeh, Horizon Lines
 - **Landscapes**: Mountain Lake, Misty Forest, Desert Dunes, Ocean Sunset, Rolling Hills, Canyon Night
@@ -112,11 +112,24 @@ Drift's ambient sound, your music, or Spotify.
 - **Mathematical geometry**: Quasicrystal (crossing waves that never repeat), Hyperbolic Tiling ({7,3}, {5,4}, {8,3} and
   {4,5} tilings of the Poincaré disc), Apollonian Gasket, Phyllotaxis (golden-angle sunflower spirals), Rose Curves
   (r = cos kθ), Chladni Plate (sand on a vibrating plate)
+- **Games room**: Blackjack (below)
 
 </details>
 
 Drift can change scene by itself every few minutes, in order or shuffled. While that's on, untick a scene's corner to
-skip it. You can also add a spectrum, waveform or halo overlay, a clock, or a breathing guide.
+skip it. The Games room is never picked. You can also add a spectrum, waveform or halo overlay, a clock, or a breathing guide.
+
+### Blackjack
+
+**Scenes → Games room → Blackjack** is a casino blackjack table in a dark room, lit by a lamp in your palette's colours.
+Everyone plays the dealer: hit, stand, double, split, insurance and surrender; the dealer stands on all 17s and
+blackjack pays 3 to 2. Bets are 10 to 500. Run out of chips and you're back in with 1,000 after 20 seconds.
+
+- **Alone**, the table is yours and your chips are kept.
+- **Online in a hub**, you sit at the hub's table with everyone there, up to six at once (the rest wait for a seat), each
+  starting with 1,000. You see each other's cards, pointers and pictures, and the hub keeps a board of its five
+  **biggest pots**. Click someone at the table in the hub bar to sit down next to them. **Stand up** to watch.
+- The table has its own sounds, with their own switch in the Hub tab's Sounds.
 
 ## Sound
 
@@ -529,6 +542,8 @@ Tests (each starts its own copies of Drift, with their own settings):
 | `node scripts/test-mic.js` | The microphone test and noise suppression |
 | `node scripts/test-covers.js` | Song covers, titles and artists from tags |
 | `node scripts/test-surf-stream.js` | Two copies through a hub's Surf stream |
+| `node scripts/test-blackjack-engine.js` | Blackjack's rules, with stacked cards and a fake clock (no Electron needed; seconds) |
+| `node scripts/test-blackjack.js` | Two copies at the Blackjack table: alone, then side by side at a hub's (about a minute; `timeout 240`) |
 | `node scripts/test-surf-lan.js` | The Surf stream's guard against the host's network (no Electron needed) |
 | `node scripts/test-broadcast-ui.js` | The Share tab's real buttons, with two copies |
 | `node scripts/test-broadcast.js [modes...]` | Three copies through a whole broadcast: the grid, full screen, pointers, Switch source, Pause, Stop, sound, and hub tampering |

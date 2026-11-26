@@ -1466,3 +1466,192 @@ body.bcfull:not(.surfing):not(:has(#bcBar.show, #bcBar:hover, #bcBar:focus-withi
 .bcViewer .btn { padding: 4px 10px; font-size: 12px; flex: none; }
 #bcMineStats { display: block; font-size: 12px; line-height: 1.5; color: var(--dim); margin-top: 4px; }
 #bcMineWarn { margin: 12px 0 0; }
+
+/* ---------- the Blackjack scene's table (renderer/blackjack.js, docs/plans/blackjack.md §2) ----------
+   Over the room the shader draws: a lamp's pool of light in the accent, a felt from the palette's second colour, a rail lit
+   by a thin line of the accent, and a small spot of each player's colour at their seat. app.js sets the colours (--bjAccent,
+   --bjFelt, --bjFeltDeep, --bjHi, --bjDark, --bjLamp) from the palette, again on every change. */
+#bjTable { position: fixed; inset: 0; z-index: 2; display: none; pointer-events: none; color: #f4f1ea;
+  --bjAccent: #22c08a; --bjFelt: #0f4a3a; --bjFeltDeep: #06241c; --bjHi: #b58cff; --bjDark: #040816; --bjLamp: #a8f0d2;
+  font: 500 14px/1.3 "Segoe UI Variable Text", "Segoe UI", system-ui; }
+#bjTable.on { display: block; }
+#bjTable.on.live .bjFelt, #bjTable.on .bjBar { pointer-events: auto; }
+#bjTable .bjLamp { position: absolute; left: 50%; top: 46%; width: min(120vw, 190vh); height: min(80vw, 120vh); transform: translate(-50%, -50%); border-radius: 50%;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--bjLamp) 26%, transparent), color-mix(in srgb, var(--bjLamp) 8%, transparent) 55%, transparent);
+  mix-blend-mode: screen; transition: opacity .6s, filter .6s; }
+#bjTable.fWin .bjLamp { animation: bjWarm 2.4s ease-out; }
+#bjTable.fLose .bjLamp { animation: bjDim 2.4s ease-out; }
+#bjTable.fBj .bjLamp { animation: bjWarm 2.4s ease-out; }
+#bjTable.fBj .bjRail { animation: bjShimmer 2.4s ease-out; }
+@keyframes bjWarm { 0% { filter: none; } 20% { filter: brightness(1.7) saturate(1.2); } 100% { filter: none; } }
+@keyframes bjDim { 0% { opacity: 1; } 25% { opacity: .45; } 100% { opacity: 1; } }
+@keyframes bjShimmer { 0%, 100% { filter: none; } 30% { filter: brightness(2) drop-shadow(0 0 18px var(--bjAccent)); } }
+
+/* the felt: a half-round table, the dealer on its straight side */
+#bjTable .bjFelt { position: absolute; left: 50%; top: 7vh; width: min(88vw, 150vh); aspect-ratio: 2 / 1; transform: translateX(-50%); container-type: size;
+  border-radius: 3% 3% 50% 50% / 6% 6% 100% 100%;
+  background: radial-gradient(ellipse 70% 80% at 50% 30%, color-mix(in srgb, var(--bjFelt) 85%, var(--bjLamp)), var(--bjFelt) 45%, var(--bjFeltDeep) 100%);
+  box-shadow: 0 2.2cqh 6cqh rgba(0,0,0,.55), inset 0 0 8cqh rgba(0,0,0,.5); }
+#bjTable .bjFelt::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; opacity: .05;       /* the cloth's weave */
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+#bjTable .bjRail { position: absolute; inset: -1.1cqh; border-radius: 3% 3% 50% 50% / 6% 6% 100% 100%; pointer-events: none;
+  border: 1.6cqh solid color-mix(in srgb, var(--bjDark) 70%, #2a1d14); border-top-width: .8cqh;
+  box-shadow: 0 0 0 .18cqh color-mix(in srgb, var(--bjAccent) 85%, #fff), 0 0 2.4cqh color-mix(in srgb, var(--bjAccent) 55%, transparent), inset 0 0 0 .14cqh color-mix(in srgb, var(--bjAccent) 40%, transparent); }
+/* the printing on the felt (renderer/blackjack.js ART, on a 200 x 100 box: a unit is .5cqw across, 1cqh down): ink sunk into
+   the cloth, so faint, in the palette's light colour; Drift's mark and name in front of the dealer, the payouts and the
+   dealer's rule on arcs that follow the table's edge, and the insurance band */
+#bjTable .bjArt { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+#bjTable .bjArt text { text-anchor: middle; font-family: "Segoe UI Variable Display", "Segoe UI", system-ui; font-weight: 700; letter-spacing: .28em;
+  fill: color-mix(in srgb, var(--bjHi) 38%, rgba(255,255,255,.42)); }
+#bjTable .bjArt .t1 { font-size: 2.5px; fill: color-mix(in srgb, var(--bjAccent) 45%, rgba(255,255,255,.55)); }
+#bjTable .bjArt .t2 { font-size: 1.45px; letter-spacing: .24em; opacity: .85; }
+#bjTable .bjArt .t3 { font-size: 2.1px; }
+#bjTable .bjArt .band { fill: color-mix(in srgb, var(--bjAccent) 7%, transparent); stroke: color-mix(in srgb, var(--bjHi) 30%, rgba(255,255,255,.3)); stroke-width: .22; }
+#bjTable .bjArt .brand { opacity: .2; }
+#bjTable .bjArt .word { font-size: 3.4px; letter-spacing: .62em; font-weight: 600; fill: color-mix(in srgb, var(--bjHi) 55%, #fff); }
+/* Drift's mark: the teal wave in the accent, the lilac one in the palette's lightest colour */
+#bjTable .w1 { fill: var(--bjAccent); }
+#bjTable .w2 { fill: color-mix(in srgb, var(--bjHi) 85%, #fff); }
+#bjTable .lo { opacity: .72; }
+/* the dealer's side: the discard holder, the chip rack, the table's sign */
+#bjTable .bjDiscard { position: absolute; left: 7cqw; top: 2cqh; width: 4.6cqw; height: 10cqh; border-radius: .4cqw; transform: rotate(6deg);
+  background: rgba(255,255,255,.05); box-shadow: inset 0 0 0 1px rgba(255,255,255,.16), 0 .6cqh 1.6cqh rgba(0,0,0,.35); display: flex; align-items: flex-end; padding: .3cqw; }
+#bjTable .bjDiscard i { display: block; width: 100%; border-radius: .2cqw; transition: height .4s;
+  background: repeating-linear-gradient(0deg, color-mix(in srgb, var(--bjDark) 50%, #3a3f55) 0 1px, #f1ece2 1px 2px); box-shadow: inset 0 0 0 1px rgba(0,0,0,.2); }
+#bjTable .bjTray { position: absolute; left: 27cqw; top: 1.2cqh; width: 16cqw; height: 6cqh; display: flex; gap: .3cqw; padding: .35cqw; border-radius: .5cqw;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bjDark) 55%, #2b2f3d), color-mix(in srgb, var(--bjDark) 80%, #000));
+  box-shadow: 0 .6cqh 1.6cqh rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,.08); }
+#bjTable .bjTray i { flex: 1; border-radius: .35cqw; --chip: #ece8de;       /* a column of chips, seen from above: their edges as stripes */
+  background: repeating-linear-gradient(90deg, var(--chip) 0 .32cqw, color-mix(in srgb, var(--chip) 60%, #000) .32cqw .4cqw); box-shadow: inset 0 -.4cqh .6cqh rgba(0,0,0,.35); }
+#bjTable .bjTray .t25 { --chip: color-mix(in srgb, var(--bjAccent) 85%, #000); }
+#bjTable .bjTray .t100 { --chip: color-mix(in srgb, var(--bjDark) 50%, #2a2a33); }
+#bjTable .bjTray .t500 { --chip: color-mix(in srgb, var(--bjHi) 75%, #000); }
+#bjTable .bjSign { position: absolute; left: 59cqw; top: 2.2cqh; width: 13cqw; padding: .55cqw .7cqw; border-radius: .45cqw; text-align: center;
+  background: linear-gradient(160deg, rgba(255,255,255,.14), rgba(255,255,255,.04)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bjAccent) 40%, rgba(255,255,255,.2)), 0 .6cqh 1.4cqh rgba(0,0,0,.35); }
+#bjTable .bjMode { font: 700 .85cqw/1.2 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: .22em; text-transform: uppercase; color: color-mix(in srgb, var(--bjAccent) 60%, #fff); }
+#bjTable .bjLimits { margin-top: .25cqw; font: 600 .78cqw/1.2 "Segoe UI Variable Text", "Segoe UI", system-ui; letter-spacing: .08em; color: rgba(255,255,255,.7); font-variant-numeric: tabular-nums; }
+#bjTable .bjStatus { position: absolute; left: 50%; top: 26.5cqh; transform: translateX(-50%); display: flex; align-items: center; gap: 1cqw; white-space: nowrap;
+  font: 600 1.7cqw/1 "Segoe UI Variable Display", "Segoe UI", system-ui; color: #fff; text-shadow: 0 1px 10px rgba(0,0,0,.5); }
+#bjTable .bjCount { display: inline-grid; place-items: center; min-width: 2.6cqw; height: 2.6cqw; padding: 0 .6cqw; border-radius: 999px; font: 700 1.3cqw/1 "Segoe UI Variable Display", "Segoe UI", system-ui;
+  background: color-mix(in srgb, var(--bjAccent) 30%, rgba(0,0,0,.4)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--bjAccent) 70%, transparent); font-variant-numeric: tabular-nums; }
+
+/* the dealer and the shoe */
+#bjTable .bjDealer { position: absolute; left: 50%; top: 4cqh; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 1cqh; }
+#bjTable .bjShoe { position: absolute; right: 4.6cqw; top: 2.5cqh; width: 5cqw; height: 9cqw;       /* (in the corner, clear of the last seat's cards) */ border-radius: .7cqw; transform: rotate(-8deg);
+  background: linear-gradient(160deg, color-mix(in srgb, var(--bjDark) 60%, #333), color-mix(in srgb, var(--bjDark) 85%, #000)); box-shadow: 0 1cqh 2cqh rgba(0,0,0,.5), inset 0 0 0 1px rgba(255,255,255,.08); overflow: hidden; }
+#bjTable .bjShoe i { position: absolute; left: 12%; right: 12%; bottom: 8%; border-radius: .3cqw; transition: height .4s;
+  background: repeating-linear-gradient(0deg, color-mix(in srgb, var(--bjAccent) 55%, #222) 0 2px, color-mix(in srgb, var(--bjAccent) 25%, #111) 2px 4px); }
+
+/* cards (drawn here: plain corners and a big suit) */
+#bjTable .bjCards { display: flex; min-height: 7.4cqw; }
+#bjTable .bjCard { position: relative; width: 5.2cqw; height: 7.4cqw; border-radius: .55cqw; flex: none; background: linear-gradient(170deg, #fffdf8, #ece6da); color: #1d1b26;
+  box-shadow: 0 .5cqh 1.4cqh rgba(0,0,0,.45), inset 0 0 0 1px rgba(0,0,0,.08); }
+#bjTable .bjCard + .bjCard { margin-left: -3cqw; }
+#bjTable .bjCard.red { color: #c3313f; }
+#bjTable .bjCard span { position: absolute; display: flex; flex-direction: column; align-items: center; line-height: .95; }
+#bjTable .bjCard .cTl { left: .45cqw; top: .45cqw; }
+#bjTable .bjCard .cBr { right: .45cqw; bottom: .45cqw; transform: rotate(180deg); }
+#bjTable .bjCard b { font: 700 1.35cqw/1 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: -.04em; }
+#bjTable .bjCard i { font-style: normal; font-size: 1.05cqw; }
+#bjTable .bjCard .cMid { inset: 0; justify-content: center; font-size: 3cqw; opacity: .9; }
+/* the back: a white border, a fine accent line inside it, and Drift's mark on a deep ground */
+#bjTable .bjCard.back { display: grid; place-items: center;
+  background: radial-gradient(ellipse at 50% 40%, color-mix(in srgb, var(--bjAccent) 22%, var(--bjDark)), color-mix(in srgb, var(--bjDark) 85%, #000));
+  box-shadow: 0 .5cqh 1.4cqh rgba(0,0,0,.45), inset 0 0 0 .32cqw #f4efe6, inset 0 0 0 .45cqw color-mix(in srgb, var(--bjAccent) 65%, transparent); }
+#bjTable .bjCard.back .bjMark { width: 78%; }
+#bjTable .bjCard.deal { animation: bjDeal .38s cubic-bezier(.2,.8,.3,1) both; }
+@keyframes bjDeal { from { transform: translate(24cqw, -18cqh) rotate(-14deg); opacity: 0; } to { transform: none; opacity: 1; } }
+#bjTable .bjTotal { min-width: 2.4cqw; padding: .25cqw .7cqw; border-radius: 999px; text-align: center; font: 700 1.1cqw/1.2 "Segoe UI Variable Display", "Segoe UI", system-ui;
+  background: rgba(0,0,0,.45); font-variant-numeric: tabular-nums; }
+#bjTable .bjTotal:empty { display: none; }
+#bjTable .bjTotal.bust { background: rgba(190,40,52,.75); }
+
+/* the seats along the curve: a spot of the player's colour, their hands, their bet, their name and chips */
+#bjTable .bjSeat { position: absolute; width: 15cqw; transform: translate(-50%, -100%);       /* (left / top: where its name tag sits) */ display: flex; flex-direction: column; align-items: center; gap: .8cqh; --c: rgba(255,255,255,.4); }
+#bjTable .bjSpot { position: absolute; left: 50%; top: 58%; width: 13cqw; height: 13cqw; transform: translate(-50%, -50%); border-radius: 50%; pointer-events: none;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--c) 30%, transparent), transparent); opacity: .7; transition: opacity .4s; }
+#bjTable .bjSeat.empty .bjSpot { opacity: 0; }
+#bjTable .bjSeat.turn .bjSpot { opacity: 1; background: radial-gradient(closest-side, color-mix(in srgb, var(--c) 55%, transparent), transparent); }
+#bjTable .bjSeat.empty::before { content: ''; width: 5cqw; height: 5cqw; border-radius: 50%; border: 1px dashed rgba(255,255,255,.18); }       /* an open seat: just its place on the felt */
+#bjTable .bjSeat.empty .bjHands, #bjTable .bjSeat.empty .bjStake { display: none; }
+#bjTable .bjSeat.gone, #bjTable .bjSeat.out { opacity: .55; }
+#bjTable .bjHands { position: relative; display: flex; gap: 1.2cqw; align-items: flex-end; min-height: 11cqw; }
+#bjTable .bjHand { position: relative; display: flex; flex-direction: column; align-items: center; gap: .6cqh; transition: opacity .3s; }
+#bjTable .bjSeat.turn .bjHand:not(.now) { opacity: .6; }
+#bjTable .bjHand.now .bjCards { filter: drop-shadow(0 0 1.2cqh color-mix(in srgb, var(--c) 80%, transparent)); }
+#bjTable .bjResult { position: absolute; top: 2.4cqw; left: 50%; transform: translateX(-50%) rotate(-6deg); padding: .3cqw .9cqw; border-radius: .5cqw; white-space: nowrap;
+  font: 800 1.1cqw/1 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: .08em; text-transform: uppercase; background: rgba(20,22,30,.85); box-shadow: 0 .4cqh 1.2cqh rgba(0,0,0,.4); }
+#bjTable .r-win .bjResult, #bjTable .r-blackjack .bjResult { background: color-mix(in srgb, var(--bjAccent) 80%, #000); color: #fff; box-shadow: 0 0 2cqh color-mix(in srgb, var(--bjAccent) 60%, transparent); }
+#bjTable .r-blackjack .bjResult { background: linear-gradient(90deg, var(--bjAccent), var(--bjHi)); }
+#bjTable .r-lose, #bjTable .r-bust, #bjTable .r-surrender { opacity: .62; }
+#bjTable .bjHandBet { font: 600 .9cqw/1 "Segoe UI Variable Text", "Segoe UI", system-ui; color: rgba(255,255,255,.7); }
+#bjTable .bjStake { position: relative; display: flex; align-items: center; gap: .8cqw; min-height: 3.2cqw; }
+#bjTable .bjChips { position: relative; width: 3cqw; height: 3cqw; }
+#bjTable .bjChips::before { content: ''; position: absolute; inset: -.65cqw; border-radius: 50%; pointer-events: none;       /* the betting circle printed on the felt */
+  border: .14cqw solid color-mix(in srgb, var(--c) 45%, rgba(255,255,255,.32)); box-shadow: 0 0 1.2cqw color-mix(in srgb, var(--c) 18%, transparent); }
+#bjTable .bjChips.empty::before { border-color: color-mix(in srgb, var(--c) 30%, rgba(255,255,255,.2)); box-shadow: none; }
+#bjTable .bjSeat.me .bjChips.empty::before { border-style: dashed; border-color: color-mix(in srgb, var(--c) 70%, rgba(255,255,255,.4)); }       /* yours, waiting for a bet */
+#bjTable .bjChips i { position: absolute; left: 0; bottom: calc(var(--k) * .32cqw); width: 3cqw; height: 3cqw; }
+#bjTable .bjChips b { position: absolute; left: 3.6cqw; top: 50%; transform: translateY(-50%); font: 700 1.05cqw/1 "Segoe UI Variable Display", "Segoe UI", system-ui; white-space: nowrap; text-shadow: 0 1px 6px rgba(0,0,0,.6); }
+#bjTable .bjIns { font-size: .85cqw; color: rgba(255,255,255,.7); margin-left: 4cqw; white-space: nowrap; }
+#bjTable .bjTag { position: relative; display: flex; align-items: center; gap: .6cqw; padding: .35cqw .9cqw .35cqw .4cqw; border-radius: 999px; white-space: nowrap; max-width: 15cqw;
+  background: rgba(8,10,16,.55); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 45%, transparent); font-size: 1cqw; }
+#bjTable .bjSeat.empty .bjTag { background: none; box-shadow: none; color: rgba(255,255,255,.35); }
+#bjTable .bjTag .nm { overflow: hidden; text-overflow: ellipsis; font-weight: 700; color: color-mix(in srgb, var(--c) 70%, #fff); }
+#bjTable .bjTag .ch { color: rgba(255,255,255,.7); font-variant-numeric: tabular-nums; }
+#bjTable .bjSeat.empty .bjRing, #bjTable .bjSeat.empty .ch { display: none; }
+#bjTable .bjRing { width: 1.5cqw; height: 1.5cqw; border-radius: 50%; flex: none; background: var(--c); --f: 0; }
+#bjTable .bjRing.on { background: conic-gradient(var(--c) calc(var(--f) * 360deg), rgba(255,255,255,.12) 0); }
+#bjTable .bjRing.av { display: grid; place-items: center; width: 2.4cqw; height: 2.4cqw; padding: .18cqw; margin-left: -.15cqw; }       /* a hub member's picture, the ring round it */
+#bjTable .bjRing.av .face { width: 100%; height: 100%; font-size: 1cqw; box-shadow: 0 0 0 .1cqw rgba(8,10,16,.8); }
+#bjTable .bjSeat.me .bjTag { background: color-mix(in srgb, var(--c) 26%, rgba(8,10,16,.7)); }
+
+/* chips, on the table and as buttons */
+#bjTable .chip { border-radius: 50%; --chip: #e9e5db; --edge: #fff;
+  background: radial-gradient(circle, var(--chip) 0 46%, transparent 47%), repeating-conic-gradient(var(--edge) 0 15deg, var(--chip) 15deg 45deg);
+  box-shadow: 0 .2cqh .6cqh rgba(0,0,0,.5), inset 0 0 0 .18cqw rgba(0,0,0,.18); }
+#bjTable .chip.c10 { --chip: #ece8de; --edge: color-mix(in srgb, var(--bjAccent) 70%, #222); }
+#bjTable .chip.c25 { --chip: color-mix(in srgb, var(--bjAccent) 85%, #000); --edge: #f4f1ea; }
+#bjTable .chip.c100 { --chip: color-mix(in srgb, var(--bjDark) 60%, #1b1b22); --edge: color-mix(in srgb, var(--bjAccent) 80%, #fff); }
+#bjTable .chip.c500 { --chip: color-mix(in srgb, var(--bjHi) 75%, #000); --edge: #f6e7b0; }
+
+/* your controls, under the table */
+#bjTable .bjBar { position: absolute; left: 50%; top: calc(9vh + min(44vw, 75vh)); transform: translateX(-50%);       /* under the table, clear of Drift's own bar */ display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 999px;
+  background: rgba(8,10,16,.62); backdrop-filter: blur(16px); box-shadow: 0 10px 34px rgba(0,0,0,.45), inset 0 0 0 1px color-mix(in srgb, var(--bjAccent) 28%, rgba(255,255,255,.06)); white-space: nowrap; }
+#bjTable .bjBar:empty { display: none; }
+#bjTable .bjLine { padding: 0 8px; font-weight: 600; }
+#bjTable .bjBar .bjCount { min-width: 30px; height: 30px; font-size: 15px; }
+#bjTable .bjBar .chip { width: 48px; height: 48px; border: 0; padding: 0; cursor: pointer; font: 800 13px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; color: #16161c; transition: transform .12s, filter .12s; }
+#bjTable .bjBar .chip.c25, #bjTable .bjBar .chip.c100, #bjTable .bjBar .chip.c500 { color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.6); }
+#bjTable .bjBar .chip:hover:not(:disabled) { transform: translateY(-3px); filter: brightness(1.12); }
+#bjTable .bjBar .chip:disabled { opacity: .3; cursor: default; }
+#bjTable .bjAmt { min-width: 110px; text-align: center; font: 700 17px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; font-variant-numeric: tabular-nums; }
+#bjTable .bjBtn { height: 40px; padding: 0 20px; border: 0; border-radius: 999px; cursor: pointer; font: 700 14px/1 "Segoe UI Variable Text", "Segoe UI", system-ui; color: #fff;
+  background: rgba(255,255,255,.1); box-shadow: inset 0 0 0 1px rgba(255,255,255,.14); transition: background .12s, transform .12s; }
+#bjTable .bjBtn:hover:not(:disabled) { background: rgba(255,255,255,.18); }
+#bjTable .bjBtn.primary { background: color-mix(in srgb, var(--bjAccent) 80%, #000); box-shadow: 0 0 18px color-mix(in srgb, var(--bjAccent) 40%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--bjAccent) 80%, #fff); }
+#bjTable .bjBtn.primary:hover:not(:disabled) { background: var(--bjAccent); }
+#bjTable .bjBtn.ghost { background: none; box-shadow: none; color: rgba(255,255,255,.7); }
+#bjTable .bjBtn:disabled { opacity: .35; cursor: default; }
+#bjTable .bjBtn:focus-visible, #bjTable .bjBar .chip:focus-visible { outline: 2px solid var(--bjAccent); outline-offset: 2px; }
+#bjTable .bjNote { position: absolute; left: 50%; top: 1.6vh; transform: translate(-50%, 6px); padding: 7px 16px; border-radius: 999px; background: rgba(20,10,14,.75);
+  box-shadow: inset 0 0 0 1px rgba(255,120,130,.35); opacity: 0; transition: opacity .25s, transform .25s; pointer-events: none; }
+#bjTable .bjNote.on { opacity: 1; transform: translate(-50%, 0); }
+#bjPtrs { position: fixed; inset: 0; pointer-events: none; z-index: 3; overflow: hidden; }
+/* the hub's biggest pots: under the table at its left edge, level with the bar */
+#bjTable .bjBoard { position: absolute; left: max(16px, calc(50% - min(44vw, 75vh))); top: calc(9vh + min(44vw, 75vh)); width: 260px; display: none;
+  padding: 10px 12px 8px; border-radius: 14px; background: rgba(8,10,16,.62); backdrop-filter: blur(16px);
+  box-shadow: 0 10px 34px rgba(0,0,0,.45), inset 0 0 0 1px color-mix(in srgb, var(--bjAccent) 28%, rgba(255,255,255,.06)); }
+#bjTable .bjBoard.on { display: block; }
+#bjTable .bjBHead { margin-bottom: 6px; font: 700 10.5px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: .22em; text-transform: uppercase; color: color-mix(in srgb, var(--bjAccent) 60%, #fff); }
+#bjTable .bjBNone { font-size: 12px; color: rgba(255,255,255,.6); padding: 2px 0 4px; }
+#bjTable .bjBRow { display: flex; align-items: center; gap: 8px; height: 26px; padding: 0 6px; margin: 0 -6px; border-radius: 8px; font-size: 13px; transition: background 1s; }
+#bjTable .bjBRow .rk { width: 12px; text-align: right; font-weight: 700; color: rgba(255,255,255,.5); font-variant-numeric: tabular-nums; }
+#bjTable .bjBRow:first-of-type .rk { color: color-mix(in srgb, var(--bjHi) 70%, #fff); }
+#bjTable .bjBRow .face { width: 20px; height: 20px; font-size: 10px; }
+#bjTable .bjBRow .nf { width: 20px; height: 20px; flex: none; border-radius: 50%; background: rgba(255,255,255,.12); }
+#bjTable .bjBRow .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#bjTable .bjBRow.me .nm { font-weight: 700; color: color-mix(in srgb, var(--bjAccent) 55%, #fff); }
+#bjTable .bjBRow .bjB { font: 800 9px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; font-style: normal; padding: 3px 5px; border-radius: 5px; letter-spacing: .06em; background: linear-gradient(90deg, var(--bjAccent), var(--bjHi)); color: #fff; }
+#bjTable .bjBRow .amt { font-weight: 700; font-variant-numeric: tabular-nums; color: color-mix(in srgb, var(--bjAccent) 45%, #fff); }
+#bjTable .bjBRow.fresh { background: color-mix(in srgb, var(--bjAccent) 26%, transparent); }       /* a record just set */

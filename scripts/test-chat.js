@@ -13,9 +13,10 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 let failed = 0;
 const ok = (cond, what) => { console.log(`${cond ? 'ok  ' : 'FAIL'} ${what}`); if (!cond) failed++; };
 
+const BJ_TIMES = { bet: 2000, insure: 1000, turn: 3000, dealer: 20, done: 100, out: 500 };       // the blackjack table, fast (the hub Ana hosts)
 function person(name) {
   const events = [];
-  const chat = createChat({ dir: path.join(root, name), addrs: () => ['127.0.0.1'], event: (hub, m) => events.push({ hub, ...m }), changed: () => {}, log: (t) => console.log(`  [${name}] ${t}`) });
+  const chat = createChat({ dir: path.join(root, name), addrs: () => ['127.0.0.1'], event: (hub, m) => events.push({ hub, ...m }), changed: () => {}, log: (t) => console.log(`  [${name}] ${t}`), bjTimes: BJ_TIMES });
   chat.setName(name);
   return { name, chat, events, seen: (pred) => events.some(pred), hub: (id) => chat.info().hubs.find((h) => h.id === id) };
 }
@@ -285,6 +286,35 @@ async function until(pred, what, ms = 8000) {
   ok(!(await ben.chat.history(H, general)).msgs.some((m) => m.from === ana.chat.myId()), '...in history either');
   ben.chat.block(ana.chat.myId(), false);
 
+  // ---- the blackjack table (docs/plans/blackjack.md §5): dealt by the hub, which keeps the biggest pots ----
+  const bjView = (p) => { const e = [...p.events].reverse().find((x) => x.t === 'bj-view' && x.hub === H); return e ? e.v : null; };
+  async function playOut(p) {       // one round with a bet of 10 (never out of chips): no insurance, stand, till it's settled
+    for (let i = 0; i < 400; i++) {
+      const v = bjView(p), me = v && v.you >= 0 ? v.seats[v.you] : null;
+      if (v && v.phase === 'done' && me && me.hands.length) return v;
+      if (v && v.phase === 'betting' && me && !me.bet && !me.outMs) await p.chat.bj(H, { t: 'bj-bet', amount: 10 });
+      else if (v && v.phase === 'insurance' && me && me.insure) await p.chat.bj(H, { t: 'bj-insure', yes: false });
+      else if (v && v.phase === 'turns' && v.turn && v.turn.seat === v.you) await p.chat.bj(H, { t: 'bj-act', do: 'stand' });
+      await wait(25);
+    }
+    return null;
+  }
+  ok((await dev.chat.bj(H, { t: 'bj-bet', amount: 100 })).error, 'blackjack: no bet without sitting down');
+  ok(!(await dev.chat.bj(H, { t: 'bj-sit' })).error, 'Dev sits at the hub\'s table');
+  await until(() => bjView(dev) && bjView(dev).you >= 0, 'Dev gets the table, seated');
+  ok(Array.isArray(bjView(dev).board) && bjView(dev).board.length === 0, 'a new hub\'s board of biggest pots is empty');
+  ok((await dev.chat.bj(H, { t: 'bj-bet', amount: 5 })).error, 'a bet under the minimum is refused');
+  let best = 0, rounds = 0;
+  while (!best && rounds++ < 40) {
+    const v = await playOut(dev);
+    if (!v) break;
+    if (v.seats[v.you].net > 0) best = v.seats[v.you].net;
+    await until(() => bjView(dev).phase !== 'done', 'the next round');
+  }
+  ok(best > 0, `Dev wins a round (+${best}, in ${rounds})`);
+  ok(bjView(dev).board.length === 1 && bjView(dev).board[0].id === dev.chat.myId() && bjView(dev).board[0].name === 'Dev' && bjView(dev).board[0].win === best, '...and it\'s on the board as Dev\'s biggest pot');
+  ok(!(await dev.chat.bj(H, { t: 'bj-leave' })).error, 'Dev leaves the table');
+
   // ---- the hub stops and starts again: same port, history kept, friends reconnect by themselves ----
   const port = ana.chat.info().hosting.port;
   await ana.chat.unhost();
@@ -293,6 +323,10 @@ async function until(pred, what, ms = 8000) {
   ok(ana.chat.info().hosting.port === port, 'the hub comes back on the same port, so invites still work');
   await until(() => ben.hub(H).status === 'connected', 'Ben reconnects by himself', 15000);
   ok((await ben.chat.history(H, general)).msgs.some((m) => m.text === 'from Dev'), 'history survived');
+  await ben.chat.bj(H, { t: 'bj-watch' });       // looking on, not sitting
+  await until(() => bjView(ben) && Array.isArray(bjView(ben).board), 'Ben looks at the table');
+  ok(bjView(ben).board.some((x) => x.name === 'Dev' && x.win === best) && bjView(ben).you === -1, 'the biggest pots survive the hub restarting (and looking on takes no seat)');
+  await ben.chat.bj(H, { t: 'bj-leave' });
 
   // ---- a second copy of Ana's chat (Drift restarted): the identity and hubs come back from disk ----
   const n = ana.chat.myId();

@@ -1,5 +1,5 @@
 /* Drift — Hub sounds: joining and leaving a hub and its voice room, muting, going live, friends coming and going,
-   and new messages. They're made here with Web Audio, nothing is a recording, and they play in the hidden audio window
+   and new messages; and the Blackjack table's (cards, chips, your turn, how your hand went). They're made here with Web Audio, nothing is a recording, and they play in the hidden audio window
    (renderer/audio.html), so a sound never doubles across monitors. They have their own AudioContext: they stay out of the
    visuals' analyser and out of the music sent to friends, and a broadcast never carries them (bc-sound.js leaves out
    Drift's own process). main.js decides when, from what changed in the Hub tab (sfxTick), and sends the names here.
@@ -48,6 +48,21 @@
   const bell = (a, d, t, f, level, dur = 1, cut = 9000) => voice(a, d, t, { f, dur, level, cut, atk: 0.002, partials: [[2.76, 0.28, 0.4], [5.4, 0.1, 0.18], [8.93, 0.04, 0.08]] });
   // one note that slides, with a little of the mallet's wood
   const glide = (a, d, t, f, f2, level, dur, cut = 7000) => voice(a, d, t, { f, f2, glide: dur * 0.35, dur, level, cut, partials: [[2, 0.12, 0.3]] });
+  // a short burst of noise through a band (a card landing on felt, a chip's click): no pitch, so it fights nothing
+  let noiseBuf = null;
+  function noise(a, dst, t, { f, q = 1, dur, level, atk = 0.002 }) {
+    if (!noiseBuf || noiseBuf.sampleRate !== a.sampleRate) {
+      noiseBuf = a.createBuffer(1, Math.floor(a.sampleRate * 0.5), a.sampleRate);
+      const x = noiseBuf.getChannelData(0); for (let i = 0; i < x.length; i++) x[i] = Math.random() * 2 - 1;
+    }
+    const src = a.createBufferSource(), bp = a.createBiquadFilter(), env = a.createGain();
+    src.buffer = noiseBuf; bp.type = 'bandpass'; bp.frequency.value = f; bp.Q.value = q;
+    env.gain.setValueAtTime(0, t); env.gain.linearRampToValueAtTime(level, t + atk); env.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    src.connect(bp).connect(env).connect(dst); src.start(t, Math.random() * 0.3); src.stop(t + dur + 0.02);
+  }
+  // the Blackjack table's two touches: a card sliding off the shoe and landing on the felt, and two clay chips meeting
+  const card = (a, d, t, level = 1) => { noise(a, d, t, { f: 2400, q: 0.8, dur: 0.06, level: 0.5 * level, atk: 0.012 }); noise(a, d, t + 0.05, { f: 900, q: 1.2, dur: 0.05, level: 0.7 * level }); };
+  const chip = (a, d, t, level = 1) => { voice(a, d, t, { f: 3150, dur: 0.05, level: 0.16 * level, atk: 0.001, partials: [[1.47, 0.6, 0.6]] }); noise(a, d, t, { f: 4200, q: 3, dur: 0.03, level: 0.35 * level }); };
 
   // ---- the sounds ----
   const SOUNDS = {
@@ -79,13 +94,35 @@
     // a new message you aren't looking at: a water drop, and its echo a fifth up (low and round, a "bloop" rather than a ping)
     message: (a, d, t) => { voice(a, d, t, { f: N.C5, f2: N.G5, glide: 0.03, dur: 0.2, level: 0.45, cut: 4000, partials: [[2, 0.15, 0.3]] });
       voice(a, d, t + 0.09, { f: N.G5, f2: N.C6, glide: 0.025, dur: 0.16, level: 0.16, cut: 4000 }); },
+    // ---- the Blackjack table (main.js bjSounds picks them from what changed on it) ----
+    // a card dealt; the opening deal (two each round the table, a few quick ones); a bet going down
+    bjCard: (a, d, t) => card(a, d, t),
+    bjDeal: (a, d, t) => { for (let i = 0; i < 4; i++) card(a, d, t + i * 0.12, 0.85 + 0.15 * (i % 2)); },
+    bjChip: (a, d, t) => { chip(a, d, t); chip(a, d, t + 0.045, 0.7); },
+    // your turn, or the dealer asking about insurance: two soft notes up, a nudge rather than an alarm
+    bjTurn: (a, d, t) => { mallet(a, d, t, N.G4, 0.45, 0.35, 4000); mallet(a, d, t + 0.08, N.C5, 0.5, 0.45, 4500); },
+    // how your hand went: a win climbs C G C with chips sliding over; blackjack climbs higher, with a sparkle; a push is one
+    // even note; a loss steps down, quietly; a bust is a soft thud and a sag
+    bjWin: (a, d, t) => { [N.C5, N.G5, N.C6].forEach((f, i) => mallet(a, d, t + i * 0.07, f, 0.5, 0.5, 6000)); chip(a, d, t + 0.25, 0.8); chip(a, d, t + 0.3, 0.6); },
+    bjBlackjack: (a, d, t) => { [N.G4, N.C5, N.G5, N.C6].forEach((f, i) => mallet(a, d, t + i * 0.065, f, 0.5, 0.6, 6000)); bell(a, d, t + 0.26, N.G6, 0.1, 0.8); bell(a, d, t + 0.32, N.C7, 0.07, 0.7); },
+    bjPush: (a, d, t) => mallet(a, d, t, N.C5, 0.5, 0.4, 4000),
+    bjLose: (a, d, t) => { mallet(a, d, t, N.G4, 0.45, 0.4, 3000); mallet(a, d, t + 0.11, N.C4, 0.5, 0.55, 2200); },
+    bjBust: (a, d, t) => { noise(a, d, t, { f: 180, q: 0.9, dur: 0.12, level: 0.6 }); voice(a, d, t, { f: N.G4, f2: N.D4, glide: 0.2, dur: 0.32, level: 0.4, cut: 2400, partials: [[2, 0.1, 0.3]] }); },
+    // out of chips (down and slack, like the line dropping) and back in with a fresh stack (chips stacked, then up)
+    bjOut: (a, d, t) => { [N.C5, N.G4, N.C4].forEach((f, i) => mallet(a, d, t + i * 0.1, f, 0.45, 0.5, 3000 - i * 600));
+      voice(a, d, t + 0.3, { f: N.C4, f2: N.C4 * 0.94, glide: 0.4, dur: 0.6, level: 0.25, vib: 0.02, cut: 1500 }); },
+    bjBack: (a, d, t) => { for (let i = 0; i < 4; i++) chip(a, d, t + i * 0.05, 0.6 + i * 0.1); mallet(a, d, t + 0.24, N.G4, 0.45, 0.5); mallet(a, d, t + 0.31, N.C5, 0.5, 0.6); },
   };
   // How loud each is against the others (measured, then by ear): your own actions peak around -7 dBFS at full volume, other
   // people's news a few dB under, the clinks lowest because they sit where the ear is keenest, and a dropped connection a
   // little over, so it isn't missed. Peaks at volume 1 in the comments.
   const LEVEL = { join: 0.85 /* .43 */, leave: 0.85 /* .40 */, connect: 0.9 /* .42 */, disconnect: 1.05 /* .37 */, shareOn: 1.1 /* .37 */, shareOff: 1.2 /* .34 */,
     mute: 1.15 /* .27 */, unmute: 1.15 /* .27 */, peerJoin: 1.1 /* .25 */, peerLeave: 1.15 /* .23 */, lost: 1.25 /* .33 */,
-    liveOn: 1.2 /* .40 */, liveOff: 2 /* .28 */, viewerJoin: 1.8 /* .15 */, viewerLeave: 2 /* .12 */, bcStart: 1.3 /* .30 */, message: 1.1 /* .27 */ };
+    liveOn: 1.2 /* .40 */, liveOff: 2 /* .28 */, viewerJoin: 1.8 /* .15 */, viewerLeave: 2 /* .12 */, bcStart: 1.3 /* .30 */, message: 1.1 /* .27 */,
+    // the table: cards and chips (many) as low as the clinks, your turn a nudge like a friend arriving, how your hand went as
+    // loud as your own actions (good news a little over bad), out of chips like a dropped connection
+    bjCard: 1.15 /* .13-.15 (noise: each a little different) */, bjDeal: 1.1 /* .15 */, bjChip: 1.1 /* .15 */, bjTurn: 0.77 /* .25 */, bjWin: 1 /* .37 */, bjBlackjack: 1 /* .41 */,
+    bjPush: 0.85 /* .25 */, bjLose: 0.95 /* .25 */, bjBust: 1.25 /* .25 */, bjOut: 1.08 /* .33 */, bjBack: 1.15 /* .35 */ };
 
   // The way out: a small dark room (1.4 s, low in the mix). No compressor: Chromium's blunts the first few milliseconds of
   // a short sound (it took 60% off the mute click's peak), and the levels here are set by hand to stay well under full scale.

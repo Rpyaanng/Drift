@@ -11,6 +11,7 @@ const subsLib = require('./subtitles');
 const createXcoder = require('./xcode');
 const createP2P = require('./p2p');
 const createChat = require('./chat');
+const { createTable: createBjTable } = require('./blackjack');
 const createFiles = require('./files');
 const createWeb = require('./web');
 const createUpdater = require('./updater');
@@ -95,13 +96,15 @@ const DEFAULTS = {
   // viewers' pointers on this screen while live
   broadcast: { quality: 'auto', pointers: true, sound: false },
   // Hub sounds (renderer/sfx.js): on, and how loud (under the mixer's master)
-  sfx: { on: true, volume: 0.7 },
+  sfx: { on: true, table: true, volume: 0.7 },
   // GIF search in the Hub tab: the user's own GIPHY API key ('' = search is off; pictures from this PC still send)
   gif: { key: '' },
   // the Media screen's tour dates (artistShows): the user's own Ticketmaster key ('' = the scene asks for one)
   concerts: { key: '' },
   // files sent straight between PCs (docs/plans/files.md): where downloads go ('' = Downloads\Drift)
   files: { folder: '' },
+  // the Blackjack scene played alone (docs/plans/blackjack.md §4): your chips, and when you're back in after crapping out (a hub's table keeps nothing)
+  blackjack: { chips: 1000, outUntil: 0 },
   // What's new (renderer/whatsnew.js): the newest version whose notes were shown. A newer one starting shows them, once
   notesSeen: '',
   // the Surf stream of the hub this PC hosts (docs/plans/streams.md): its tabs (kept with the hub they belong to), whether every
@@ -182,7 +185,8 @@ function loadSettings() {
     const known = (id) => id === 'video' || SCENES.includes(id);
     if (!known(state.scene)) state.scene = 'aurora';
     for (const k of Object.keys(state.perDisplay || {})) if (!known(state.perDisplay[k])) delete state.perDisplay[k];
-    state.cycleSkip = Array.isArray(state.cycleSkip) ? state.cycleSkip.filter((id) => SCENES.includes(id)) : [];
+    state.cycleSkip = Array.isArray(state.cycleSkip) ? state.cycleSkip.filter((id) => SCENES.includes(id) && !GAMES.includes(id)) : [];
+    state.blackjack = cleanBj(state.blackjack);
     if (state.palette === 'custom' && !Array.isArray(state.customColors)) state.palette = 'aurora';
     state.video.folders = (state.video.folders || []).filter((p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } });
     state.music.playlist = (state.music.playlist || []).filter((p) => { try { return fs.existsSync(p); } catch { return false; } });
@@ -194,6 +198,11 @@ function loadSettings() {
     // so everything since then shows as New, and nobody updating from it misses what came between
     if (typeof s.notesSeen !== 'string' || !/^(\d+\.\d+\.\d+)?$/.test(s.notesSeen)) state.notesSeen = '1.8.7';
   } catch { state.notesSeen = app.getVersion(); }       // first run: nothing to tell a new install about
+}
+function cleanBj(q) {
+  q = q && typeof q === 'object' ? q : {};
+  const chips = Math.floor(+q.chips), out = +q.outUntil;
+  return { chips: Number.isFinite(chips) && chips >= 0 && chips <= 1e9 ? chips : 1000, outUntil: Number.isFinite(out) && out > Date.now() && out < Date.now() + 60000 ? out : 0 };
 }
 const QUALITY = { original: { h: 0, kbps: 0 }, 1080: { h: 1080, kbps: 6000 }, 720: { h: 720, kbps: 3000 }, 480: { h: 480, kbps: 1200 } };
 function cleanShare(q) {
@@ -210,7 +219,7 @@ function cleanVoice(q) {
 }
 const cleanDevice = (d) => ({ id: String((d && d.id) || '').replace(/[^\w+/=-]/g, '').slice(0, 128), label: String((d && d.label) || '').replace(/[\x00-\x1f]/g, '').slice(0, 120) });
 const voiceDevices = () => ({ mic: state.voice.mic, out: state.voice.out, ns: state.voice.ns });
-const cleanSfx = (q) => ({ on: q.on !== false, volume: unitVol(q.volume, 0.7) });
+const cleanSfx = (q) => ({ on: q.on !== false, table: q.table !== false, volume: unitVol(q.volume, 0.7) });       // table: the Blackjack table's sounds, switched apart from the hub's
 const cleanGif = (q) => ({ key: String((q && q.key) || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 64) });
 const unitVol = (v, d) => (isFinite(v) && v !== null && v !== '' ? Math.max(0, Math.min(1, +v)) : d);
 const cleanMixer = (q) => ({ master: unitVol(q.master, 1), mute: !!q.mute, surf: unitVol(q.surf, 1), surfMute: !!q.surfMute, ambientMute: !!q.ambientMute, mediaMute: !!q.mediaMute });
@@ -1749,6 +1758,127 @@ setInterval(() => {
   if (vptrs.size) for (const id of [...vptrs.keys()]) vptrSet(id, '', null);       // (the host's next send is empty: friends' go too)
   else if (vptrShown) vptrShow([]);
 }, 400);
+// ---- the Blackjack scene's table (docs/plans/blackjack.md) ----
+// A screen showing the table says so ('bj' here: on); while any does, this PC is at a table. Online in a hub (the active
+// one), it's that hub's table: moves go up (chat.bj), and the table and everyone's pointers come down (bj-view, bj-ptrs).
+// Otherwise it's dealt here, alone (bjLocal), with your chips kept in the settings. Either way the screens get
+// { type: 'bj', v, mode } with the table as you see it, { ptrs } with the others' pointers, and { note } when a move is refused.
+const BJ_ME = 'me';
+const BJ_FAST = process.env.DRIFT_BJ_FAST ? { bet: 6000, insure: 3000, turn: 6000, dealer: 150, done: 1500, out: 3000 } : undefined;       // tests: a round in seconds
+let bjLocal = null, bjLocalTimer = null, bjLocalSent = -1, bjAt = '', bjLast = null;       // bjAt: '' (not at a table), 'local', or the hub's id
+let bjStanding = false;       // stood up (Stand up): at the table, looking on, without a seat till Sit down. Coming to a table sits you down.
+const bjScreens = new Set();
+function bjSend(m) { for (const v of visWins) if (!v.win.isDestroyed() && bjScreens.has(v.key)) v.win.webContents.send('cmd', { type: 'bj', ...m }); }
+const bjNote = (text) => bjSend({ note: String(text || '').slice(0, 200) });
+function bjHub() {
+  const h = chat ? activeHub() : '';
+  return h && chat.info().hubs.some((x) => x.id === h && x.status === 'connected') ? h : '';
+}
+function bjShow(v, mode) {
+  if (v && mode === 'hub') {       // someone you've blocked still plays (it's the hub's table), but not by name or face
+    const blocked = new Set(chat.info().blocked || []);
+    v = { ...v, seats: v.seats.map((s) => (s && blocked.has(s.id) ? { ...s, name: 'Someone', blocked: true } : s)),
+      board: (Array.isArray(v.board) ? v.board : []).slice(0, 5).map((x) => (blocked.has(x.id) ? { ...x, name: 'Someone', blocked: true } : x)) };       // (the biggest pots too)
+  }
+  const was = bjLast && bjLast.mode === mode ? bjLast.v : null, hub = mode === 'hub' ? bjAt : '';       // hub: whose members' faces the seats show
+  bjLast = v ? { v, mode, hub, at: Date.now() } : null;
+  bjSend({ v, mode, hub });
+  if (was && v) { const s = bjSounds(was, v); if (s.length) { sfxPlay(s); if (SHOT_DIR) bjHeard.push(...s); } }
+}
+const bjHeard = [];       // (tests: every sound the table asked for)
+// The table's sounds (renderer/sfx.js), from what changed between two views of it: cards coming out, bets going down, your
+// turn (or the dealer asking you about insurance), how your hand went, running out of chips and being bought back in.
+// Two at most (sfx.js plays no more together), the one that matters most first.
+function bjSounds(a, b) {
+  const out = [], me = b.you >= 0 ? b.seats[b.you] : null, was = a.you >= 0 ? a.seats[a.you] : null;
+  const cardsOf = (v) => v.dealer.cards.filter(Boolean).length + v.seats.reduce((n, s) => n + (s ? s.hands.reduce((k, h) => k + h.cards.length, 0) : 0), 0);
+  const sameRound = a.round === b.round;
+  if (me && was) {
+    if (b.phase === 'done' && a.phase !== 'done' && me.hands.length) {
+      out.push(me.hands.some((h) => h.result === 'blackjack') ? 'bjBlackjack' : me.net > 0 ? 'bjWin' : me.net < 0 ? 'bjLose' : 'bjPush');
+    }
+    if (me.outMs && !was.outMs) out.push('bjOut');
+    if (!me.outMs && was.outMs) out.push('bjBack');
+    const mineNow = b.turn && b.turn.seat === b.you, mineThen = a.turn && a.turn.seat === a.you && a.turn.hand === (b.turn || {}).hand;
+    if ((mineNow && !mineThen) || (b.phase === 'insurance' && a.phase !== 'insurance' && me.insure)) out.push('bjTurn');
+    if (sameRound && me.hands.some((h, k) => h.n > 21 && !(was.hands[k] && was.hands[k].n > 21))) out.push('bjBust');
+  }
+  const more = cardsOf(b) - (sameRound ? cardsOf(a) : 0), turned = sameRound && a.dealer.cards.includes(null) && !b.dealer.cards.includes(null);
+  if (!sameRound && more >= 3) out.unshift('bjDeal');       // (the opening deal: before your turn's nudge)
+  else if (more > 0 || turned) out.push('bjCard');
+  if (b.seats.some((s, i) => s && s.bet && !(a.seats[i] && a.seats[i].bet))) out.push('bjChip');       // a bet down, anyone's
+  return [...new Set(out)].slice(0, 2);
+}
+function bjSync() {
+  for (const k of [...bjScreens]) if (!visWins.some((v) => v.key === k && !v.win.isDestroyed())) bjScreens.delete(k);
+  const want = bjScreens.size ? bjHub() || 'local' : '';
+  if (want === bjAt) return;
+  const was = bjAt; bjAt = want; bjStanding = false;
+  if (was === 'local') bjLocalStop(); else if (was && chat) chat.bj(was, { t: 'bj-leave' });
+  bjShow(null, ''); bjSend({ ptrs: [] });
+  if (want === 'local') bjLocalStart();
+  else if (want) chat.bj(want, { t: 'bj-sit' }).then((r) => { if (r && r.error && bjAt === want) bjNote(r.error); });
+}
+setInterval(bjSync, 1000);       // (the hub came or went)
+function bjLocalStart() {
+  bjLocal = createBjTable({ times: BJ_FAST });
+  bjLocal.sit(BJ_ME, 'You', state.blackjack);
+  bjLocalSent = -1; bjLocalPush();
+  clearInterval(bjLocalTimer);
+  bjLocalTimer = setInterval(() => { if (bjLocal) { bjLocal.tick(); bjLocalPush(); } }, 200);
+}
+function bjLocalPush() {
+  if (!bjLocal || bjLocal.version === bjLocalSent) return;
+  bjLocalSent = bjLocal.version;
+  bjShow(bjLocal.view(BJ_ME), 'local');
+  const k = bjLocal.mine(BJ_ME);
+  if (k && (k.chips !== state.blackjack.chips || k.outUntil !== state.blackjack.outUntil)) { state.blackjack = k; saveSoon(); }
+}
+function bjLocalStop() {
+  clearInterval(bjLocalTimer); bjLocalTimer = null;
+  if (bjLocal) { const k = bjLocal.mine(BJ_ME); if (k) { state.blackjack = k; saveSoon(); } }
+  bjLocal = null;
+}
+function bjMove(c) {
+  const op = String(c.op || '');
+  if (op === 'here') {
+    if (c.on) bjScreens.add(String(c.key || '')); else bjScreens.delete(String(c.key || ''));
+    bjSync();
+    if (c.on && bjLast) { const x = visWins.find((v) => v.key === String(c.key || '')); if (x && !x.win.isDestroyed()) x.win.webContents.send('cmd', { type: 'bj', v: bjLast.v, mode: bjLast.mode, hub: bjLast.hub }); }
+    return;
+  }
+  if (op === 'ptr') {
+    if (bjAt && bjAt !== 'local' && state.share.cursor) chat.bj(bjAt, { t: 'bj-ptr', x: c.x >= 0 ? +c.x : -1, y: c.y >= 0 ? +c.y : -1 });
+    return;
+  }
+  if (op === 'tap') { if (bjAt) { sfxPlay(['bjChip']); if (SHOT_DIR) bjHeard.push('bjChip'); } return; }
+  if ((op === 'stand' || op === 'sit') && bjAt) {       // up from your seat (a bet not dealt yet comes back; a hand in play stands), or back down
+    bjStanding = op === 'stand';
+    if (bjAt === 'local') {
+      if (op === 'stand') { const k = bjLocal.mine(BJ_ME); if (k) { state.blackjack = k; saveSoon(); } bjLocal.leave(BJ_ME); }
+      else bjLocal.sit(BJ_ME, 'You', state.blackjack);
+      bjLocal.tick(); bjLocalPush();
+    } else { const hub = bjAt; chat.bj(hub, { t: 'bj-' + op }).then((r) => { if (r && r.error && bjAt === hub) bjNote(r.error); }); }
+    return;
+  }       // a chip added to the bet you're making (only you hear it)
+  if (!['bet', 'insure', 'act'].includes(op) || !bjAt) return;
+  if (bjAt === 'local') {
+    const r = op === 'bet' ? bjLocal.bet(BJ_ME, +c.amount) : op === 'insure' ? bjLocal.insure(BJ_ME, !!c.yes) : bjLocal.act(BJ_ME, String(c.do || ''));
+    bjLocal.tick(); bjLocalPush();
+    if (r.error) bjNote(r.error);
+    return;
+  }
+  const hub = bjAt;
+  chat.bj(hub, { t: 'bj-' + op, amount: +c.amount || 0, yes: !!c.yes, do: String(c.do || '') }).then((r) => { if (r && r.error && bjAt === hub) bjNote(r.error); });
+}
+function bjFromHub(hub, m) {
+  if (hub !== bjAt) return;
+  if (m.t === 'bj-view') { if (m.v) bjShow(m.v, 'hub'); else { bjShow(null, ''); bjNote('You sat down at this table on another PC.'); } }
+  else if (m.t === 'bj-ptrs') {
+    const blocked = new Set(chat.info().blocked || []);
+    bjSend({ ptrs: ptrClean(m.list).filter((q) => !blocked.has(q.id)) });
+  }
+}
 // The mouse moving over one of Drift's screens, told to that screen (at most 5 times a second, only while it moves): over a
 // web page the window can't see it, and the chat button over Surf (renderer/chat.js coWake) shows while it moves.
 let lastCursor = '';
@@ -1836,6 +1966,8 @@ function startChat() {
       if (String(m.t).startsWith('voice-')) { onVoiceEvent(hub, m); return; }       // for the call's window, not the panels
       if (String(m.t).startsWith('ss-')) { onSsEvent(hub, m); return; }       // the Surf stream's: for its windows
       if (String(m.t).startsWith('ft-')) { onFtEvent(hub, m); return; }       // file transfers': for the transfer window (the panels get ftState)
+      if (String(m.t).startsWith('bj-')) { bjFromHub(hub, m); return; }       // the blackjack table's: for the screens showing it
+      if (m.t === 'ready' && hub === bjAt) chat.bj(hub, { t: bjStanding ? 'bj-watch' : 'bj-sit' });       // back after a reconnect: at the table again (with fresh chips), standing if you were
       if (m.t === 'media-vote') onMediaVote(hub, m.vote);
       if (m.t === 'live-no' && p2p.role() === 'host' && liveHub === hub) { mediaRefused(hub, m); return; }
       if ((m.t === 'bc-off' || m.t === 'bc-watch-off') && m.why && m.why !== 'ended') say(m.why);       // e.g. the host stopped your broadcast
@@ -1854,23 +1986,28 @@ function startChat() {
       }
     },
     log: chatLog,
+    bjTimes: BJ_FAST,       // (tests: the hub's blackjack table plays fast too)
     connectOnStart: false,       // online in a hub means on its stream (and sharing what you pick): only once you click it
   });
   chat.setName(shareName());
-  if (!SHOT_DIR || process.env.DRIFT_TESTCHAT || process.env.DRIFT_TESTSTREAM || process.env.DRIFT_TESTSS || process.env.DRIFT_TESTPICS || process.env.DRIFT_TESTFT) chat.start().catch((e) => console.log('chat: ' + e.message));
+  if (!SHOT_DIR || process.env.DRIFT_TESTCHAT || process.env.DRIFT_TESTSTREAM || process.env.DRIFT_TESTSS || process.env.DRIFT_TESTPICS || process.env.DRIFT_TESTFT || process.env.DRIFT_TESTBJ) chat.start().catch((e) => console.log('chat: ' + e.message));
   publicIp().then((ip) => { chatPub = ip; }).catch(() => {});
 }
 // ---- Hub sounds (renderer/sfx.js makes them, in the hidden audio window, so they never double across monitors) ----
 // Each one is a change this PC can see: a small picture of the hub is taken whenever something may have changed, and
 // compared with the last one. The first picture only sets the scene, so starting Drift is quiet.
 const SFX_NAMES = new Set(['join', 'leave', 'peerJoin', 'peerLeave', 'mute', 'unmute', 'connect', 'disconnect', 'lost',
-  'liveOn', 'liveOff', 'viewerJoin', 'viewerLeave', 'bcStart', 'shareOn', 'shareOff', 'message']);
+  'liveOn', 'liveOff', 'viewerJoin', 'viewerLeave', 'bcStart', 'shareOn', 'shareOff', 'message',
+  'bjCard', 'bjDeal', 'bjChip', 'bjTurn', 'bjWin', 'bjBlackjack', 'bjPush', 'bjLose', 'bjBust', 'bjOut', 'bjBack']);       // (the Blackjack table's: bjSounds)
 let sfxWas = null, sfxJoinedAt = 0;
 function sfxPlay(names, preview = false) {
-  if ((!state.sfx.on && !preview) || !audioWin || audioWin.isDestroyed()) return;
+  // the Blackjack table's sounds have their own switch (Sounds → Blackjack table sounds): hub sounds off needn't hush the cards
+  const on = names.every((n) => String(n).startsWith('bj')) ? state.sfx.table !== false : state.sfx.on;
+  if ((!on && !preview) || !audioWin || audioWin.isDestroyed()) return;
   const vol = mixGain().master * state.sfx.volume * state.sfx.volume;       // (squared, like the mixer's sliders: the slider feels even)
-  if (vol > 0) audioWin.webContents.send('cmd', { type: 'sfx', names, vol });
+  if (vol > 0) { audioWin.webContents.send('cmd', { type: 'sfx', names, vol }); if (SHOT_DIR) sfxSent.push(...names); }
 }
+const sfxSent = [];       // (tests: every sound that went to the audio window)
 function sfxSnap() {
   const I = chat.info(), me = chat.myId(), act = activeHub(), h = I.hubs.find((x) => x.id === act && x.status === 'connected');
   const inVoice = !!(h && !state.voice.deaf && h.room && h.room.in), mine = I.bc && I.bc.mine, p = p2p.info();
@@ -3210,12 +3347,15 @@ const SCENES = ['aurora', 'nebula', 'silk', 'water', 'stars', 'lava', 'ridges', 
   'sierpinski', 'sorting', 'life', 'maze', 'julia', 'hilbert', 'voronoi',
   'polyhedra', 'globe', 'tunnel', 'cubes', 'lattice', 'menger',
   'quasi', 'hyperbolic', 'apollonian', 'phyllotaxis', 'rose', 'chladni',
-  'lake', 'pines', 'dunes', 'seaside', 'meadow', 'canyon'];
+  'lake', 'pines', 'dunes', 'seaside', 'meadow', 'canyon', 'blackjack'];
+// The Games room's scenes (docs/plans/blackjack.md §1): picked from their tile only. Neither the automatic changes nor Next /
+// Previous land on one, and an automatic change never takes you away from one (you may be in the middle of a hand).
+const GAMES = ['blackjack'];
 function stepScene(dir, shuffle, auto) {
-  // automatic changes only pick the scenes ticked for rotation; Next / Previous still go through all of them
-  const pool = auto ? SCENES.filter((id) => !state.cycleSkip.includes(id)) : SCENES;
+  // automatic changes only pick the scenes ticked for rotation; Next / Previous still go through all of them (but the games)
+  const pool = (auto ? SCENES.filter((id) => !state.cycleSkip.includes(id)) : SCENES).filter((id) => !GAMES.includes(id));
   const next = (cur) => {
-    if (auto && cur === 'video') return cur;   // auto-change never interrupts your video
+    if (auto && (cur === 'video' || GAMES.includes(cur))) return cur;   // auto-change never interrupts your video, or a game
     const others = pool.filter((id) => id !== cur);
     if (!others.length) return cur;
     if (shuffle) return others[Math.floor(Math.random() * others.length)];
@@ -3633,6 +3773,7 @@ ipcMain.on('cmd', async (e, c) => {
       if (remote.ctrl) p2p.send({ t: 'cmd', a: 'music', do: c.do }); else say(`Only ${p2p.info().host || 'the host'} can control the music`);
       break;
     case 'web-ptr': if (surfMode() === 'stream') ssOut(state.share.cursor ? { t: 'ptr', x: +c.x, y: +c.y } : { t: 'ptr', x: -1, y: -1 }); break;       // where this PC's mouse is over the Surf stream (-1: off it, or cursor sharing is off)
+    case 'bj': bjMove(c); break;       // the Blackjack table: a screen showing it or not, a move, the pointer over it
     case 'vid-ptr': {       // where this PC's mouse is over the shared video, while it's paused (-1: off it, or cursor sharing is off)
       const at = c.x >= 0 && state.share.cursor ? { x: +c.x, y: +c.y } : null;
       if (p2p.role() === 'host') vptrSet('host', shareName(), at);
@@ -5227,6 +5368,228 @@ async function runShots() {
         tl('no .part files are left', !fs.readdirSync(path.join(dl, 'Drift')).some((f) => f.endsWith('.drift-part')));
         await step('done');
       }
+    } catch (e) {
+      if (!/^stopped early/.test(e && e.message)) { tl('failed: ' + (e && e.stack || e), false); abort('crashed'); }
+      if (aborted()) res.stopped = fs.readFileSync(abortFile, 'utf8');
+    }
+    fs.writeFileSync(path.join(outDir, role + '.json'), JSON.stringify(res, null, 1));
+    await step('end', 20000);
+  }
+  if (process.env.DRIFT_TESTBJ) {     // the Blackjack scene (docs/plans/blackjack.md), two copies of Drift (scripts/test-blackjack.js): =host or =guest.
+    // Alone first, each at its own table: the rotation leaves the table alone, a hand is played with the real buttons, the
+    // insurance and surrender buttons work, and running out of chips sits you out, then buys you back in. Then the host makes a
+    // hub, the guest joins, and both are seated at the hub's table side by side: fresh chips, both bet, turns in seat order and
+    // only yours to play, each other's pointer over the table, the hub bar says where they are. DRIFT_BJ_FAST plays it in seconds.
+    // DRIFT_TESTCODE = a file for the invite, DRIFT_TESTBJ_OUT = a folder for each step's marker and what each saw (<role>.json).
+    const role = process.env.DRIFT_TESTBJ, codeFile = process.env.DRIFT_TESTCODE, outDir = process.env.DRIFT_TESTBJ_OUT, other = role === 'host' ? 'guest' : 'host';
+    const name = role === 'host' ? 'Hosty' : 'Guesty', wc = visWins[0].win.webContents, js = (c) => pageJs(wc, c);
+    const abortFile = path.join(outDir, 'abort'), aborted = () => fs.existsSync(abortFile);
+    const abort = (why) => { try { fs.writeFileSync(abortFile, `${role}: ${why}`); } catch { /* fine */ } };
+    const until = async (f, ms = 30000) => { for (let t = 0; t < ms && !aborted(); t += 250) { if (await f()) return true; await wait(250); } return !!(await f()); };
+    const step = async (s, ms = 120000) => { fs.writeFileSync(path.join(outDir, `${role}-${s}`), ''); log.push(`bj ${role}: at ${s}`); return until(() => fs.existsSync(path.join(outDir, `${other}-${s}`)), ms); };
+    const res = { role, name }, tl = (k, v) => { res[k] = v; log.push(`bj ${role}: ${k} ${JSON.stringify(v)}`); };
+    const need = (k, v) => { tl(k, v); if (!v) { abort(k); throw new Error('stopped early: ' + k); } };
+    const hubNow = () => chat.info().hubs.find((h) => h.status === 'connected');
+    const V = () => (bjLast ? bjLast.v : null), mine = () => { const v = V(); return v && v.you >= 0 ? v.seats[v.you] : null; };
+    // the window the table is on (in Span, only the middle screen's: with more than one monitor that isn't always the first)
+    const tw = () => { const x = visWins.find((y) => bjScreens.has(y.key) && !y.win.isDestroyed()); return x ? x.win.webContents : wc; };
+    const page = () => pageRun(tw(), () => {       // the table as it's drawn
+      const t = document.querySelector('#bjTable'), q = (s) => t.querySelector(s);
+      return { on: t.classList.contains('on') && t.classList.contains('live'), mode: (q('.bjMode') || {}).textContent || '', status: q('.bjStatus').innerText.replace(/\n+/g, ' '),
+        bar: q('.bjBar').innerText.replace(/\n+/g, ' | '), btns: [...t.querySelectorAll('.bjBar button')].map((b) => b.textContent + (b.disabled ? ' (off)' : '')),
+        seats: [...t.querySelectorAll('.bjSeat')].map((s) => (s.classList.contains('empty') ? '' : s.querySelector('.nm').textContent)),
+        faces: [...t.querySelectorAll('.bjSeat')].map((s) => { const f = s.querySelector('.bjTag .face'); return !f ? '' : f.querySelector('img') ? 'picture' : f.textContent; }),
+        board: q('.bjBoard').classList.contains('on') ? q('.bjBoard').innerText.replace(/\n+/g, ' | ') : null,
+        ptrs: [...document.querySelectorAll('#bjPtrs .ptr')].map((p) => p.lastChild.textContent), felt: q('.bjFelt').getBoundingClientRect().width };
+    });
+    const press = (label) => pageRun(tw(), (l) => { const b = [...document.querySelectorAll('#bjTable .bjBar button')].find((x) => x.textContent === l && !x.disabled); if (b) b.click(); return !!b; }, label);
+    const scene = (id) => patch({ scene: id });
+    // play the hand out with Stand (and No to insurance), till it's settled
+    const standOut = async (ms = 30000) => until(async () => {
+      const v = V(); if (!v) return false;
+      if (v.phase === 'done') return true;
+      if (v.phase === 'insurance' && mine() && mine().insure) await press('No thanks');
+      else if (v.phase === 'turns' && v.turn && v.turn.seat === v.you) await press('Stand');
+      return false;
+    }, ms);
+    fs.mkdirSync(outDir, { recursive: true });
+    patch({ music: { source: 'off' }, share: { internet: false, name, wait: false, cursor: true }, voice: { talk: false, deaf: true, direct: false, pin: '' }, autoCycle: 0,
+      sfx: { on: false, table: true } });       // (the hub's sounds off, the table's on: each has its own switch)
+    try {
+      // ---- alone ----
+      scene('blackjack');
+      need('the table comes up, dealt here', await until(() => bjAt === 'local' && !!V() && V().phase === 'betting', 15000));
+      let p = await page();
+      log.push('bj: alone ' + JSON.stringify(p));
+      tl('it shows, on its own', await until(async () => { p = await page(); return p.on && p.mode === 'Just you' && p.seats.filter(Boolean).join() === 'You' && p.felt > 400; }, 5000));
+      if (role === 'host') {       // the rotation: never onto the table, never away from it
+        patch({ autoCycle: 1, cycleSkip: SCENES.filter((id) => id !== 'aurora' && id !== 'lake' && !GAMES.includes(id)) });
+        stepScene(1, false, true);
+        tl('an automatic change leaves the table be', state.scene === 'blackjack');
+        stepScene(1, false, false);
+        tl('Next goes on to a scene', state.scene !== 'blackjack' && SCENES.includes(state.scene));
+        let landed = false;
+        for (let k = 0; k < 20; k++) { stepScene(1, true, true); if (state.scene === 'blackjack') landed = true; }
+        for (let k = 0; k < 40; k++) { stepScene(1, false, false); if (state.scene === 'blackjack') landed = true; }
+        tl('...and neither lands on the table', !landed);
+        patch({ autoCycle: 0, cycleSkip: [] });
+        scene('aurora'); await until(() => bjAt === '', 5000);       // (the screen fades between scenes: off the table for sure first)
+        scene('blackjack');
+        need('back at the table', await until(() => bjAt === 'local' && !!mine(), 10000));
+        const tiles = await pageRun(wc, () => { const t = document.querySelector('#tiles .tile[data-id="blackjack"]'); const h = t && t.parentElement.previousElementSibling; return { tile: !!t, rot: !!(t && t.querySelector('.rot')), heading: h ? h.textContent : '' }; });
+        tl('its tile is in the Games room, with no rotation tick', tiles.tile && !tiles.rot && tiles.heading === 'Games room');
+      }
+      const c0 = mine().chips;
+      await pageRun(tw(), () => document.querySelector('#bjTable .bjBar .chip.c100').click());
+      await pageRun(tw(), () => document.querySelector('#bjTable .bjBar .chip.c25').click());
+      p = await page();
+      tl('the chips add up to a bet', p.btns.includes('Bet 125'));
+      need('Bet deals the hand', await press('Bet 125') && await until(() => V().phase !== 'betting', 8000));
+      tl('...taking the bet from the chips', mine().chips === c0 - 125 || V().phase === 'done');       // (done at once: the dealer had blackjack)
+      need('the hand plays out', await standOut());
+      const net = mine().net;
+      tl('settled: the chips say how it went', mine().chips === c0 + net && ['win', 'blackjack', 'push', 'lose', 'bust', 'surrender'].includes(mine().hands[0].result));
+      await wait(400);
+      tl('...and they\'re kept in the settings', state.blackjack.chips === mine().chips);
+      // insurance and surrender, with the cards stacked: the dealer shows an ace (no blackjack under it), the player has 16
+      need('next hand', await until(() => V().phase === 'betting' && !mine().bet, 10000));
+      bjLocal._stack(['Ts', 'Ad', '6h', '7c']);
+      const c1 = mine().chips;
+      bjMove({ op: 'bet', amount: 100 });
+      need('an ace up: Insurance?', await until(async () => { p = await page(); return V().phase === 'insurance' && p.btns.includes('Insure') && p.btns.includes('No thanks'); }, 5000));
+      await press('No thanks');
+      need('then your turn, with Surrender', await until(async () => { p = await page(); return V().phase === 'turns' && p.btns.includes('Surrender') && p.btns.includes('Double'); }, 5000));
+      await press('Surrender');
+      need('surrendered', await until(() => V().phase === 'done', 8000));
+      tl('surrender gives half back', mine().chips === c1 - 50 && mine().hands[0].result === 'surrender');
+      // crapping out: down to 10 chips, a losing hand stacked, then 20 s (3 s here) out
+      scene('aurora'); await until(() => bjAt === '', 5000);
+      state.blackjack = { chips: 10, outUntil: 0 };
+      scene('blackjack');
+      need('back with 10 chips', await until(() => bjAt === 'local' && !!mine() && mine().chips === 10 && V().phase === 'betting', 8000));
+      bjLocal._stack(['Ts', '9d', '6h', 'Tc']);
+      bjMove({ op: 'bet', amount: 10 });
+      need('the last 10 lost', await standOut(10000) && mine().chips === 0);
+      need('out of chips', await until(async () => { p = await page(); return mine().outMs > 0 && /Out of chips/.test(p.bar); }, 5000));
+      tl('...for the wait, kept in the settings too', state.blackjack.outUntil > Date.now());
+      bjMove({ op: 'bet', amount: 10 });
+      tl('no bet while out', !mine().bet);
+      scene('aurora'); await until(() => bjAt === '', 5000); scene('blackjack');
+      tl('standing up and sitting down doesn\'t skip it', await until(() => bjAt === 'local' && !!mine(), 5000) && mine().outMs > 0);
+      tl('back in with 1,000 after the wait', await until(() => mine() && !mine().outMs && mine().chips === 1000, 8000));
+      need('Stand up', await until(() => V().phase === 'betting', 8000) && await press('Stand up'));
+      tl('standing: no seat, watching, with Sit down', await until(async () => { p = await page(); return V().you === -1 && !p.seats.some(Boolean) && p.btns.includes('Sit down') && /standing/.test(p.bar); }, 5000));
+      await press('Sit down');
+      tl('Sit down: back in the seat, chips as they were', await until(() => !!mine() && mine().chips === 1000, 5000));
+      log.push('bj: sounds ' + bjHeard.join(' '));
+      tl('the table\'s sounds: the deal, cards, chips, your turn, each result, out and back in', ['bjDeal', 'bjCard', 'bjChip', 'bjTurn', 'bjLose', 'bjOut', 'bjBack'].every((n) => bjHeard.includes(n))
+        && bjHeard.some((n) => ['bjWin', 'bjBlackjack', 'bjPush', 'bjLose'].includes(n)));
+      tl('...and they reach the audio window, with the hub\'s sounds switched off', !!audioWin && ['bjDeal', 'bjChip', 'bjTurn', 'bjOut'].every((n) => sfxSent.includes(n)));
+      const sentBefore = sfxSent.length;
+      patch({ sfx: { table: false } });
+      bjMove({ op: 'tap' });
+      tl('the table\'s own switch hushes them', sfxSent.length === sentBefore);
+      patch({ sfx: { table: true } });
+      tl('the hub\'s sounds stay off meanwhile', (sfxPlay(['message']), !sfxSent.slice(sentBefore).includes('message')));
+
+      // ---- side by side, at the hub's table ----
+      p = await page();
+      tl('alone, the seat has no picture', p.faces.every((f) => !f));
+      tl('...and there\'s no board of biggest pots (that\'s a hub\'s)', p.board === null);
+      if (role === 'host') {
+        const pic = await pageRun(wc, () => { const c = document.createElement('canvas'); c.width = c.height = 96; const g = c.getContext('2d'); g.fillStyle = '#e0457b'; g.fillRect(0, 0, 96, 96); return c.toDataURL('image/webp', 0.8); });
+        log.push('bj host: picture ' + JSON.stringify(chat.setAvatar(pic)));       // (the guest has none: their initial shows)
+        wc.send('cmd', { type: 'show-panel', tab: 'hub' }); await wait(800);
+        await js("document.querySelector('#chHost').click()");
+        need('hub up', await until(() => !!hubNow()));
+        fs.writeFileSync(codeFile, (await chat.invite(hubNow().id)).code || '');
+      } else {
+        need('the host\'s invite', await until(() => fs.existsSync(codeFile) && !!fs.readFileSync(codeFile, 'utf8'), 120000));
+        wc.send('cmd', { type: 'show-panel', tab: 'hub' }); await wait(800);
+        await js(`document.querySelector('#chCode').value = ${JSON.stringify(fs.readFileSync(codeFile, 'utf8'))}; document.querySelector('#chJoin').click()`);
+        need('joined the hub', await until(() => !!hubNow(), 60000));
+      }
+      need('at the hub\'s table now', await until(() => hubNow() && bjAt === hubNow().id && !!V() && V().you >= 0, 15000));
+      need('both seated, side by side', await until(() => V().seats.filter(Boolean).length === 2, 30000));
+      p = await page();
+      tl('the table says it\'s the hub\'s, with both of us at it', await until(async () => { p = await page(); return p.mode === 'Hub table' && p.seats.filter(Boolean).length === 2 && p.seats.includes('You') && p.seats.includes(role === 'host' ? 'Guesty' : 'Hosty'); }, 5000));
+      tl('fresh chips at the hub', mine().chips === 1000);
+      tl('each seat wears its player\'s picture from the hub (the host\'s), or their initial (the guest has none)', await until(async () => {
+        p = await page();
+        const at = (n) => p.faces[p.seats.indexOf(n)];
+        return at(role === 'host' ? 'You' : 'Hosty') === 'picture' && at(role === 'host' ? 'Guesty' : 'You') === 'G';
+      }, 10000));
+      log.push('bj: faces ' + JSON.stringify(p.faces));
+      tl('the hub bar says the other is at the table', await until(() => { const h = hubNow(), m = h && h.members.find((x) => x.name === (role === 'host' ? 'Guesty' : 'Hosty')); return !!m && m.at === 'blackjack'; }, 10000));
+      await step('seated');
+      bjMove({ op: 'ptr', x: 0.3, y: 0.6 });
+      await step('ptr');
+      tl('their pointer shows over my table, by name', await until(async () => (await page()).ptrs.includes(role === 'host' ? 'Guesty' : 'Hosty'), 8000));
+      await step('ptrs-seen');
+      need('a betting round', await until(() => V().phase === 'betting', 15000));
+      if (role === 'guest') await wait(500);       // (one bets first: the round waits for the other)
+      bjMove({ op: 'bet', amount: role === 'host' ? 100 : 50 });
+      if (role === 'host') tl('the round waits for everyone to bet', await until(() => !!mine().bet, 3000) && (V().phase === 'betting' || V().seats.filter((s) => s && s.bet).length === 2));
+      need('both bets in: dealt to both', await until(() => V().phase !== 'betting' && V().seats.filter((s) => s && s.hands.length).length === 2, 15000));
+      tl('each sees the other\'s cards', V().seats.every((s) => !s || s.hands[0].cards.length >= 2));
+      log.push('bj: layout ' + JSON.stringify(await pageRun(tw(), () => {       // where things are, for checking by the numbers
+        const r = (e) => { if (!e) return null; const x = e.getBoundingClientRect(); return [Math.round(x.left), Math.round(x.top), Math.round(x.right), Math.round(x.bottom)]; };
+        const q = (s) => document.querySelector(s);
+        return { win: [innerWidth, innerHeight], felt: r(q('#bjTable .bjFelt')), dealer: r(q('#bjTable .bjDealer')), status: r(q('#bjTable .bjStatus')), bar: r(q('#bjTable .bjBar')),
+          panel: r(q('#panel')), arcs: ['.t1', '.t2', '.t3', '.band', '.brand'].map((s) => r(q('#bjTable .bjArt ' + s))),
+          side: ['.bjDiscard', '.bjTray', '.bjSign', '.bjShoe'].map((s) => r(q('#bjTable ' + s))), sign: q('#bjTable .bjSign').innerText.replace(/\n+/g, ' | '),
+          backs: document.querySelectorAll('#bjTable .bjCard.back .bjMark').length, circles: document.querySelectorAll('#bjTable .bjSeat:not(.empty) .bjChips').length,
+          cards: [...document.querySelectorAll('#bjTable .bjSeat:not(.empty) .bjHand .bjCards')].map(r), seats: [...document.querySelectorAll('#bjTable .bjSeat')].map(r), hands: [...document.querySelectorAll('#bjTable .bjSeat:not(.empty) .bjHands')].map(r) };
+      })));
+      // On the other's turn, look (no buttons; the hub says no to a move) and leave a marker; on yours, wait for theirs (a few
+      // seconds at most: a turn here is 6 s) before Stand. Someone dealt blackjack has no turn, so the other has nothing to look at.
+      let saw = false, notMine = false, refused = false, myTurnAt = 0;
+      const looked = path.join(outDir, `${role}-looked`), theyLooked = () => fs.existsSync(path.join(outDir, `${other}-looked`));
+      const played = await until(async () => {
+        const v = V(); if (!v) return false;
+        if (v.phase === 'done') return true;
+        if (v.phase === 'insurance' && mine().insure) await press('No thanks');
+        else if (v.phase === 'turns' && v.turn && v.turn.seat !== v.you && !saw) {
+          const b = await pageRun(tw(), () => document.querySelectorAll('#bjTable .bjBar button[data-do]').length);
+          const r = await chat.bj(hubNow().id, { t: 'bj-act', do: 'hit' });
+          saw = true; notMine = b === 0; refused = !!r.error;
+          fs.writeFileSync(looked, '');
+        } else if (v.phase === 'turns' && v.turn && v.turn.seat === v.you) {
+          if (!myTurnAt) myTurnAt = Date.now();
+          if (theyLooked() || Date.now() - myTurnAt > 4000) await press('Stand');
+        }
+        return false;
+      }, 40000);
+      need('the round plays out, both settled against the dealer', played && V().seats.filter((s) => s && s.hands.length && s.hands[0].result).length === 2);
+      {       // the hub's board of biggest pots (a new hub: empty till now) has this round's winners on it, with what they won
+        const won = V().seats.filter((s) => s && s.net > 0).map((s) => ({ name: s.name, net: s.net }));
+        let b = [];
+        tl(`the biggest pots: the round's winners on the hub's board (${won.length ? won.map((w) => w.name + ' +' + w.net).join(', ') : 'nobody won'})`,
+          await until(async () => { b = V().board || []; p = await page(); return b.length === won.length && won.every((w) => b.some((x) => x.name === w.name && x.win === w.net)) && p.board !== null && (won.length ? won.every((w) => p.board.includes('+' + w.net)) : /None yet/.test(p.board)); }, 5000));
+        log.push('bj: board ' + JSON.stringify(b) + ' shown ' + JSON.stringify(p.board));
+      }
+      if (saw) { tl('on their turn I have no buttons', notMine); tl('...and the hub refuses my move', refused); }
+      else log.push(`bj ${role}: (they had blackjack: no turn of theirs to look at)`);
+      await step('played');
+      if (role === 'guest') {       // up from the seat, still at the table; then down again
+        need('a hand over, back to betting', await until(() => V().phase === 'betting', 15000));
+        need('Stand up', await press('Stand up'));
+        tl('standing at the hub\'s table: no seat, still watching it', await until(async () => { p = await page(); return V().you === -1 && p.seats.filter(Boolean).length === 1 && p.btns.includes('Sit down'); }, 8000));
+        await step('stood');
+        await press('Sit down');
+        tl('Sit down: a seat again', await until(() => V().you >= 0 && V().seats.filter(Boolean).length === 2, 8000));
+        await step('sat');
+      } else {
+        tl('they stood up: their seat empties', await until(() => V().seats.filter(Boolean).length === 1, 20000));       // (then the marker: they sit back down only after this)
+        await step('stood');
+        tl('...and sat back down', await until(() => V().seats.filter(Boolean).length === 2, 20000));       // (before the marker: they leave after it)
+        await step('sat');
+      }
+      if (role === 'guest') {
+        scene('aurora');
+        tl('leaving: no longer at the table', await until(() => bjAt === '', 5000));
+      } else tl('the guest leaves: their seat goes', await until(() => V() && V().seats.filter(Boolean).length === 1, 15000));
+      await step('done');
     } catch (e) {
       if (!/^stopped early/.test(e && e.message)) { tl('failed: ' + (e && e.stack || e), false); abort('crashed'); }
       if (aborted()) res.stopped = fs.readFileSync(abortFile, 'utf8');

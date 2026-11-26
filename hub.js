@@ -33,6 +33,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { wire, ipBytes, ipText, localAddrs } = require('./p2p');
 const createTurn = require('./turn');
+const { createTable } = require('./blackjack');
 
 const VERSION = 1;
 const LIMITS = { line: 256 * 1024, text: 4000, name: 24, channel: 32, channels: 50, page: 100, actions: 10, perSecs: 10, connections: 64, avatar: 14000, voice: 16, talkers: 8, signals: 200, broadcasts: 4, viewers: 7, bcTitle: 80, bcThumb: 200000, surfWatchers: 7,
@@ -176,6 +177,7 @@ module.exports = function createHub(opts) {
     CREATE INDEX IF NOT EXISTS offers_by_msg ON offers (msg);
     CREATE TABLE IF NOT EXISTS reactions (msg INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE, who TEXT NOT NULL, emoji TEXT NOT NULL,
       at INTEGER NOT NULL, PRIMARY KEY (msg, who, emoji));
+    CREATE TABLE IF NOT EXISTS bj_pots (member TEXT PRIMARY KEY, win INTEGER NOT NULL, blackjack INTEGER NOT NULL DEFAULT 0, at INTEGER NOT NULL);
   `);
   for (const col of ['avatar TEXT', 'av TEXT']) { try { db.exec(`ALTER TABLE members ADD COLUMN ${col}`); } catch { /* there already */ } }       // added after the first hubs were made
   const q = (sql) => db.prepare(sql);
@@ -234,6 +236,9 @@ module.exports = function createHub(opts) {
     offer: q('SELECT o.*, m.author, m.ch FROM offers o JOIN messages m ON m.id = o.msg WHERE o.id = ?'),
     offersBy: q('SELECT COUNT(*) n FROM offers o JOIN messages m ON m.id = o.msg WHERE m.author = ? AND o.gone = 0'),
     dropOffer: q('UPDATE offers SET gone = 1 WHERE id = ?'),
+    // the blackjack table's biggest pots: each member's best round (kept, unlike their chips), and the top five
+    bjPot: q('INSERT INTO bj_pots (member, win, blackjack, at) VALUES (?, ?, ?, ?) ON CONFLICT (member) DO UPDATE SET win = excluded.win, blackjack = excluded.blackjack, at = excluded.at WHERE excluded.win > bj_pots.win'),
+    bjBoard: q('SELECT p.member, p.win, p.blackjack, p.at FROM bj_pots p JOIN members m ON m.id = p.member WHERE m.banned = 0 ORDER BY p.win DESC, p.at ASC LIMIT 5'),
   });
   // Reactions on a message, in the order they were first given: [{ e, who: [member ids] }]
   function reactsOf(id) {
@@ -267,7 +272,7 @@ module.exports = function createHub(opts) {
   // ---- connections ----
   const online = new Map();       // member id -> Set of sessions (a member may be on two PCs)
   const mics = new Map();         // member id -> does their PC have a microphone (only while online)
-  const wheres = new Map();       // member id -> the screen their Drift shows ('scenes' | 'media' | 'surf' | 'broadcast'), for the hub bar's jump to it (only while online)
+  const wheres = new Map();       // member id -> the screen their Drift shows ('scenes' | 'media' | 'surf' | 'broadcast' | 'blackjack'), for the hub bar's jump to it (only while online)
   const lives = new Map();        // member id -> what they're sharing right now: { from, code, title, watching, since, reach, place }. Never stored.
   const liveList = () => [...lives.values()].map(({ place: _p, ...l }) => l);
   // ---- reach: can everyone online get to a share? ----
@@ -297,6 +302,76 @@ module.exports = function createHub(opts) {
   const sessions = new Set();
   let server = null, port = 0;
   const everyone = (m, but) => { const line = JSON.stringify(m); for (const s of sessions) if (s.id && s !== but) s.wire.send(line); };
+
+  // ---- the blackjack table (docs/plans/blackjack.md §5): one per hub, dealt here ----
+  // Members at it send what they want to do (bj-sit, or bj-watch to look on; bj-bet, bj-insure, bj-act; bj-stand to give up their
+  // seat and keep looking on; bj-leave), the rules (blackjack.js) decide, and
+  // everyone at the table gets the table as they see it (bj-view) whenever it changes. Nothing is kept: chips start fresh each
+  // time someone sits, and only a crapped-out member's wait is remembered (in the table) so standing up doesn't skip it.
+  // Where everyone's mouse is over the table goes round too (bj-ptr up, bj-ptrs down), at most 25 times a second.
+  // The biggest pots: whenever a round settles, each member's winnings for it (net, over all their hands) beat their record
+  // or don't; the top five go out with the table (board), with how long ago each was set (ago, so a new one can light up).
+  const bj = createTable({ times: opts.bjTimes, onSettle: (list) => { const now = Date.now(); for (const x of list) if (x.net > 0 && S.member.get(x.id)) S.bjPot.run(x.id, Math.floor(x.net), x.blackjack ? 1 : 0, now); } });
+  const bjAt = new Map();       // member id -> their session at the table, seated or looking on (one: the last PC they came to it from)
+  const bjPtrs = new Map();     // member id -> { x, y } over the table
+  let bjSent = -1, bjTimer = null, bjPtrTimer = null;
+  const bjBoard = () => { const now = Date.now(); return S.bjBoard.all().map((r) => ({ id: r.member, name: nameOf(r.member), win: r.win, bj: !!r.blackjack, ago: Math.max(0, now - r.at) })); };
+  function bjNews(force) {
+    if (!force && bj.version === bjSent) return;
+    bjSent = bj.version;
+    const board = bjBoard();
+    for (const [id, s] of bjAt) s.wire.send({ t: 'bj-view', v: { ...bj.view(id), board } });
+  }
+  function bjRun() {
+    if (bjTimer) return;
+    bjTimer = setInterval(() => {
+      bj.tick(); bjNews();
+      if (!bjAt.size && bj.phase === 'idle') { clearInterval(bjTimer); bjTimer = null; }
+    }, 200);
+  }
+  function bjPtrNews() {
+    if (bjPtrTimer) return;
+    bjPtrTimer = setTimeout(() => {
+      bjPtrTimer = null;
+      const all = [...bjPtrs].filter(([id]) => bjAt.has(id)).map(([id, q]) => ({ id, name: nameOf(id), x: q.x, y: q.y }));
+      for (const [id, s] of bjAt) s.wire.send({ t: 'bj-ptrs', list: all.filter((q) => q.id !== id) });
+    }, 40);
+  }
+  function bjLeave(id) {
+    if (!bjAt.delete(id)) return;
+    bj.leave(id);
+    if (bjPtrs.delete(id)) bjPtrNews();
+    bj.tick(); bjNews();
+  }
+  function bjMessage(s, m) {
+    if (m.t === 'bj-ptr') {       // mouse moves: many, small, and dropped past 30 a second
+      const now = Date.now();
+      if (now - (s.bjPtrAt || 0) >= 1000) { s.bjPtrAt = now; s.bjPtrN = 0; }
+      if (++s.bjPtrN > 30 || bjAt.get(s.id) !== s) return;
+      const ok = +m.x >= 0 && +m.x <= 1 && +m.y >= 0 && +m.y <= 1;
+      if (ok) bjPtrs.set(s.id, { x: +(+m.x).toFixed(4), y: +(+m.y).toFixed(4) }); else if (!bjPtrs.delete(s.id)) return;
+      bjPtrNews();
+      return;
+    }
+    if (slow(s, 'bj', 40)) return reply(s, m, { error: 'Slow down a little.' });
+    let r = { ok: true };
+    if (m.t === 'bj-sit' || m.t === 'bj-watch') {       // at the table: sitting down (or in line for a seat), or only looking on
+      const was = bjAt.get(s.id);
+      if (was && was !== s) was.wire.send({ t: 'bj-view', v: null });       // came to the table from another PC: this one takes it
+      bjAt.set(s.id, s);
+      if (m.t === 'bj-sit') r = bj.sit(s.id, nameOf(s.id));
+      bjRun(); bj.tick(); bjNews(true);
+      return reply(s, m, r);
+    }
+    if (m.t === 'bj-leave') { if (bjAt.get(s.id) === s) bjLeave(s.id); return reply(s, m, {}); }
+    if (bjAt.get(s.id) !== s) return reply(s, m, { error: 'Sit down at the table first.' });
+    if (m.t === 'bj-stand') { bj.leave(s.id); bj.tick(); bjNews(true); return reply(s, m, {}); }       // up from the seat (or out of the line), still looking on
+    if (m.t === 'bj-bet') r = bj.bet(s.id, +m.amount);
+    else if (m.t === 'bj-insure') r = bj.insure(s.id, !!m.yes);
+    else if (m.t === 'bj-act') r = bj.act(s.id, String(m.do || ''));
+    bj.tick(); bjNews();
+    return reply(s, m, r.error ? { error: r.error } : {});
+  }
   // ---- the media stream: one share at a time, changed by a vote ----
   // While someone is sharing, nobody else's share is listed unless they won a vote: more than half of the people online
   // when it was asked (the asker counts as a yes) agree within VOTE_MS. Whoever goes offline drops out of the count.
@@ -335,7 +410,7 @@ module.exports = function createHub(opts) {
 
   function onConnection(sock) {
     if (sessions.size >= LIMITS.connections) { sock.destroy(); return; }
-    const s = { id: null, nonce: crypto.randomBytes(24).toString('base64url'), wire: null, acts: { msg: [], other: [], live: [], sig: [], bc: [], react: [], part: [], offer: [], ft: [] }, typed: 0, upload: null, place: placeOf(sock.remoteAddress) };
+    const s = { id: null, nonce: crypto.randomBytes(24).toString('base64url'), wire: null, acts: { msg: [], other: [], live: [], sig: [], bc: [], react: [], part: [], offer: [], ft: [], bj: [] }, typed: 0, upload: null, place: placeOf(sock.remoteAddress) };
     sessions.add(s);
     const login = setTimeout(() => { if (!s.id) s.wire.close(); }, 15000);
     s.wire = wire(sock, null, (m) => { try { onMessage(s, m); } catch (e) { reply(s, m, { error: 'Something went wrong on the hub.' }); if (opts.log) opts.log('hub: ' + (e && e.stack || e)); } }, () => {
@@ -348,6 +423,7 @@ module.exports = function createHub(opts) {
       if (s.id && surfWatch.get(s.id) === s) { surfWatch.delete(s.id); relayCheck(s.id); relayCheck(ownerId); surfNews(); }
       if (s.id && voice.get(s.id) && voice.get(s.id).s === s) leaveRoom(s.id);
       ftSessionGone(s);
+      if (s.id && bjAt.get(s.id) === s) bjLeave(s.id);
     }, LIMITS.line);
     s.wire.send({ t: 'hello', v: VERSION, nonce: s.nonce, name: hubName, still: LIMITS.bcThumb });       // (still: the largest broadcast still it takes; a hub from before says nothing, and takes 14000 characters)
   }
@@ -593,7 +669,7 @@ module.exports = function createHub(opts) {
         return;
       }
       case 'where': {       // which screen this member's Drift shows: the hub bar jumps there when someone clicks them
-        const at = ['scenes', 'media', 'surf', 'broadcast'].includes(m.at) ? m.at : '';
+        const at = ['scenes', 'media', 'surf', 'broadcast', 'blackjack'].includes(m.at) ? m.at : '';
         if ((wheres.get(s.id) || '') === at) return;
         wheres.set(s.id, at);
         membersNews();
@@ -644,6 +720,7 @@ module.exports = function createHub(opts) {
       case 'bc-watch': return bcWatch(s, m);
       case 'bc-thumb': return bcThumb(s, m);
       case 'surf-watch': return surfWatchMsg(s, m);
+      case 'bj-sit': case 'bj-watch': case 'bj-stand': case 'bj-leave': case 'bj-bet': case 'bj-insure': case 'bj-act': case 'bj-ptr': return bjMessage(s, m);
       case 'surf-signal': {       // a watcher's setup message for the host, passed on as it is (signed by them)
         const d = m.d;
         if (surfWatch.get(s.id) !== s || !surf || String(m.to || '') !== ownerId || !svc || !d || typeof d !== 'object') return;
@@ -989,6 +1066,7 @@ module.exports = function createHub(opts) {
     stats: () => ({ online: online.size, sessions: sessions.size, members: S.members.all().length }),
     stop: () => new Promise((resolve) => {
       if (opts.log) opts.log('hub: stopping');
+      clearInterval(bjTimer); bjTimer = null; clearTimeout(bjPtrTimer);
       for (const s of sessions) { s.wire.send({ t: 'bye' }); s.wire.close(); }
       if (turn) { try { turn.close(); } catch { /* closed */ } turn = null; }
       if (!server) { db.close(); resolve(); return; }
