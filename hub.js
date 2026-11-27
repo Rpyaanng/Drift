@@ -156,7 +156,8 @@ const cleanMime = (t) => (/^[a-z0-9.+-]{1,40}\/[a-z0-9.+-]{1,80}$/i.test(String(
 const cleanChannel = (n) => String(n || '').toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9_-]/g, '').replace(/-{2,}/g, '-').replace(/^-|-$/g, '').slice(0, LIMITS.channel);
 
 // opts: dir (where the database and key live), owner (the host's public key, raw 32 bytes), name (what the hub is
-// called), addrs() (the addresses to put in invites), port (to listen on, 0 = any), host (to listen on).
+// called), addrs() (the addresses to put in invites), port (to listen on, 0 = any), host (to listen on), gameSettings(g)
+// (the host's settings for a game's table, e.g. Sketch & Guess's time, rounds and words; read between games).
 module.exports = function createHub(opts) {
   const { DatabaseSync } = require('node:sqlite');
   fs.mkdirSync(opts.dir, { recursive: true });
@@ -390,7 +391,7 @@ module.exports = function createHub(opts) {
     let x = games.get(g);
     if (!x) {
       x = { g, at: new Map(), ptrs: new Map(), sent: -1, timer: null, ptrTimer: null };
-      x.t = GAME_RULES[g]({ times: (opts.gameTimes || {})[g], fill: 2, onSettle: (list) => { const now = Date.now(); for (const r of list) if (r.score > 0 && !r.bot && S.member.get(r.id)) S.gameRecord.run(g, r.id, Math.floor(r.score), now); } });
+      x.t = GAME_RULES[g]({ times: (opts.gameTimes || {})[g], fill: 2, settings: opts.gameSettings ? () => opts.gameSettings(g) : undefined, onSettle: (list) => { const now = Date.now(); for (const r of list) if (r.score > 0 && !r.bot && S.member.get(r.id)) S.gameRecord.run(g, r.id, Math.floor(r.score), now); } });
       games.set(g, x);
     }
     return x;
@@ -411,8 +412,8 @@ module.exports = function createHub(opts) {
     gameInk(x);
     if (!force && x.t.version === x.sent) return;
     x.sent = x.t.version;
-    const board = gameBoard(x.g);
-    for (const [id, s] of x.at) s.wire.send({ t: 'game-view', g: x.g, v: { ...x.t.view(id), board } });
+    const records = gameBoard(x.g);       // (not "board": Hold'em's view has its own board, the cards in the middle)
+    for (const [id, s] of x.at) s.wire.send({ t: 'game-view', g: x.g, v: { ...x.t.view(id), records } });
   }
   function gameRun(x) {
     if (x.timer) return;

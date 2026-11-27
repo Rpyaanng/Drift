@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Sketch & Guess's rules (sketch.js), in plain Node with a fake clock and a short word list: a second, no Electron.
 //   node scripts/test-sketch-engine.js
-const { createTable, inkOp, norm, near } = require('../sketch.js');
+const { createTable, inkOp, norm, near, cleanSettings } = require('../sketch.js');
 
 let fails = 0, passes = 0;
 const ok = (name, cond, extra) => { if (cond) passes++; else { fails++; console.log('FAIL', name, extra !== undefined ? JSON.stringify(extra) : ''); } };
@@ -22,9 +22,10 @@ const begin = (t) => { t.tick(); t.wait(5000); };
 ok('guesses are compared loosely', norm('  Ice-Cream! ') === 'ice cream');
 ok('one letter off is close', near('giraffe', 'girafe') && near('giraffe', 'giraffes') && near('giraffe', 'giarffe') && !near('giraffe', 'gorilla'));
 ok('a pen stroke', JSON.stringify(inkOp({ k: 'pen', c: 3, w: 1, s: 7, p: [10, 20, 30, 40], q: 1 })) === '{"k":"pen","c":3,"w":1,"s":7,"p":[10,20,30,40],"q":1}');
-ok('off the sheet is clamped', inkOp({ k: 'rect', c: 0, w: 0, s: 1, f: 2, p: [-50, 20, 9999, 2000] }).p.join() === '0,20,1600,1000');
-ok('a shape needs two corners', inkOp({ k: 'rect', p: [1, 2, 3] }) === null);
-ok('no unknown kinds', inkOp({ k: 'text', p: [1, 2] }) === null && inkOp(null) === null);
+ok('off the sheet is clamped', inkOp({ k: 'pen', c: 0, w: 0, s: 1, p: [-50, 20, 9999, 2000] }).p.join() === '0,20,1600,1000');
+ok('a fill: one point and a colour', JSON.stringify(inkOp({ k: 'fill', c: 4, w: 2, s: 9, p: [5, 9999], q: 2 })) === '{"k":"fill","c":4,"s":9,"p":[5,1000],"q":2}');
+ok('a fill needs one point', inkOp({ k: 'fill', p: [1, 2, 3, 4] }) === null && inkOp({ k: 'fill', p: [1] }) === null);
+ok('no unknown kinds (shapes are gone)', inkOp({ k: 'text', p: [1, 2] }) === null && inkOp({ k: 'rect', p: [1, 2, 3, 4] }) === null && inkOp(null) === null);
 ok('too long a stroke piece', inkOp({ k: 'pen', p: new Array(200).fill(5) }) === null);
 ok('eraser', inkOp({ k: 'pen', e: true, p: [1, 1] }).e === 1);
 
@@ -117,6 +118,40 @@ ok('eraser', inkOp({ k: 'pen', e: true, p: [1, 1] }).e === 1);
   let err = '';
   for (let i = 0; i < 6100 && !err; i++) err = t.go('a', { do: 'ink', op: { k: 'pen', s: i, p: [1, 1] } }).error || '';
   ok('a drawing can\'t grow forever', /full/.test(err) && t.inkLen === 6000);
+}
+{ // the settings: time, rounds, words
+  const c = cleanSettings({ draw: 5, rounds: 99, words: [' Cat ', 'cat', 'DOG!', '', '狗', 'a very long phrase that goes on and on and on', 'owl'] });
+  ok('settings are put in range', c.draw === 15 && c.rounds === 10);
+  ok('words: trimmed, no repeats, none that can\'t be typed', JSON.stringify(c.words) === '["Cat","DOG!","a very long phrase that goes o","owl"]', c.words);
+  ok('too few words: Drift\'s', cleanSettings({ words: ['cat', 'dog'] }).words === null);
+  ok('nothing given: the defaults', JSON.stringify(cleanSettings(null)) === JSON.stringify({ draw: 80, rounds: 3, hints: true, words: null }));
+  ok('hints can be turned off', cleanSettings({ hints: false }).hints === false);
+  const shown = (t, w) => t.v('b').hint.filter((ch, i) => ch !== null && w[i] !== ' ' && w[i] !== '-').length;
+  const turn = (hintsOn, words) => {       // 100 s to draw: letters at 40, 60 and 80 s in
+    const t = table({ words, settings: () => ({ draw: 100, rounds: 1, hints: hintsOn, words, rev: 1 }) }); t.sit('a', 'Ann'); t.sit('b', 'Bo'); begin(t); t.go('a', { do: 'pick', key: 0 });
+    const w = t._word(), seen = [];
+    for (const at of [39, 41, 61, 81, 99]) { t.clock.t += (at - (t.at || 0)) * 1000; t.at = at; t.tick(); seen.push(shown(t, w)); }
+    return seen.join();
+  };
+  ok('hints: a letter at 60%, 40% and 20% of the time left, three at most', turn(true, ['photosynthesis', 'kaleidoscope', 'trampoline']) === '0,1,2,3,3', turn(true, ['photosynthesis', 'kaleidoscope', 'trampoline']));
+  ok('a short word keeps two letters hidden', turn(true, ['egg', 'owl', 'cat']) === '0,1,1,1,1');
+  ok('hints off: no letters', turn(false, ['photosynthesis', 'kaleidoscope', 'trampoline']) === '0,0,0,0,0');
+  const s = { draw: 30, rounds: 1, words: ['moon', 'kite', 'tent'], rev: 1 };
+  const t = table({ settings: () => s }); t.sit('a', 'Ann'); t.sit('b', 'Bo'); begin(t);
+  ok('the words are yours', t.v('a').choices.every((w) => s.words.includes(w)), t.v('a').choices);
+  t.go('a', { do: 'pick', key: 0 });
+  ok('the time to draw is yours', t.v('a').drawMs === 30000);
+  s.rounds = 3; s.draw = 60; s.rev = 2;
+  t.wait(31000);
+  ok('changes wait for the next game', t.v('a').drawMs === 30000);
+  for (let i = 0; i < 10 && t.phase !== 'over'; i++) t.wait(31000);
+  ok('one round: each draws once, then it\'s over', t.phase === 'over' && t.v('a').round === 1);
+  t.wait(13000); t.wait(100); t.wait(5000);
+  ok('...and the next game has the new settings', t.phase === 'choosing' && t.v('a').rounds === 3 && t.v('a').drawMs === 60000);
+  const p = table({ solo: 'a', settings: () => ({ draw: 20, rounds: 2, words: null, rev: 1 }) }); p.sit('a', 'You'); p.sit('bot', 'Practice'); begin(p);
+  const drew = [];
+  for (let i = 0; i < 12 && p.phase !== 'over'; i++) { if (p.phase === 'choosing') { drew.push(p.drawerId()); p.go(p.drawerId(), { do: 'pick', key: 0 }); } p.wait(21000); }
+  ok('practice: only you draw, once a round', drew.join() === 'a,a' && p.phase === 'over', drew);
 }
 
 console.log(fails ? `${fails} failed, ${passes} passed` : `all ${passes} passed`);

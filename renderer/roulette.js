@@ -14,6 +14,7 @@
   const colorName = (n) => (n === 0 ? 'Green' : REDS.has(n) ? 'Red' : 'Black');
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
   const fmt = (n) => Math.round(n).toLocaleString();
+  const roll = window.driftRoll;       // (roll.js: chip counts and winnings counting up)
   const SVG = 'http://www.w3.org/2000/svg';
   const svg = (tag, attrs) => { const e = document.createElementNS(SVG, tag); for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v); return e; };
 
@@ -239,14 +240,16 @@
         t.style.setProperty('--c', colorFor(i));
         const ring = el('i', 'bjRing'), f = mode === 'hub' && !s.blocked && opts.face ? opts.face(s.id) : null;
         if (f) { ring.classList.add('av'); ring.append(f); }
-        const extra = s.outMs ? 'Out of chips' : v.phase === 'done' && s.played ? (s.net > 0 ? `+${fmt(s.net)}` : s.net < 0 ? `−${fmt(-s.net)}` : 'Even') : s.staked ? `${fmt(s.staked)} on` : '';
-        t.append(ring, el('span', 'nm', i === v.you ? 'You' : s.name), el('span', 'ch', fmt(s.chips)), ...(extra ? [el('span', 'ex' + (v.phase === 'done' && s.net > 0 ? ' up' : ''), extra)] : []), ...(s.ready && v.phase === 'betting' ? [el('span', 'rd', '✓')] : []));
+        const up = !s.outMs && v.phase === 'done' && s.played && s.net > 0;       // (a win: "+250" counting up)
+        const extra = s.outMs ? 'Out of chips' : v.phase === 'done' && s.played ? (s.net < 0 ? `−${fmt(-s.net)}` : 'Even') : s.staked ? `${fmt(s.staked)} on` : '';
+        t.append(ring, el('span', 'nm', i === v.you ? 'You' : s.name), roll.num('rl:ch:' + s.id, s.chips, fmt, { cls: 'ch' }),
+          ...(up ? [roll.num(`rl:net:${v.round}:${s.id}`, s.net, (n) => '+' + fmt(n), { cls: 'ex up', from0: true })] : extra ? [el('span', 'ex', extra)] : []), ...(s.ready && v.phase === 'betting' ? [el('span', 'rd', '✓')] : []));
         return t;
       }).filter(Boolean);
       players.replaceChildren(...tags);
     }
     function board() {       // the hub's biggest wins on one spin (hub.js gameBoard): a hub's table only
-      const list = mode === 'hub' && Array.isArray(v.board) ? v.board : null;
+      const list = mode === 'hub' && Array.isArray(v.records) ? v.records : null;
       boardEl.classList.toggle('on', !!list);
       if (!list) return;
       const mine = opts.me ? opts.me() : '';
@@ -284,10 +287,11 @@
       } else if (v.phase === 'spinning') line = m.played ? 'No more bets. Round it goes…' : 'No more bets. You\'re sitting this one out.';
       else if (v.phase === 'done') {
         const n = v.number;
-        line = `${n} ${colorName(n)}. ` + (!m.played ? 'You sat this one out.' : m.net > 0 ? `You win ${fmt(m.net)}!` : m.net < 0 ? `You lose ${fmt(-m.net)}.` : 'You break even.');
+        line = m.played && m.net > 0 ? roll.line('bjLine', `${n} ${colorName(n)}. You win `, roll.num(`rl:won:${v.round}`, m.net, fmt, { cls: 'bjWon', from0: true }), '!')       // (counting up from nothing)
+          : `${n} ${colorName(n)}. ` + (!m.played ? 'You sat this one out.' : m.net < 0 ? `You lose ${fmt(-m.net)}.` : 'You break even.');
       }
       if (m && !m.left && (v.phase === 'done' || (v.phase === 'betting' && !m.staked))) kids.push(btn('Stand up', 'ghost', () => send({ op: 'stand' })));
-      bar.replaceChildren(...(line ? [el('span', 'bjLine', line)] : []), ...kids);
+      bar.replaceChildren(...(line ? [typeof line === 'string' ? el('span', 'bjLine', line) : line] : []), ...kids);
       bar.dataset.phase = v.phase;
       status.replaceChildren(...statusLine());
     }

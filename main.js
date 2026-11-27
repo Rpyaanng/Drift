@@ -13,7 +13,9 @@ const createP2P = require('./p2p');
 const createChat = require('./chat');
 const { createTable: createBjTable } = require('./blackjack');
 const GAME_RULES = { roulette: require('./roulette').createTable, poker: require('./poker').createTable, sketch: require('./sketch').createTable };       // the Games room's other tables (gmMove)
-const GAME_SOLO = { roulette: true, poker: true, sketch: false };       // can it be played alone (dealt here)? Sketch & Guess needs people: only at a hub
+const GAME_SOLO = { roulette: true, poker: true, sketch: false };
+const SKETCH = require('./sketch');
+const SKETCH_SOLO = process.env.DRIFT_SKETCH_SOLO || '';       // dev: Sketch & Guess alone. =1: you always draw ("Practice" sits in); =guess: "Practice" draws and tells you the word, "Buddy" guesses too (sketchBots)       // can it be played alone (dealt here)? Sketch & Guess needs people: only at a hub
 const createFiles = require('./files');
 const createWeb = require('./web');
 const createUpdater = require('./updater');
@@ -110,6 +112,9 @@ const DEFAULTS = {
   // Roulette and Texas Hold'em played alone (docs/plans/games-room.md), the same way: each table's chips are its own
   roulette: { chips: 1000, outUntil: 0 },
   poker: { chips: 1000, outUntil: 0 },
+  // Sketch & Guess (sketch.js cleanSettings): seconds to draw, rounds a game, letters shown as time runs out, and your own words (null = Drift's). They're
+  // used at a hub you host, and alone in practice (DRIFT_SKETCH_SOLO); at someone else's hub, theirs are
+  sketch: { draw: 80, rounds: 3, hints: true, words: null },
   // What's new (renderer/whatsnew.js): the newest version whose notes were shown. A newer one starting shows them, once
   notesSeen: '',
   // the Surf stream of the hub this PC hosts (docs/plans/streams.md): its tabs (kept with the hub they belong to), whether every
@@ -193,6 +198,7 @@ function loadSettings() {
     state.cycleSkip = Array.isArray(state.cycleSkip) ? state.cycleSkip.filter((id) => SCENES.includes(id) && !GAMES.includes(id)) : [];
     state.blackjack = cleanBj(state.blackjack);
     for (const g of ['roulette', 'poker']) state[g] = cleanBj(state[g]);
+    state.sketch = SKETCH.cleanSettings(state.sketch);
     if (state.palette === 'custom' && !Array.isArray(state.customColors)) state.palette = 'aurora';
     state.video.folders = (state.video.folders || []).filter((p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } });
     state.music.playlist = (state.music.playlist || []).filter((p) => { try { return fs.existsSync(p); } catch { return false; } });
@@ -1810,7 +1816,9 @@ function bjSounds(a, b) {
     if (sameRound && me.hands.some((h, k) => h.n > 21 && !(was.hands[k] && was.hands[k].n > 21))) out.push('bjBust');
   }
   const more = cardsOf(b) - (sameRound ? cardsOf(a) : 0), turned = sameRound && a.dealer.cards.includes(null) && !b.dealer.cards.includes(null);
-  if (!sameRound && more >= 3) out.unshift('bjDeal');       // (the opening deal: before your turn's nudge)
+  const shuffled = !!(a.shoe && b.shoe) && b.shoe.left > a.shoe.left;       // (the shoe refilled: shuffled before this deal)
+  if (shuffled && more > 0) out.unshift('bjShuffle');       // (the shuffle, then the deal)
+  else if (!sameRound && more >= 3) out.unshift('bjDeal');       // (the opening deal: before your turn's nudge)
   else if (more > 0 || turned) out.push('bjCard');
   if (b.seats.some((s, i) => s && s.bet && !(a.seats[i] && a.seats[i].bet))) out.push('bjChip');       // a bet down, anyone's
   return [...new Set(out)].slice(0, 2);
@@ -1904,7 +1912,7 @@ function gmShow(g, v, mode) {
   const x = gm[g];
   if (v && mode === 'hub') {       // someone you've blocked still plays (it's the hub's table), but not by name or face
     const blocked = new Set(chat.info().blocked || []), hide = (s) => (s && blocked.has(s.id) ? { ...s, name: 'Someone', blocked: true } : s);
-    v = { ...v, board: (Array.isArray(v.board) ? v.board : []).slice(0, 5).map(hide) };
+    v = { ...v, records: (Array.isArray(v.records) ? v.records : []).slice(0, 5).map(hide) };
     if (Array.isArray(v.seats)) v.seats = v.seats.map(hide);
     if (Array.isArray(v.players)) v.players = v.players.map(hide);       // (Sketch & Guess: the players, the final scores, and what they type)
     if (Array.isArray(v.standings)) v.standings = v.standings.map(hide);
@@ -1921,7 +1929,7 @@ const GM_SOUNDS = {
   roulette(a, b) {
     const out = [], me = b.you >= 0 ? b.seats[b.you] : null, was = a.you >= 0 ? a.seats[a.you] : null;
     if (b.phase === 'spinning' && a.phase !== 'spinning') out.push('rlSpin');
-    if (b.phase === 'done' && a.phase !== 'done') { out.push('rlDrop'); if (me && me.played) out.push(me.net > 0 ? 'rlWin' : me.net < 0 ? 'bjLose' : 'bjPush'); }
+    if (b.phase === 'done' && a.phase !== 'done') { out.push('rlDrop'); if (me && me.played) out.push(me.net > 0 ? (me.won >= 10 * (me.won - me.net) ? 'rlBig' : 'rlWin') : me.net < 0 ? 'bjLose' : 'bjPush'); }       // (big: ten times what you put down, or more)
     if (me && was && me.outMs && !was.outMs) out.push('bjOut');
     if (me && was && !me.outMs && was.outMs) out.push('bjBack');
     const staked = (v) => v.seats.reduce((n, s) => n + (s ? s.staked : 0), 0);
@@ -1930,59 +1938,133 @@ const GM_SOUNDS = {
   },
   poker(a, b) {
     const out = [], me = b.you >= 0 ? b.seats[b.you] : null;
-    if (b.hand !== a.hand && b.phase === 'preflop') out.push('bjDeal');
+    if (b.hand !== a.hand && b.phase === 'preflop') out.push('pkShuffle');       // a new hand: the deck shuffled and dealt
+    else if (b.board.length === 5 && a.board.length < 5 && b.hand === a.hand) out.push('pkRiver');       // the last card, the stands holding their breath
     else if (b.board.length > a.board.length) out.push('bjCard');
-    if (b.phase === 'showdown' && a.phase !== 'showdown' && me && me.inHand && !me.folded) out.push(me.net > 0 ? 'bjWin' : me.net < 0 ? 'bjLose' : 'bjPush');
+    if (b.phase === 'showdown' && a.phase !== 'showdown') {
+      if (me && me.inHand && !me.folded) out.push(me.net > 0 ? (b.seats.some((s) => s && s.allin) ? 'pkBig' : 'bjWin') : me.net < 0 ? 'bjLose' : 'bjPush');       // (big: someone was all in)
+      else out.push('pkPot');       // (someone else's pot, pushed over while you watch)
+    }
     if (b.turn === b.you && b.turn >= 0 && (a.turn !== a.you || a.hand !== b.hand)) out.push('bjTurn');
     if (b.hand === a.hand) {
       b.seats.forEach((s, i) => {
         const o = a.seats[i]; if (!s || !o || s.id !== o.id || s.last === o.last) return;
-        if (s.last === 'Fold') out.push('pkFold'); else if (s.last === 'Check') out.push('pkCheck'); else if (s.put > o.put) out.push('bjChip');
+        if (s.last === 'Fold') out.push('pkFold'); else if (s.last === 'Check') out.push('pkCheck');
+        else if (s.last === 'All in') out.push('pkAllIn'); else if (/^(Raise|Bet)/.test(s.last)) out.push('pkRaise'); else if (s.put > o.put) out.push('bjChip');
       });
     }
     if (me && a.you >= 0 && a.seats[a.you]) { const w = a.seats[a.you]; if (me.outMs && !w.outMs) out.push('bjOut'); if (!me.outMs && w.outMs) out.push('bjBack'); }
     return [...new Set(out)].slice(0, 2);
   },
-  sketch(a, b) {       // your turn to draw; you got it (or someone did); so close; the word shown; the winner at the end
+  sketch(a, b) {       // a game show: a new game, a new round; your turn to draw; the word picked; you got it (or someone did); so close; a letter shown;
+    // everyone got it, or the buzzer; and the end: a fanfare if you won, the sad trombone if you came last, applause between
+    // (the clock's last seconds tick from sketchTicks)
     const out = [], me = b.you >= 0 ? b.players[b.you] : null, was = a.you >= 0 ? a.players[a.you] : null;
-    if (b.phase === 'choosing' && b.drawer === b.you && b.drawer >= 0 && (a.phase !== 'choosing' || a.drawer !== a.you)) out.push('bjTurn');
+    if (b.round === 1 && b.phase === 'choosing' && (a.phase === 'waiting' || a.phase === 'over' || a.phase === 'idle')) out.push('skStart');
+    else if (b.round > 1 && b.round > a.round && b.phase === 'choosing') out.push('skRound');       // (the next round)
+    else if (b.phase === 'choosing' && b.drawer === b.you && b.drawer >= 0 && (a.phase !== 'choosing' || a.drawer !== a.you)) out.push('skTurn');       // (not over the drumroll)
+    if (b.phase === 'drawing' && a.phase === 'choosing') out.push('skPick');       // the word's picked: the drawing starts
     if (me && was && me.guessed && !was.guessed) out.push('skRight');
-    else if (b.players.filter((p) => p.guessed).length > a.players.filter((p) => p.guessed).length) out.push('skOther');
+    else if (b.phase === 'drawing' && b.players.filter((p) => p.guessed).length > a.players.filter((p) => p.guessed).length) out.push('skOther');
     const seen = new Set(a.feed.map((e) => e.n));
     if (b.feed.some((e) => e.kind === 'close' && !seen.has(e.n))) out.push('skClose');
-    if (b.phase === 'reveal' && a.phase === 'drawing') out.push('skEnd');
-    if (b.phase === 'over' && a.phase !== 'over' && b.standings && me) out.push(b.standings[0] && b.standings[0].id === me.id ? 'bjBlackjack' : 'bjPush');
+    const shown = (v) => (v.phase === 'drawing' ? v.hint.filter((c) => c !== null && c !== ' ' && c !== '-').length : 0);
+    if (b.phase === 'drawing' && a.phase === 'drawing' && !b.word && shown(b) > shown(a)) out.push('skHint');       // (not for those who know the word)
+    if (b.phase === 'reveal' && a.phase === 'drawing') {
+      const guessers = b.players.filter((p) => !p.drawing);
+      out.push(guessers.length && guessers.every((p) => p.guessed) ? 'skAll' : 'skEnd');
+    }
+    if (b.phase === 'over' && a.phase !== 'over' && b.standings && me) {
+      const place = b.standings.findIndex((s) => s.id === me.id);
+      out.push(place === 0 ? 'skWin' : place === b.standings.length - 1 ? 'skLose' : 'skApplause');
+    }
     return [...new Set(out)].slice(0, 2);
   },
 };
 function gmSync(g) {
   const x = gm[g];
   for (const k of [...x.screens]) if (!visWins.some((v) => v.key === k && !v.win.isDestroyed())) x.screens.delete(k);
-  const want = x.screens.size ? bjHub() || (GAME_SOLO[g] ? 'local' : 'alone') : '';
+  const want = x.screens.size ? bjHub() || (GAME_SOLO[g] || (g === 'sketch' && SKETCH_SOLO) ? 'local' : 'alone') : '';
   if (want === x.at) return;
   const was = x.at; x.at = want; x.standing = false;
   if (was === 'local') gmLocalStop(g); else if (gmOnHub({ at: was }) && chat) chat.game(was, { t: 'game-leave', g });
   gmShow(g, null, ''); gmSend(g, { ptrs: [] });
   x.ink = { rev: -1, list: [] }; gmSend(g, { ink: { rev: -1, from: 0, list: [] } });
+  if (g === 'sketch') gmSend(g, { settings: sketchSettingsView() });       // (where they're used has changed)
   if (want === 'alone') gmSend(g, { v: null, mode: 'alone' });
   else if (want === 'local') gmLocalStart(g);
   else if (want) chat.game(want, { t: 'game-sit', g }).then((r) => { if (r && r.error && x.at === want) gmNote(g, r.error); });
 }
 setInterval(() => { for (const g of Object.keys(gm)) gmSync(g); }, 1000);       // (the hub came or went)
+// Sketch & Guess's clock, ticking through the last ten seconds of a drawing (the views don't come every second: worked
+// out from the last one and when it came)
+let sketchTickAt = 0;
+setInterval(() => {
+  const x = gm.sketch, l = x.last;
+  if (!l || !l.v || l.v.phase !== 'drawing' || !x.screens.size) { sketchTickAt = 0; return; }
+  const s = Math.ceil((l.v.msLeft - (Date.now() - l.at)) / 1000);
+  if (s > 10 || s < 1) { if (s > 10) sketchTickAt = 0; return; }
+  if (s !== sketchTickAt) { sketchTickAt = s; const n = s === 1 ? 'skTick1' : 'skTick'; sfxPlay([n]); if (SHOT_DIR) gmHeard.push(n); }
+}, 100);
 function gmLocalStart(g) {
   const x = gm[g];
-  x.local = GAME_RULES[g]({ times: (GAME_FAST || {})[g], fill: 4 });
+  const solo = g === 'sketch' && SKETCH_SOLO, guess = solo && SKETCH_SOLO === 'guess';
+  x.local = GAME_RULES[g](solo ? { solo: guess ? 'practice-bot' : BJ_ME, times: { start: 500 }, settings: sketchSettings } : { times: (GAME_FAST || {})[g], fill: 4 });
   x.local.sit(BJ_ME, 'You', state[g]);
+  if (solo) x.local.sit('practice-bot', 'Practice');       // (someone to "guess", or to draw: the game needs two)
+  if (guess) x.local.sit('buddy-bot', 'Buddy');       // (someone else guessing: "someone guessed", "everyone got it")
+  x.bot = {};
   x.sent = -1; gmLocalPush(g);
   clearInterval(x.timer);
-  x.timer = setInterval(() => { if (x.local) { x.local.tick(); gmLocalPush(g); } }, 200);
+  x.timer = setInterval(() => { if (x.local) { x.local.tick(); if (guess) sketchBots(x); gmLocalPush(g); } }, 200);
+}
+// Guessing practice (DRIFT_SKETCH_SOLO=guess): "Practice" picks a word after a moment, scribbles while you guess (it can't
+// draw: these are only so there's ink), and tells you the word in your feed, so you can try a right guess, a near one, or
+// none. "Buddy" guesses wrong a quarter of the way in and right a bit past half.
+function sketchBots(x) {
+  const t = x.local, v = t.view('practice-bot'), b = x.bot, now = Date.now();
+  const turn = `${v.round}/${v.phase}/${v.drawer}`;
+  if (b.turn !== turn) Object.assign(b, { turn, since: now, told: false, inkAt: 0, strokes: 0, wrong: false, right: false });
+  if (v.phase === 'choosing' && v.drawer === v.you && now - b.since > 1500) t.move('practice-bot', { do: 'pick', key: 0 });
+  if (v.phase !== 'drawing') return;
+  const w = t._word(), frac = 1 - v.msLeft / v.drawMs;
+  if (!b.told) { b.told = true; t.tell(BJ_ME, `Practice: the word is “${w}”. Guess it, or type it one letter off for “so close”. Buddy guesses it a bit past half time.`); }
+  if (now - b.inkAt > 900 && b.strokes < 30) {       // a wandering line somewhere on the sheet
+    b.inkAt = now; b.strokes++;
+    let px = 200 + Math.random() * 1200, py = 150 + Math.random() * 700, a = Math.random() * 6.28;
+    const p = [];
+    for (let i = 0; i < 14; i++) { p.push(Math.round(px), Math.round(py)); a += (Math.random() - 0.5) * 1.2; px = Math.max(0, Math.min(1600, px + Math.cos(a) * 30)); py = Math.max(0, Math.min(1000, py + Math.sin(a) * 30)); }
+    t.move('practice-bot', { do: 'ink', op: { k: 'pen', c: Math.floor(Math.random() * 15), w: 1, s: now % 1e9, p, q: 0 } });
+  }
+  if (!b.wrong && frac > 0.25) { b.wrong = true; t.move('buddy-bot', { do: 'guess', text: ['a banana?', 'is it a cat', 'spaceship!', 'umm… a tree'][Math.floor(Math.random() * 4)] }); }
+  if (!b.right && frac > 0.55) { b.right = true; t.move('buddy-bot', { do: 'guess', text: w }); }
 }
 function gmKeep(g) {
   const k = gm[g].local && gm[g].local.mine(BJ_ME);
   if (k && (k.chips !== state[g].chips || k.outUntil !== state[g].outUntil)) { state[g] = k; saveSoon(); }
 }
+// Sketch & Guess's settings (state.sketch): read by the tables between games (rev: they've changed), shown on its screens
+let sketchRev = 0;
+const sketchSettings = () => ({ ...state.sketch, rev: sketchRev });
+function sketchSettingsView() {
+  const at = gm.sketch.at, mine = !!chat && at === chat.hostedHub();
+  const where = at === 'local' ? 'Used for your practice games, from the next one.'
+    : mine ? 'Used at the table of the hub you host, from the next game.'
+      : gmOnHub(gm.sketch) ? 'This hub plays with its host\'s settings. Yours are used at a hub you host.'
+        : 'Used at a hub you host.';
+  return { draw: state.sketch.draw, rounds: state.sketch.rounds, hints: state.sketch.hints, words: state.sketch.words, defaults: SKETCH.WORD_LIST, where };
+}
+function gmLocalInk(g) {       // Sketch & Guess dealt here (solo practice): the drawing goes to the screens as it grows
+  const x = gm[g], t = x.local; if (!t || g !== 'sketch') return;
+  const rev = t.inkRev, from = rev === x.ink.rev ? x.ink.list.length : 0;
+  if (rev === x.ink.rev && t.inkLen === from) return;
+  const list = t.ink(from);
+  if (from === 0) x.ink = { rev, list: list.slice() }; else x.ink.list.push(...list);
+  gmSend(g, { ink: { rev, from, list } });
+}
 function gmLocalPush(g) {
   const x = gm[g];
+  gmLocalInk(g);
   if (!x.local || x.local.version === x.sent) return;
   x.sent = x.local.version;
   gmShow(g, x.local.view(BJ_ME), 'local');
@@ -2005,13 +2087,24 @@ function gmMove(c) {
     if (x.last) to({ v: x.last.v, mode: x.last.mode, hub: x.last.hub });
     else if (x.at === 'alone') to({ v: null, mode: 'alone' });
     if (x.ink.rev >= 0) to({ ink: { rev: x.ink.rev, from: 0, list: x.ink.list } });       // (the drawing so far)
+    if (g === 'sketch') to({ settings: sketchSettingsView() });
+    return;
+  }
+  if (op === 'settings' && g === 'sketch') {       // Sketch & Guess's settings, saved from its screen
+    state.sketch = SKETCH.cleanSettings(c.s); sketchRev++; saveSoon();
+    gmSend(g, { settings: sketchSettingsView() });
+    gmNote(g, state.sketch.words || !Array.isArray((c.s || {}).words) ? 'Settings saved' : 'Settings saved, with Drift\'s words: a list needs three or more');
     return;
   }
   if (op === 'ptr') {
     if (gmOnHub(x) && state.share.cursor) chat.game(x.at, { t: 'game-ptr', g, x: c.x >= 0 ? +c.x : -1, y: c.y >= 0 ? +c.y : -1 });
     return;
   }
-  if (op === 'ink') { if (gmOnHub(x) && c.o && typeof c.o === 'object') chat.game(x.at, { t: 'game-ink', g, op: c.o }); return; }       // a piece of your drawing (Sketch & Guess)
+  if (op === 'ink') {
+    if (x.at === 'local' && x.local && c.o && typeof c.o === 'object') { const r = x.local.move(BJ_ME, { do: 'ink', op: c.o }); if (r.error) gmNote(g, r.error); gmLocalPush(g); }
+    else if (gmOnHub(x) && c.o && typeof c.o === 'object') chat.game(x.at, { t: 'game-ink', g, op: c.o });
+    return;
+  }       // a piece of your drawing (Sketch & Guess)
   if (op === 'tap') { if (x.at && x.at !== 'alone') { sfxPlay(['bjChip']); if (SHOT_DIR) gmHeard.push('bjChip'); } return; }
   if (x.at === 'alone') return;
   if ((op === 'stand' || op === 'sit') && x.at) {       // up from your place (bets not played yet come back; a hand in play folds), or back down
@@ -2158,6 +2251,7 @@ function startChat() {
     log: chatLog,
     bjTimes: BJ_FAST,       // (tests: the hub's blackjack table plays fast too)
     gameTimes: GAME_FAST,       // (and its other tables)
+    gameSettings: (g) => (g === 'sketch' && !GAME_FAST ? sketchSettings() : null),       // (your Sketch & Guess settings, at the hub you host; tests keep their own times)
     connectOnStart: false,       // online in a hub means on its stream (and sharing what you pick): only once you click it
   });
   chat.setName(shareName());
@@ -2170,8 +2264,8 @@ function startChat() {
 const SFX_NAMES = new Set(['join', 'leave', 'peerJoin', 'peerLeave', 'mute', 'unmute', 'connect', 'disconnect', 'lost',
   'liveOn', 'liveOff', 'viewerJoin', 'viewerLeave', 'bcStart', 'shareOn', 'shareOff', 'message',
   'bjCard', 'bjDeal', 'bjChip', 'bjTurn', 'bjWin', 'bjBlackjack', 'bjPush', 'bjLose', 'bjBust', 'bjOut', 'bjBack',       // (the Blackjack table's: bjSounds)
-  'rlSpin', 'rlDrop', 'rlWin', 'pkCheck', 'pkFold',       // (Roulette's and Hold'em's, with the Blackjack table's cards and chips: GM_SOUNDS)
-  'skRight', 'skOther', 'skClose', 'skEnd']);       // (Sketch & Guess's)
+  'bjShuffle', 'rlSpin', 'rlDrop', 'rlWin', 'rlBig', 'pkCheck', 'pkFold', 'pkShuffle', 'pkRaise', 'pkAllIn', 'pkRiver', 'pkPot', 'pkBig',       // (Roulette's and Hold'em's, with the Blackjack table's cards and chips: GM_SOUNDS)
+  'skStart', 'skRound', 'skPick', 'skTurn', 'skRight', 'skOther', 'skClose', 'skHint', 'skTick', 'skTick1', 'skEnd', 'skAll', 'skWin', 'skApplause', 'skLose']);       // (Sketch & Guess's)
 let sfxWas = null, sfxJoinedAt = 0;
 function sfxPlay(names, preview = false) {
   // the game tables' sounds have their own switch (Sounds → Game table sounds): hub sounds off needn't hush the cards
@@ -5549,6 +5643,88 @@ async function runShots() {
     fs.writeFileSync(path.join(outDir, role + '.json'), JSON.stringify(res, null, 1));
     await step('end', 20000);
   }
+  if (process.env.DRIFT_GAMEPICS) {     // the Games room tiles' pictures (renderer/games/*.jpg, scripts/game-pics.js): each table mid-game, alone
+    // Blackjack, Roulette and Hold'em are dealt here and played with real moves; Sketch & Guess needs people, so its table is
+    // played in this process with made-up players and a lighthouse drawn on it, and the screen is shown that table.
+    const dir = process.env.DRIFT_GAMEPICS;
+    const until = async (f, ms = 30000) => { for (let t = 0; t < ms; t += 250) { if (await f()) return true; await wait(250); } return !!(await f()); };
+    const still = () => Promise.all(visWins.map((v) => pageRun(v.win.webContents, () => {       // (hidden windows: no animations, no pointer)
+      if (document.querySelector('#gpStill')) return;
+      const s = document.createElement('style'); s.id = 'gpStill';
+      s.textContent = '*,*::before,*::after{animation:none!important;transition:none!important}.ptr.self{display:none!important}';
+      document.head.append(s); document.querySelector('#panel').classList.remove('show', 'open');
+    }).catch(() => {})));
+    const pic = async (id, keys) => {
+      await still(); await wait(1200);
+      const v = visWins.find((x) => keys.has(x.key) && !x.win.isDestroyed()) || visWins[0];
+      await Promise.race([v.win.webContents.capturePage(), wait(5000)]); await wait(800);       // (a hidden window's first picture can be an old frame)
+      let img = await Promise.race([v.win.webContents.capturePage(), wait(5000)]);
+      if (!img || img.isEmpty()) { log.push(`gamepics: ${id}: no picture`); return; }
+      const { width: w, height: h } = img.getSize(), cw = Math.min(w, Math.round(h * 16 / 9)), ch = Math.round(cw * 9 / 16);       // (a 16:9 tile)
+      img = img.crop({ x: Math.round((w - cw) / 2), y: Math.round((h - ch) / 2), width: cw, height: ch }).resize({ width: 640, quality: 'best' });
+      fs.writeFileSync(path.join(dir, id + '.jpg'), img.toJPEG(84));
+      log.push(`gamepics: ${id}: ${w}x${h}`);
+    };
+    const G = (g) => (gm[g].last ? gm[g].last.v : null);
+    const move = (g, m) => gmMove({ g, op: 'move', m });
+    fs.mkdirSync(dir, { recursive: true });
+    patch({ music: { source: 'off' }, share: { internet: false, cursor: false }, autoCycle: 0, sfx: { on: false, table: false } });
+    try {
+      // Blackjack: a bet down, and your turn
+      patch({ scene: 'blackjack' });
+      log.push('gamepics bj table: ' + await until(() => bjAt === 'local' && bjLast && bjLast.v.phase === 'betting', 15000));
+      bjMove({ op: 'bet', amount: 150 });
+      log.push('gamepics bj turn: ' + await until(() => {
+        const v = bjLast && bjLast.v; if (!v) return false;
+        if (v.phase === 'insurance') bjMove({ op: 'insure', yes: false });
+        return v.phase === 'turns' && v.turn && v.turn.seat === v.you;
+      }, 30000));
+      await pic('blackjack', bjScreens);
+      // Roulette: chips on the layout
+      patch({ scene: 'roulette' });
+      log.push('gamepics roulette table: ' + await until(() => gm.roulette.at === 'local' && G('roulette'), 15000));
+      for (const [key, amount] of [['red', 100], ['17', 25], ['13-14-16-17', 25], ['d2', 50], ['0', 10]]) move('roulette', { do: 'bet', key, amount });
+      await wait(1500);
+      await pic('roulette', gm.roulette.screens);
+      // Hold'em: called down to the river (the computer players may fold it away first: then the next hand)
+      patch({ scene: 'poker' });
+      log.push('gamepics poker table: ' + await until(() => gm.poker.at === 'local' && G('poker'), 15000));
+      log.push('gamepics poker river: ' + await until(() => {
+        const v = G('poker'), m = v && v.you >= 0 ? v.seats[v.you] : null; if (!m) return false;
+        if (v.board.length === 5 && m.inHand && !m.folded && v.phase !== 'showdown' && v.can) return true;
+        if (v.can) move('poker', v.can.check ? { do: 'check' } : { do: 'call' });
+        return false;
+      }, 120000));
+      await pic('poker', gm.poker.screens);
+      // Sketch & Guess: Ann drawing a lighthouse, Bo guessing
+      patch({ scene: 'sketch' });
+      log.push('gamepics sketch table: ' + await until(() => gm.sketch.at === 'alone', 15000));
+      const clock = { t: Date.now() }, t = GAME_RULES.sketch({ now: () => clock.t, rand: () => 0, words: ['lighthouse', 'castle', 'kite'] });
+      for (const [id, name] of [['ann', 'Ann'], [BJ_ME, 'You'], ['bo', 'Bo'], ['juni', 'Juniper']]) t.sit(id, name);
+      t.tick(); clock.t += 5000; t.tick();
+      t.move('ann', { do: 'pick', key: 0 }); t.tick();
+      let s = 0;
+      const ink = (o) => t.move('ann', { do: 'ink', op: { w: 1, s: ++s, q: s, ...o } });
+      ink({ k: 'pen', c: 11, w: 2, p: [0, 780, 1600, 780] });                                    // the sea's edge
+      ink({ k: 'pen', c: 8, w: 2, p: [520, 770, 560, 650, 1040, 650, 1080, 770, 520, 770] });     // the rock
+      ink({ k: 'pen', c: 0, w: 2, p: [700, 640, 730, 300, 870, 300, 900, 640, 700, 640] });     // the tower, its red bands
+      for (const p of [[705, 560, 895, 560], [710, 500, 890, 500], [716, 430, 884, 430], [720, 380, 880, 380]]) ink({ k: 'pen', c: 0, w: 1, p });
+      ink({ k: 'pen', c: 0, w: 2, p: [735, 220, 865, 220, 865, 300, 735, 300, 735, 220] });     // the lamp room
+      ink({ k: 'pen', c: 0, w: 2, p: [710, 220, 800, 120, 890, 220, 710, 220] });               // its roof
+      for (const [c, p] of [[10, [100, 100]], [11, [100, 950]], [8, [600, 730]], [4, [800, 530]], [4, [800, 405]], [6, [800, 260]], [4, [800, 190]]]) ink({ k: 'fill', c, p });       // (the paint bucket)
+      ink({ k: 'pen', c: 3, w: 2, p: [0, 840, 120, 820, 240, 840, 360, 820, 480, 840, 600, 820, 720, 840, 840, 820, 960, 840, 1080, 820, 1200, 840, 1320, 820, 1440, 840, 1600, 820] });
+      for (const [x, y] of [[300, 160], [300, 330], [1300, 160], [1300, 330]]) ink({ k: 'pen', c: 6, w: 2, p: [x < 800 ? 725 : 875, 260, x, y] });
+      clock.t += 32000; t.tick();
+      t.move('bo', { do: 'guess', text: 'tower' }); t.move('juni', { do: 'guess', text: 'candle' }); t.move('bo', { do: 'guess', text: 'lighthous' });
+      t.tick();
+      const v = t.view(BJ_ME);
+      gm.sketch.last = { v, mode: 'hub', hub: '', at: Date.now() }; gm.sketch.ink = { rev: t.inkRev, list: t.ink(0) };
+      gmSend('sketch', { v, mode: 'hub', hub: '' }); gmSend('sketch', { ink: { rev: t.inkRev, from: 0, list: t.ink(0) } });
+      await wait(1000);
+      await pic('sketch', gm.sketch.screens);
+    } catch (e) { log.push('gamepics error: ' + String(e && e.stack || e)); }
+    fs.writeFileSync(path.join(SHOT_DIR, 'log.txt'), log.join('\n')); quitting = true; app.quit(); return;
+  }
   if (process.env.DRIFT_TESTBJ) {     // the Blackjack scene (docs/plans/blackjack.md), two copies of Drift (scripts/test-blackjack.js): =host or =guest.
     // Alone first, each at its own table: the rotation leaves the table alone, a hand is played with the real buttons, the
     // insurance and surrender buttons work, and running out of chips sits you out, then buys you back in. Then the host makes a
@@ -5874,7 +6050,7 @@ async function runShots() {
       await wait(400);
       tl('your chips are kept in the settings', Math.abs(state.poker.chips - (mine('poker').chips + (mine('poker').inHand && !mine('poker').folded ? mine('poker').put : 0))) === 0);
       log.push('games: sounds ' + gmHeard.join(' '));
-      tl('the tables\' sounds: the wheel, the drop, chips, the deal, cards, your turn', ['rlSpin', 'rlDrop', 'bjChip', 'bjDeal', 'bjCard', 'bjTurn'].every((n) => gmHeard.includes(n)));
+      tl('the tables\' sounds: the wheel, the drop, chips, the shuffle and deal, cards, your turn', ['rlSpin', 'rlDrop', 'bjChip', 'pkShuffle', 'bjCard', 'bjTurn'].every((n) => gmHeard.includes(n)));
       // ---- Sketch & Guess, alone: there's no game without people, and it says so ----
       scene('sketch');
       tl('Sketch & Guess alone says to go online in a hub', await until(async () => gm.sketch.at === 'alone' && /for friends/.test(await pageRun(tw('sketch'), () => { const c = document.querySelector('#skTable .skCard'); return c.classList.contains('on') ? c.textContent : ''; })), 10000));
@@ -5906,7 +6082,14 @@ async function runShots() {
       tl('their pointer shows over my table, by name', await until(async () => (await page('poker')).ptrs.includes(theirName), 8000));
       await step('poker-ptrs-seen');
       const handNo = V('poker').hand;
-      need('a hand played out between us (checked and called down)', await until(async () => { await pokerPlay('call'); const v = V('poker'); return v.hand !== handNo || (v.phase === 'showdown' && v.hand === handNo); }, 60000));
+      let river = [], drawn = 0;       // (the board of a hand that got to a showdown, as sent and as drawn)
+      need('a hand played out between us (checked and called down)', await until(async () => {
+        await pokerPlay('call'); const v = V('poker');
+        if (v.phase === 'showdown' && (v.pots || []).some((x) => x.hand)) { river = v.board; drawn = await pageRun(tw('poker'), () => document.querySelectorAll('.pkBoard .bjCard:not(.back)').length); return true; }
+        return v.hand > handNo + 2;       // (a hand can end before the flop, won by a fold: the computer player leaving, say)
+      }, 60000));
+      tl('the cards in the middle are the hand\'s, all five at a showdown, and drawn (not the hub\'s biggest pots)', river.length === 5 && river.every((c) => /^[2-9TJQKA][shdc]$/.test(c)) && drawn === 5);
+      log.push('poker: river ' + JSON.stringify(river) + ' drawn ' + drawn);
       fs.writeFileSync(path.join(outDir, `${role}-hand.json`), JSON.stringify({ hand: V('poker').hand, board: V('poker').board }));
       await step('poker-played');
       await step('poker-played');       // (both files written)
@@ -5933,7 +6116,7 @@ async function runShots() {
         const won = V('roulette').seats.filter((s) => s && s.net > 0).map((s) => ({ name: s.name, net: s.net }));
         let b = [];
         tl(`the biggest wins: the spin's winners on the hub's board (${won.length ? won.map((w) => w.name + ' +' + w.net).join(', ') : 'nobody won'})`,
-          await until(async () => { b = V('roulette').board || []; p = await page('roulette'); return b.length === won.length && won.every((w) => b.some((x) => x.name === w.name && x.win === w.net)) && p.board !== null; }, 5000));
+          await until(async () => { b = V('roulette').records || []; p = await page('roulette'); return b.length === won.length && won.every((w) => b.some((x) => x.name === w.name && x.win === w.net)) && p.board !== null; }, 5000));
       }
       await step('rl-done');
       // ---- Sketch & Guess at the hub: one draws (a pen stroke and a rectangle, with the real tools), the other guesses ----
@@ -5945,7 +6128,7 @@ async function runShots() {
         const t = document.querySelector('#skTable'), c = t.querySelector('.skBase'), d = c.width ? c.getContext('2d').getImageData(0, 0, c.width, c.height).data : [];
         let ink = 0; for (let i = 3; i < d.length; i += 28) if (d[i] > 0) ink++;
         const txt = (s) => [...t.querySelector(s).children].map((e) => e.textContent).join(' | ');       // (textContent: a hidden window may not have laid it out yet)
-        return { top: txt('.skTop'), card: t.querySelector('.skCard').classList.contains('on') ? txt('.skCard') : '', feed: txt('.skFeed'), players: txt('.skPlayers'), ink, tools: [...t.querySelectorAll('.skTool')].filter((b) => !b.disabled).length, input: !t.querySelector('.skInput').disabled };
+        return { top: txt('.skTop'), card: t.querySelector('.skCard').classList.contains('on') ? txt('.skCard') : '', feed: txt('.skFeed'), players: txt('.skPlayers'), ink, tools: [...t.querySelectorAll('.skTool:not(.skGear)')].filter((b) => !b.disabled).length, input: !t.querySelector('.skInput').disabled };
       });
       const firstDrawer = SV().players[SV().drawer].id, iDraw = SV().drawer === SV().you;
       let sp = await skPage();
@@ -5955,16 +6138,16 @@ async function runShots() {
         const w = SV().word;
         fs.writeFileSync(path.join(outDir, 'word'), w);
         sp = await skPage();
-        tl('the drawer sees the word, the tools, and no guess box', sp.top.includes(w) && sp.tools === 10 && !sp.input);
+        tl('the drawer sees the word, the tools, and no guess box', sp.top.replace(/\s/g, '').includes(w.replace(/\s/g, '')) && sp.tools === 5 && !sp.input);       // (spelled out letter by letter)
         await pageRun(tw('sketch'), () => {
           const c = document.querySelector('#skTable .skLive'), r = c.getBoundingClientRect();
           const ev = (type, x, y) => c.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 7, button: 0, clientX: r.left + x * r.width, clientY: r.top + y * r.height }));
           ev('pointerdown', 0.2, 0.3); for (let i = 1; i <= 20; i++) ev('pointermove', 0.2 + i * 0.02, 0.3 + Math.sin(i / 3) * 0.1); ev('pointerup', 0.6, 0.3);
-          document.querySelector('#skTable .skTool[data-tool="rect"]').click();
+          document.querySelector('#skTable .skTool[data-tool="fill"]').click();
           document.querySelectorAll('#skTable .skSwatch')[4].click();
-          ev('pointerdown', 0.3, 0.5); ev('pointermove', 0.5, 0.8); ev('pointerup', 0.5, 0.8);
+          ev('pointerdown', 0.8, 0.8); ev('pointerup', 0.8, 0.8);
         });
-        need('the drawing goes to the hub and back', await until(() => gm.sketch.ink.list.some((o) => o.k === 'rect' && o.c === 4) && gm.sketch.ink.list.some((o) => o.k === 'pen'), 5000));
+        need('the drawing goes to the hub and back', await until(() => gm.sketch.ink.list.some((o) => o.k === 'fill' && o.c === 4) && gm.sketch.ink.list.some((o) => o.k === 'pen'), 5000));
         tl('...and is on my sheet', (await skPage()).ink > 50);
         await shot('sketch', 'sk-drawer');
       } else {
@@ -5973,7 +6156,7 @@ async function runShots() {
         await until(() => SV().phase === 'drawing', 5000);
         tl('the guesser sees blanks, never the word', SV().word === '' && SV().hint.length === w.length && SV().hint.every((c) => c === null || c === ' ') && !(await skPage()).top.toLowerCase().includes(w));
         tl('...and has no tools, but a guess box', (sp = await skPage()).tools === 0 && sp.input);
-        need('the drawing arrives as it\'s drawn: a stroke and a red rectangle', await until(async () => gm.sketch.ink.list.some((o) => o.k === 'rect' && o.c === 4) && (await skPage()).ink > 50, 10000));
+        need('the drawing arrives as it\'s drawn: a stroke and a red fill', await until(async () => gm.sketch.ink.list.some((o) => o.k === 'fill' && o.c === 4) && (await skPage()).ink > 50, 10000));
         const guess = (text) => pageRun(tw('sketch'), (s) => { const i = document.querySelector('#skTable .skInput'); i.value = s; i.form.requestSubmit(); }, text);
         await guess('definitely not it');
         tl('a wrong guess shows in the guesses', await until(async () => (await skPage()).feed.includes('definitely not it'), 5000));
@@ -5987,7 +6170,9 @@ async function runShots() {
       tl('scores: the drawer 25 for the guess, the guesser more', await until(() => { const ps = SV().players, d = ps.find((p) => p.id === firstDrawer), g = ps.find((p) => p.id !== firstDrawer); return d.score === 25 && g.score > 50; }, 8000));
       tl('the next turn: the other one draws, on a clean sheet', await until(async () => SV().phase === 'choosing' && SV().players[SV().drawer].id !== firstDrawer && (await skPage()).ink === 0, 10000));
       log.push('games: sketch sounds ' + gmHeard.join(' '));
-      tl(iDraw ? 'sounds: your turn, and someone guessing your drawing' : 'sounds: your right guess', iDraw ? gmHeard.includes('bjTurn') && gmHeard.includes('skOther') : gmHeard.includes('skRight'));
+      // (the first drawer of a game gets the game's drumroll in place of "your turn"; the last guesser getting it ends the turn: "everyone got it")
+      tl(iDraw ? 'sounds: your turn (or the game starting), and someone guessing your drawing' : 'sounds: your right guess',
+        iDraw ? (gmHeard.includes('skTurn') || gmHeard.includes('skStart')) && (gmHeard.includes('skOther') || gmHeard.includes('skAll')) : gmHeard.includes('skRight'));
       await step('sk-done');
       if (role === 'guest') { scene('aurora'); tl('leaving: no longer at the table', await until(() => gm.sketch.at === '', 5000)); }
       else tl('the guest leaves: the game stops for want of players', await until(() => SV() && SV().players.length === 1 && SV().phase === 'waiting', 15000));

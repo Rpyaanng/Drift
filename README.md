@@ -129,7 +129,10 @@ blackjack pays 3 to 2. Bets are 10 to 500. Run out of chips and you're back in w
 - **Online in a hub**, you sit at the hub's table with everyone there, up to six at once (the rest wait for a seat), each
   starting with 1,000. You see each other's cards, pointers and pictures, and the hub keeps a board of its five
   **biggest pots**. Click someone at the table in the hub bar to sit down next to them. **Stand up** to watch.
-- The table has its own sounds, with their own switch in the Hub tab's Sounds.
+- The table has its own sounds, with their own switch in the Hub tab's Sounds. Blackjack, Roulette and Hold'em are played
+  like a spectator sport: chips that clink and slide, a riffle shuffle, an air horn for a big win, a celebration when you
+  win and a soft "wah-wahh" when you lose, and a heartbeat under the roulette ball. Winnings and chip counts **roll up**
+  when chips come in.
 
 ### Roulette
 
@@ -157,15 +160,22 @@ raise with the slider (½ pot, pot, all in). Run out of chips and you're back in
 
 **Scenes → Games room → Sketch & Guess** is a drawing game for everyone online in your hub (it needs two or more, so
 there's no playing it alone). Each turn one player picks a word from three and draws it; everyone else types guesses.
-Guess sooner to score more; the drawer scores for every person who gets it. A letter of the word shows at half time and
-another at three quarters, and a guess one letter off is told "very close" (only to you). Everyone draws once a round,
-three rounds a game, up to twelve players.
+Guess sooner to score more; the drawer scores for every person who gets it. With hints on, a letter of the word shows in a
+random spot when 60%, 40% and 20% of the time is left (three at most, never the last two hidden), and a guess one letter
+off is told "very close" (only to you). Everyone draws once a round, up to twelve players.
 
-- The board is laid out like a diagram editor: **tools** down the left (pen, line, arrow, rectangle, ellipse, diamond,
-  triangle, eraser, undo, clear, each with a key: P L A R O D T E, Ctrl+Z), **15 colours**, three widths and three fills
-  (none, light, solid) along the top, and a white sheet on a grid. Hold Shift for straight lines, squares and circles.
+- **Tools** down the left: a pen, a **paint bucket** that fills the area you click, an eraser, undo and clear (keys P B E,
+  Ctrl+Z), with **15 colours** and three widths along the top, and a white sheet on a grid. The drawer sees their word
+  spelled out on lines, letter by letter.
+- **Settings** (the gear at the bottom of the tools): the time to draw (15 to 600 seconds, 80 to start), rounds (1 to 10),
+  hints on or off, and the **word list**, which you can edit or reset to Drift's own (424 words: some everyday things,
+  words made of two, like *starfish*, and mostly harder ones: ideas, jobs, goings-on and a few sayings). They're kept
+  with your settings and used at a hub you host, from the next game; at someone else's hub, the host's are used.
 - Everyone sees the drawing as it's drawn. Right guesses are never shown to the others, and once you know the word your
   messages only go to the drawer and the others who know it.
+- It sounds like a game show: a drumroll when a game starts, a fanfare for each new round and for your turn, a "lock it
+  in" when the word's picked, the clock ticking through the last ten seconds, a buzzer when time runs out, and a fanfare,
+  applause or the sad trombone at the end.
 - The hub keeps a board of its five **best scores** in a game.
 
 ## Sound
@@ -556,12 +566,15 @@ Environment variables for trying things out:
 
 - `DRIFT_USERDATA=<folder>` runs a second copy with its own settings (two copies on one PC can share with each other).
 - `DRIFT_SHARE_LOCAL=1` keeps sharing on this PC. `DRIFT_FAKE_HDR=0|1` pretends the screens are SDR or HDR.
+- `DRIFT_SKETCH_SOLO=1` plays Sketch & Guess alone to try the drawing (you always draw); `DRIFT_SKETCH_SOLO=guess` has a
+  computer player draw and tell you the word, with another guessing, to try guessing and its sounds.
 - `DRIFT_HIDDEN=1` and `DRIFT_MUTE=1` run without windows or sound. `DRIFT_FAKE_DISPLAYS=N` splits one screen into N fake
   monitors (`DRIFT_FAKE_WIDTHS=1,2` makes them different widths).
 - `DRIFT_SHOTS=<folder>` runs the screenshot tour (add `DRIFT_ONLY=<scene,...>`, `DRIFT_PALETTE=<name>`,
   `DRIFT_PANEL=1` and `DRIFT_SHOTWAIT=<ms>`). The scene pictures in this README were made with it.
   `node scripts/readme-shots.js [folder]` makes the rest (Span, Mix, the panel, Media, Surf and the Hub) on this PC's
-  own monitors, with a made-up library and its own settings folder.
+  own monitors, with a made-up library and its own settings folder. `node scripts/game-pics.js` makes the Games room
+  tiles' pictures (`renderer/games/`): each table mid-game. Run it again when a table's look changes.
 - `DRIFT_FAKE_VERSION=1.0.0` (in a packaged copy) makes Drift think the latest release is newer;
   `DRIFT_UPDATE_AUTOINSTALL=1` installs and restarts as soon as the download is ready.
 
@@ -583,7 +596,7 @@ Tests (each starts its own copies of Drift, with their own settings):
 | `node scripts/test-blackjack.js` | Two copies at the Blackjack table: alone, then side by side at a hub's (about a minute; `timeout 240`) |
 | `node scripts/test-roulette-engine.js` | Roulette's rules: every bet's odds, payouts, the clock, crapping out (no Electron needed; a second) |
 | `node scripts/test-poker-engine.js` | Hold'em's rules: hand ranking, blinds, side pots, the turn timer, the computer players (no Electron needed; a second) |
-| `node scripts/test-sketch-engine.js` | Sketch & Guess's rules: turns, guessing and scores, hints, what each player may see, the drawing's limits (no Electron needed; a second) |
+| `node scripts/test-sketch-engine.js` | Sketch & Guess's rules: turns, guessing and scores, hints, what each player may see, the drawing and its fills, the settings (time, rounds, hints, words) and solo practice (no Electron needed; a second) |
 | `node scripts/test-games.js` | Two copies at Roulette, Hold'em and Sketch & Guess: alone, then together at a hub's tables (about two minutes; `timeout 330`; `DRIFT_GAMESHOTS=1` saves pictures) |
 | `node scripts/test-surf-lan.js` | The Surf stream's guard against the host's network (no Electron needed) |
 | `node scripts/test-broadcast-ui.js` | The Share tab's real buttons, with two copies |

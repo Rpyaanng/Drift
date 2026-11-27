@@ -657,7 +657,7 @@
     thumbPalette = palKey; const job = ++thumbJob;
     if (!TR) TR = makeRenderer(tcan, { preserveDrawingBuffer: true });
     if (!TR) return;
-    const list = [...SCENES]; const cols = currentColors();
+    const list = SCENES.filter((s) => !s.game); const cols = currentColors();       // (the Games room's tiles are pictures of the tables: renderer/games, scripts/game-pics.js)
     const step = () => {
       if (job !== thumbJob || !list.length) return;
       const s = list.shift();
@@ -729,7 +729,7 @@
   const webHere = () => { const w = S.web || {}; return !!w.open && w.key === me.key; };
   let tab = webHere() ? 'surf' : TAB_IDS.includes(init.tab) && init.tab !== 'surf' ? init.tab : 'scenes';
   // (a game has no rotation tick: the automatic changes never pick one, main.js GAMES)
-  const tileHtml = (s) => { const i = SCENES.indexOf(s); return `<button class="tile${s.game ? ' game' : ''}" data-id="${s.id}">${s.game ? '' : '<i class="rot" role="checkbox" aria-checked="true" title="Include in automatic scene changes"></i>'}<kbd>${i < 9 ? i + 1 : ''}</kbd><span>${s.name}</span></button>`; };
+  const tileHtml = (s) => { const i = SCENES.indexOf(s); return `<button class="tile${s.game ? ' game' : ''}" data-id="${s.id}"${s.game ? ` style="background-image:url(games/${s.id}.jpg)"` : ''}>${s.game ? '' : '<i class="rot" role="checkbox" aria-checked="true" title="Include in automatic scene changes"></i>'}<kbd>${i < 9 ? i + 1 : ''}</kbd><span>${s.name}</span></button>`; };
   $('#tiles').innerHTML = `<div class="tilegrid">${SCENES.filter((s) => !s.group).map(tileHtml).join('')}</div>`
     + `<h3 class="sub">Landscapes</h3><div class="tilegrid">${SCENES.filter((s) => s.group === 'land').map(tileHtml).join('')}</div>`
     + `<h3 class="sub">Algorithms</h3><div class="tilegrid">${SCENES.filter((s) => s.group === 'algo').map(tileHtml).join('')}</div>`
@@ -1620,6 +1620,7 @@
     if (c.note && x.on) x.t.note(c.note);
     if ('v' in c && x.on) { gmHub = String(c.hub || ''); x.t.view(c.v || null, c.mode); }
     if (c.ink && x.t.ink) x.t.ink(c.ink);       // (Sketch & Guess: the drawing as it grows)
+    if (c.settings && x.t.settings) x.t.settings(c.settings);       // (and its settings)
     if (Array.isArray(c.ptrs) && gmOn === c.g) { gmPtrList = c.ptrs; drawPtrs(gmPtrBox, gmPtrEls, gmBox(), gmPtrList); }
   }
   addEventListener('resize', () => { if (gmPtrEls.size) drawPtrs(gmPtrBox, gmPtrEls, gmBox(), gmPtrList); });

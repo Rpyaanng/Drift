@@ -17,6 +17,7 @@
   const ACT = [['hit', 'Hit'], ['stand', 'Stand'], ['double', 'Double'], ['split', 'Split'], ['surrender', 'Surrender']];
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
   const fmt = (n) => Math.round(n).toLocaleString();
+  const roll = window.driftRoll;       // (roll.js: chip counts and winnings counting up)
 
   // ---------- the house's look: Drift's mark, and what's printed on the felt ----------
   // Drift's mark: the two waves of its icon (icon.svg, the same four shapes), flat: the teal one in the accent, the lilac one in
@@ -129,7 +130,7 @@
       }));
       const bet = s.hands.length ? s.hands.reduce((n, h) => n + h.bet, 0) : s.bet;
       stakeEl.replaceChildren(chipStack(bet), ...(s.insurance ? [el('span', 'bjIns', `Insured ${fmt(s.insurance)}`)] : []));       // (the betting circle, empty till a bet's in it)
-      const nm = el('span', 'nm', i === v.you ? 'You' : s.name), ch = el('span', 'ch', s.outMs ? 'Out of chips' : fmt(s.chips));
+      const nm = el('span', 'nm', i === v.you ? 'You' : s.name), ch = s.outMs ? el('span', 'ch', 'Out of chips') : roll.num('bj:ch:' + s.id, s.chips, fmt, { cls: 'ch' });
       const ring = el('i', 'bjRing');       // their turn's (or their wait's) time, filling round; at a hub, round their picture
       const f = mode === 'hub' && !s.blocked && opts.face ? opts.face(s.id) : null;
       if (f) { ring.classList.add('av'); ring.append(f); }
@@ -201,15 +202,16 @@
       else if (v.phase === 'dealer') line = 'The dealer plays';
       // Stand up: whenever you've no hand still to play (a bet not dealt yet comes back; a hand that's played out still settles)
       if (me && !me.left && !me.hands.some((h) => !h.done) && !(v.phase === 'insurance' && me.insure)) kids.push(btn('Stand up', 'ghost', () => { stake = 0; send({ op: 'stand' }); }));
-      bar.replaceChildren(...(line ? [el('span', 'bjLine', line)] : []), ...kids);
+      bar.replaceChildren(...(line ? [typeof line === 'string' ? el('span', 'bjLine', line) : line] : []), ...kids);       // (a win's line comes with its number rolling)
       bar.dataset.phase = v.phase;
       status.replaceChildren(...statusLine());
     }
     function summary(me) {
       if (!me.hands.length) return 'Next hand in a moment';
       const n = me.net;
-      if (me.hands.some((h) => h.result === 'blackjack')) return `Blackjack! +${fmt(n)}`;
-      return n > 0 ? `You win ${fmt(n)}` : n < 0 ? `You lose ${fmt(-n)}` : 'Push: your bet comes back';
+      const won = () => roll.num(`bj:won:${v.round}`, n, fmt, { cls: 'bjWon', from0: true });       // (counting up from nothing)
+      if (me.hands.some((h) => h.result === 'blackjack')) return roll.line('bjLine', 'Blackjack! +', won());
+      return n > 0 ? roll.line('bjLine', 'You win ', won()) : n < 0 ? `You lose ${fmt(-n)}` : 'Push: your bet comes back';
     }
     function statusLine() {
       const out = [];

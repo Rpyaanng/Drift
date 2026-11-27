@@ -7,41 +7,85 @@
 //
 //   const t = createTable({ now, rand, times });  t.sit(id, name)  t.move(id, { do: 'guess', text: 'cat' })  t.tick()
 //
-// The drawing is a list of operations on a 1600 x 1000 sheet (inkOp): a pen stroke's pieces as it's drawn, a finished line,
-// arrow or shape, an undo (the last stroke or shape goes) or a clear. The word never leaves here for anyone but the drawer,
+// The drawing is a list of operations on a 1600 x 1000 sheet (inkOp): a pen stroke's pieces as it's drawn, a paint-bucket
+// fill (a point and a colour: each screen floods the area round it), an undo (the last stroke or fill goes) or a clear. The word never leaves here for anyone but the drawer,
 // the people who have guessed it, and everyone once the turn is over.
 const RULES = { players: 12, rounds: 3, start: 0 };
 const TIMES = { start: 4000, choose: 15000, draw: 80000, reveal: 6000, over: 12000 };       // ms: before a game, picking a word, drawing, the word shown, the final scores
 const W = 1600, H = 1000, COLORS = 15, INK_MAX = 6000;
-const KINDS = new Set(['pen', 'line', 'arrow', 'rect', 'ellipse', 'diamond', 'triangle', 'undo', 'clear']);
-// Our own words: things anyone can draw, nothing unkind. One or two words each.
-const WORDS = `apple,banana,cherry,grapes,lemon,pear,pineapple,strawberry,watermelon,carrot,corn,mushroom,pumpkin,potato,broccoli,
-bread,cake,cookie,cupcake,donut,ice cream,pizza,sandwich,hot dog,pancake,cheese,egg,popcorn,candy,soup,
-cat,dog,horse,cow,pig,sheep,chicken,duck,rabbit,mouse,frog,snake,turtle,fish,shark,whale,dolphin,octopus,crab,
-snail,butterfly,bee,spider,ant,owl,penguin,parrot,flamingo,giraffe,elephant,lion,tiger,zebra,monkey,bear,panda,
-kangaroo,camel,fox,wolf,deer,bat,dinosaur,dragon,unicorn,
-house,castle,tent,igloo,lighthouse,bridge,tower,church,barn,windmill,skyscraper,school,hospital,
-car,bus,truck,train,bicycle,motorcycle,boat,ship,submarine,airplane,helicopter,rocket,tractor,skateboard,
-sun,moon,star,cloud,rain,snowman,rainbow,lightning,tornado,volcano,mountain,island,beach,river,waterfall,
-tree,flower,cactus,leaf,mushroom,palm tree,forest,desert,cave,
-chair,table,bed,lamp,clock,door,window,ladder,umbrella,key,lock,book,pencil,scissors,glasses,hat,crown,
-shoe,boot,sock,shirt,dress,glove,scarf,backpack,suitcase,wallet,ring,necklace,
-phone,computer,keyboard,television,camera,robot,headphones,guitar,piano,drum,trumpet,violin,microphone,
-ball,kite,balloon,gift,candle,lollipop,teddy bear,yo-yo,puzzle,dice,
-hammer,saw,shovel,bucket,broom,toothbrush,comb,mirror,soap,bathtub,toilet,
-fork,spoon,knife,cup,mug,teapot,bottle,pan,oven,fridge,
-heart,arrow,anchor,flag,map,compass,magnet,battery,lightbulb,bomb,
-ghost,alien,pirate,wizard,witch,vampire,mermaid,superhero,king,queen,knight,clown,astronaut,
-fishing,swimming,sleeping,running,dancing,singing,reading,cooking,painting,jumping,
-snowflake,fire,ice,bubble,smile,eye,nose,ear,hand,foot,tooth,brain,skeleton,
-trophy,medal,money,treasure,sword,shield,bow,cannon,
-spaceship,planet,comet,telescope,satellite,
-nest,egg,feather,web,shell,bone,paw,tail,
+const KINDS = new Set(['pen', 'fill', 'undo', 'clear']);
+// Our own words: things anyone can draw, nothing unkind. Mostly a word or three: some everyday things (not the very
+// simplest), words made of two (starfish, doorbell), and, the most of all, harder ones: ideas, goings-on, jobs, tricky
+// things and a few sayings, that take some cleverness to draw (gravity, echo, once in a blue moon).
+const WORDS = `pineapple,strawberry,watermelon,broccoli,mushroom,pumpkin,cupcake,ice cream,sandwich,hot dog,pancake,popcorn,
+waffle,taco,noodles,sushi,lemonade,
+octopus,flamingo,kangaroo,camel,penguin,parrot,dolphin,giraffe,elephant,zebra,panda,turtle,butterfly,spider,
+dinosaur,dragon,unicorn,
+castle,igloo,lighthouse,bridge,windmill,skyscraper,hospital,
+bicycle,motorcycle,submarine,helicopter,tractor,skateboard,
+snowman,rainbow,tornado,volcano,island,waterfall,cactus,palm tree,desert,cave,
+ladder,umbrella,scissors,glasses,crown,scarf,backpack,suitcase,wallet,necklace,
+keyboard,television,camera,robot,headphones,guitar,piano,trumpet,violin,microphone,
+lollipop,teddy bear,yo-yo,puzzle,dice,shovel,toothbrush,mirror,bathtub,teapot,fridge,
+anchor,compass,magnet,battery,lightbulb,
+alien,pirate,wizard,witch,vampire,mermaid,superhero,knight,clown,astronaut,
+fishing,swimming,sleeping,dancing,singing,cooking,painting,
+snowflake,bubble,brain,skeleton,trophy,medal,treasure,cannon,
+spaceship,comet,telescope,satellite,feather,nest,
 snow globe,birthday,campfire,picnic,parachute,hot air balloon,roller coaster,ferris wheel,traffic light,
-mailbox,fence,well,swing,slide,sandcastle,treehouse,doghouse,scarecrow,
-toast,waffle,burger,taco,noodles,sushi,pie,lemonade,milk,
-zipper,button,needle,yarn,sock puppet,glue,paintbrush,crayon,eraser,ruler`.split(',').map((w) => w.trim()).filter(Boolean);
+mailbox,swing,sandcastle,treehouse,doghouse,scarecrow,
+zipper,needle,sock puppet,paintbrush,
+starfish,jellyfish,swordfish,catfish,firefly,dragonfly,ladybug,grasshopper,earthworm,honeybee,beehive,rattlesnake,bulldog,seahorse,
+seashell,seaweed,horseshoe,sunflower,sunglasses,sunrise,sunset,sunburn,moonlight,snowball,snowboard,raincoat,birdhouse,greenhouse,
+houseboat,sailboat,fire truck,fireworks,fireplace,football,basketball,baseball,eyeball,eyebrow,earring,toothpaste,hairbrush,
+handbag,headband,footprint,fingerprint,keyhole,doorbell,bookshelf,bookworm,notebook,cookbook,paperclip,pinwheel,wheelchair,
+wheelbarrow,toolbox,lunchbox,teacup,surfboard,cowboy,railroad,airport,cheeseburger,milkshake,gingerbread,blueberry,peanut,
+piggy bank,waterslide,sandstorm,
+gravity,shadow,echo,reflection,invisible,nightmare,daydream,electricity,hibernation,evolution,photosynthesis,time machine,
+black hole,solar eclipse,northern lights,quicksand,avalanche,earthquake,tsunami,mirage,fossil,blizzard,stampede,migration,
+constellation,labyrinth,origami,chandelier,escalator,vending machine,conveyor belt,lawnmower,periscope,metronome,hourglass,
+pendulum,kaleidoscope,tuxedo,mustache,goosebumps,brain freeze,hiccup,sneeze,yawn,sleepwalking,homesick,jet lag,traffic jam,
+rush hour,deadline,password,recycling,global warming,cliffhanger,bucket list,karaoke,applause,autograph,blindfold,
+archaeologist,dentist,plumber,lifeguard,magician,ventriloquist,hypnotist,juggler,tightrope,trampoline,
+hide and seek,tug of war,musical chairs,procrastination,multitasking,
+jealousy,nostalgia,curiosity,confusion,freedom,friendship,good luck,silence,balance,patience,teamwork,surprise party,
+stage fright,brainstorm,comfort zone,
+magnetism,static electricity,chain reaction,food chain,water cycle,metamorphosis,camouflage,erosion,sound wave,
+rainforest,coral reef,microscope,atom,orbit,meteor shower,space station,zero gravity,wormhole,hologram,
+virtual reality,solar panel,wind turbine,power outage,short circuit,
+flat tire,power nap,sleepover,family reunion,garage sale,job interview,graduation,wedding,retirement,road trip,
+fire drill,spelling bee,science fair,talent show,standing ovation,red carpet,encore,plot twist,happy ending,
+haunted house,treasure hunt,scavenger hunt,pillow fight,snowball fight,staring contest,thumb war,high five,bear hug,
+cat nap,couch potato,night owl,early bird,copycat,
+raining cats and dogs,piece of cake,spill the beans,under the weather,once in a blue moon,elephant in the room,
+astronomer,beekeeper,firefighter,zookeeper,blacksmith,lumberjack,referee,conductor,sculptor,surgeon,detective,
+mime,puppeteer,scuba diver,stunt double,tailor,locksmith,
+thermostat,smoke detector,stethoscope,sundial,abacus,typewriter,gramophone,jukebox,accordion,bagpipes,harp,
+xylophone,tambourine,saxophone,binoculars,magnifying glass,crystal ball,treasure map,message in a bottle,
+time capsule,snowplow,drawbridge,catapult,mummy,pyramid,sphinx,totem pole,observatory,wind chime,dreamcatcher,
+lava lamp,disco ball,bubble wrap,duct tape,safety pin,mousetrap,revolving door,drive through,parking meter,
+speed bump,roundabout,toll booth`.split(',').map((w) => w.trim()).filter(Boolean);
 const WORD_LIST = [...new Set(WORDS)];
+// The settings people can change (main.js keeps them; the table reads them between games): how long each drawing lasts,
+// how many rounds (everyone draws once a round), whether letters are shown as the time runs out (hints), and the words,
+// null for ours. Anything odd is put back in range; a list
+// with fewer than three usable words is no list (ours is used).
+const SETTINGS = { draw: 80, rounds: 3, hints: true, words: null };       // draw: seconds
+function cleanSettings(s) {
+  s = s && typeof s === 'object' ? s : {};
+  const int = (v, lo, hi, d) => (Number.isFinite(+v) && v !== '' && v !== null ? Math.max(lo, Math.min(hi, Math.round(+v))) : d);
+  let words = null;
+  if (Array.isArray(s.words)) {
+    const seen = new Set(); words = [];
+    for (const w0 of s.words.slice(0, 5000)) {
+      const w = String(w0 || '').replace(/[\x00-\x1f]/g, '').replace(/\s+/g, ' ').trim().slice(0, 30), n = norm(w);
+      if (n && !seen.has(n)) { seen.add(n); words.push(w); }
+      if (words.length >= 2000) break;
+    }
+    if (words.length < 3) words = null;
+  }
+  return { draw: int(s.draw, 15, 600, SETTINGS.draw), rounds: int(s.rounds, 1, 10, SETTINGS.rounds), hints: s.hints === undefined ? SETTINGS.hints : !!s.hints, words };
+}
 
 const norm = (s) => String(s || '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
 function near(a, b) {       // one letter off (added, missing, changed or two swapped): "so close"
@@ -62,10 +106,11 @@ function inkOp(o) {
   const int = (v, lo, hi) => (Number.isFinite(+v) ? Math.max(lo, Math.min(hi, Math.round(+v))) : lo);
   if (!Array.isArray(o.p)) return null;
   const pen = o.k === 'pen';
-  if (pen ? o.p.length < 2 || o.p.length > 160 || o.p.length % 2 : o.p.length !== 4) return null;
+  if (pen ? o.p.length < 2 || o.p.length > 160 || o.p.length % 2 : o.p.length !== 2) return null;       // (a fill: the one point it pours from)
   const p = o.p.map((v, i) => int(v, 0, i % 2 ? H : W));
+  if (!pen) return { k: 'fill', c: int(o.c, 0, COLORS - 1), s: int(o.s, 0, 1e9), p, q };
   const op = { k: o.k, c: int(o.c, 0, COLORS - 1), w: int(o.w, 0, 2), s: int(o.s, 0, 1e9), p, q };
-  if (pen) { if (o.e) op.e = 1; } else op.f = int(o.f, 0, 2);
+  if (o.e) op.e = 1;
   return op;
 }
 
@@ -73,7 +118,15 @@ function createTable(opts = {}) {
   const now = opts.now || (() => Date.now());
   const rand = opts.rand || ((n) => require('crypto').randomInt(n));
   const T = { ...TIMES, ...(opts.times || {}) }, R = { ...RULES, ...(opts.rules || {}) };
-  const words = opts.words || WORD_LIST;
+  let words = opts.words || WORD_LIST, setRev, useHints = SETTINGS.hints;
+  function settle() {       // opts.settings(): { draw, rounds, words, rev }, taken up between games (never in the middle of one)
+    const s = opts.settings ? opts.settings() : null;
+    if (!s || s.rev === setRev) return;
+    setRev = s.rev;
+    const c = cleanSettings(s);
+    T.draw = c.draw * 1000; R.rounds = c.rounds; words = c.words || opts.words || WORD_LIST; useHints = c.hints;
+    changed();
+  }
   const players = [];       // { id, name, score, gained, guessed, at (when they guessed), drew (the round they last drew in) }, in the order they came
   const watchers = [];       // [{ id, name }] waiting for a place
   let phase = 'idle', deadline = 0, round = 0, version = 0, drawer = null, word = '', choices = [], hint = [], used = new Set(), feed = [], feedN = 0;
@@ -112,22 +165,25 @@ function createTable(opts = {}) {
 
   // ------------------------------------------------------------------ the game and its turns
   function startGame() {
+    settle();
     round = 1; used = new Set(); standings = null;
     for (const p of players) { p.score = 0; p.gained = 0; p.drew = 0; }
-    say('sys', 'A new game: three rounds, everyone draws once a round');
+    say('sys', opts.solo ? `Practice: ${R.rounds === 1 ? 'one drawing' : `${R.rounds} drawings`}` : `A new game: ${R.rounds === 1 ? 'one round' : `${R.rounds} rounds`}, everyone draws once a round`);
     nextTurn();
   }
   function nextTurn() {
     for (const p of players) { p.guessed = false; p.gained = 0; p.at = 0; }
-    let d = players.find((p) => p.drew < round && p.drew !== -1) || null;
+    const who = opts.solo ? players.filter((p) => p.id === opts.solo) : players;       // (solo practice: only you draw, once a round)
+    let d = who.find((p) => p.drew < round && p.drew !== -1) || null;
     if (!d) {       // everyone has drawn this round
       for (const p of players) if (p.drew === -1) p.drew = 0;       // (came in partway: in from the next round)
       if (round >= R.rounds) { endGame(false); return; }
       round++;
-      d = players.find((p) => p.drew < round) || null;
+      d = who.find((p) => p.drew < round) || null;
       if (!d) { endGame(false); return; }
     }
     drawer = d; drawer.drew = round;
+    if (words.filter((w) => !used.has(w)).length < 3) used = new Set();       // (a short list of words comes round again)
     const pool = words.filter((w) => !used.has(w)), pick = [];
     while (pick.length < 3 && pool.length) pick.push(pool.splice(rand(pool.length), 1)[0]);
     choices = pick; word = ''; hint = []; lastNote = '';
@@ -156,11 +212,12 @@ function createTable(opts = {}) {
     changed();
     if (opts.onSettle) try { opts.onSettle(standings.map((s) => ({ id: s.id, name: s.name, score: s.score, net: s.score }))); } catch { /* theirs to get right */ }
   }
-  // A hint now and then: a letter shown at half time and again at three quarters (never the last ones)
+  // Hints (a setting, on unless turned off): a letter in a random spot when 60%, 40% and 20% of the time is left, three at
+  // most, and never the last two hidden ones, so a short word isn't given away
   function hints(t) {
-    if (phase !== 'drawing' || !word) return;
+    if (phase !== 'drawing' || !word || !useHints) return;
     const frac = (t - turnAt) / T.draw, hidden = hint.map((c, i) => (c === null ? i : -1)).filter((i) => i >= 0);
-    const want = (frac >= 0.75 ? 2 : frac >= 0.5 ? 1 : 0) - hint.filter((c, i) => c !== null && word[i] !== ' ' && word[i] !== '-').length;
+    const want = (frac >= 0.8 ? 3 : frac >= 0.6 ? 2 : frac >= 0.4 ? 1 : 0) - hint.filter((c, i) => c !== null && word[i] !== ' ' && word[i] !== '-').length;
     if (want > 0 && hidden.length > 2) { const i = hidden[rand(hidden.length)]; hint[i] = word[i]; changed(); }
   }
 
@@ -209,6 +266,7 @@ function createTable(opts = {}) {
   // ------------------------------------------------------------------ time
   function tick() {
     const t = now(), v0 = version;
+    if (phase === 'idle' || phase === 'waiting') settle();       // (so the waiting screen already shows the new settings)
     if (phase === 'waiting') {
       if (players.length >= 2) { if (!deadline) { deadline = t + T.start; changed(); } else if (t >= deadline) startGame(); }
       else if (deadline) { deadline = 0; changed(); }
@@ -244,6 +302,7 @@ function createTable(opts = {}) {
 
   return {
     sit, leave, move, tick, view, mine: () => null,
+    tell: (id, text) => say('sys', text, { to: String(id) }),       // a line in one person's feed only (practice: the word, for whoever's testing)
     ink: (from = 0) => ink.slice(from),
     get inkRev() { return inkRev; }, get inkLen() { return ink.length; },
     get version() { return version; }, get phase() { return phase; },
@@ -252,4 +311,4 @@ function createTable(opts = {}) {
   };
 }
 
-module.exports = { createTable, inkOp, norm, near, WORD_LIST, RULES, TIMES, W, H, COLORS };
+module.exports = { createTable, inkOp, norm, near, cleanSettings, SETTINGS, WORD_LIST, RULES, TIMES, W, H, COLORS };

@@ -928,9 +928,11 @@
   const SFX_TRY = [['connect', 'Online'], ['disconnect', 'Offline'], ['lost', 'Dropped'], ['join', 'Join voice'], ['leave', 'Leave voice'],
     ['peerJoin', 'Friend joins'], ['peerLeave', 'Friend leaves'], ['mute', 'Mute'], ['unmute', 'Unmute'], ['liveOn', 'Go live'], ['liveOff', 'Stop live'],
     ['viewerJoin', 'Viewer joins'], ['viewerLeave', 'Viewer leaves'], ['bcStart', 'Friend goes live'], ['shareOn', 'Watch together'], ['shareOff', 'Stop watching'], ['message', 'Message'],
-    ['bjDeal', 'Deal'], ['bjChip', 'Chips'], ['bjTurn', 'Your turn'], ['bjWin', 'Win'], ['bjBlackjack', 'Blackjack'], ['bjPush', 'Push'], ['bjLose', 'Lose'], ['bjBust', 'Bust'], ['bjOut', 'Out of chips'], ['bjBack', 'Back in'],
-    ['rlSpin', 'Wheel spins'], ['rlDrop', 'Ball drops'], ['rlWin', 'Wheel win'], ['pkCheck', 'Check'], ['pkFold', 'Fold'],
-    ['skRight', 'You guessed it'], ['skOther', 'Someone guessed'], ['skClose', 'So close'], ['skEnd', 'Time\'s up']];
+    ['bjDeal', 'Deal'], ['bjShuffle', 'Shuffle'], ['bjChip', 'Chips'], ['bjTurn', 'Your turn'], ['bjWin', 'Win'], ['bjBlackjack', 'Blackjack'], ['bjPush', 'Push'], ['bjLose', 'Lose'], ['bjBust', 'Bust'], ['bjOut', 'Out of chips'], ['bjBack', 'Back in'],
+    ['rlSpin', 'Wheel spins'], ['rlDrop', 'Ball drops'], ['rlWin', 'Wheel win'], ['rlBig', 'Big wheel win'], ['pkShuffle', 'New hand'], ['pkCheck', 'Check'], ['pkFold', 'Fold'],
+    ['pkRaise', 'Raise'], ['pkAllIn', 'All in'], ['pkRiver', 'The river'], ['pkPot', 'Someone\'s pot'], ['pkBig', 'Big pot'],
+    ['skStart', 'Game starts'], ['skRound', 'New round'], ['skTurn', 'Your turn to draw'], ['skPick', 'Word picked'], ['skRight', 'You guessed it'], ['skOther', 'Someone guessed'], ['skClose', 'So close'], ['skHint', 'Hint'],
+    ['skTick', 'Clock ticks'], ['skEnd', 'Time\'s up'], ['skAll', 'Everyone got it'], ['skWin', 'You win'], ['skApplause', 'Applause'], ['skLose', 'Last place']];
   $('#sfxTry').replaceChildren(...SFX_TRY.map(([name, label]) => h('button.mini', { title: 'Play this sound', onclick: () => api.cmd({ type: 'sfx', name, preview: true }) }, '▶ ' + label)));
   function drawSfxOpts() {
     const r = $('#sfxVol');

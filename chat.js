@@ -192,7 +192,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
   // fresh: the first time this run hosts, last run's messages are wiped (they last one session; see stop()).
   let hosting = readJson('hosting.json', null), hub = null, mappings = [], hostNote = '', fresh = true;
   async function startHub() {
-    hub = createHub({ dir: file('hub'), owner: pub, name: hosting.name, port: hosting.port, seal, unseal, addrs: () => opts.addrs ? opts.addrs() : ['127.0.0.1'], log, fresh, bjTimes: opts.bjTimes, gameTimes: opts.gameTimes });
+    hub = createHub({ dir: file('hub'), owner: pub, name: hosting.name, port: hosting.port, seal, unseal, addrs: () => opts.addrs ? opts.addrs() : ['127.0.0.1'], log, fresh, bjTimes: opts.bjTimes, gameTimes: opts.gameTimes, gameSettings: opts.gameSettings });
     fresh = false;
     const port = await hub.start();
     if (port !== hosting.port) { hosting.port = port; writeJson('hosting.json', hosting); }

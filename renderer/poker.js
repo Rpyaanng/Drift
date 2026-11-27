@@ -13,6 +13,7 @@
   const BET_AT = [[50, 64], [27, 67], [27, 34], [50, 29], [73, 34], [73, 67]];       // and their bets, in front of them towards the middle
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
   const fmt = (n) => Math.round(n).toLocaleString();
+  const roll = window.driftRoll;       // (roll.js: chip counts and winnings counting up)
   const MARK = window.driftMark || '';       // Drift's mark (renderer/blackjack.js): the card backs, and the felt's print
 
   window.driftPoker = (holder, send, opts = {}) => {
@@ -95,18 +96,19 @@
       const c = i === v.you ? selfColor : s.bot ? 'rgba(220,226,240,.7)' : colorOf(s.name);
       box.style.setProperty('--c', c); bet.style.setProperty('--c', c);
       cardsEl.replaceChildren(...s.cards.map((cd, k) => card(cd, `${v.hand}:${i}:${k}:${cd ? 'up' : 'x'}`, k * 90 + i * 30)));
-      const act = v.phase === 'showdown' ? (s.won ? `+${fmt(s.won)}${s.best ? ' · ' + s.best : ''}` : s.best || '') : s.allin ? 'All in' : s.last;
-      actEl.replaceChildren(...(act ? [el('span', '', act)] : []));
+      const act = v.phase === 'showdown' ? (s.won ? '' : s.best || '') : s.allin ? 'All in' : s.last;
+      actEl.replaceChildren(...(v.phase === 'showdown' && s.won ? [roll.line('', roll.num(`pk:won:${v.hand}:${s.id}`, s.won, (n) => '+' + fmt(n), { cls: 'pkWonN', from0: true }), s.best ? ' · ' + s.best : '')]       // (the pot counting up)
+        : act ? [el('span', '', act)] : []));
       actEl.className = 'pkAct' + (v.phase === 'showdown' && s.won ? ' win' : '') + (s.last === 'Fold' ? ' fold' : '');
       const ring = el('i', 'bjRing'), f = mode === 'hub' && !s.blocked && !s.bot && opts.face ? opts.face(s.id) : null;
       if (f) { ring.classList.add('av'); ring.append(f); }
-      tag.replaceChildren(ring, el('span', 'nm', i === v.you ? 'You' : s.name), ...(s.bot ? [el('em', 'bot', 'computer')] : []), el('span', 'ch', s.outMs ? 'Out of chips' : fmt(s.chips)));
+      tag.replaceChildren(ring, el('span', 'nm', i === v.you ? 'You' : s.name), ...(s.bot ? [el('em', 'bot', 'computer')] : []), s.outMs ? el('span', 'ch', 'Out of chips') : roll.num('pk:ch:' + s.id, s.chips, fmt, { cls: 'ch' }));
       bet.className = 'pkBet' + (s.bet ? ' on' : '');
       bet.replaceChildren(...(s.bet ? [chipStack(s.bet)] : []));
       Object.assign(bet.style, { left: BET_AT[d][0] + '%', top: BET_AT[d][1] + '%' });
     }
     function board() {       // the hub's biggest pots won (hub.js gameBoard): a hub's table only
-      const list = mode === 'hub' && Array.isArray(v.board) ? v.board : null;
+      const list = mode === 'hub' && Array.isArray(v.records) ? v.records : null;
       boardEl.classList.toggle('on', !!list);
       if (!list) return;
       const mine = opts.me ? opts.me() : '';
@@ -140,7 +142,9 @@
           const word = v.current ? 'Raise to' : 'Bet';
           const go = btn(raise >= c.raise.max ? 'All in' : `${word} ${fmt(raise)}`, 'primary', () => send({ op: 'move', m: raise >= c.raise.max ? { do: 'allin' } : { do: 'raise', amount: raise } }));
           const r = el('input', 'pkRange'); Object.assign(r, { type: 'range', min: c.raise.min, max: c.raise.max, step: v.small, value: raise });
-          r.oninput = () => { raise = +r.value; go.textContent = raise >= c.raise.max ? 'All in' : `${word} ${fmt(raise)}`; };
+          const fill = () => r.style.setProperty('--fill', (c.raise.max > c.raise.min ? (raise - c.raise.min) / (c.raise.max - c.raise.min) * 100 : 100) + '%');
+          fill();
+          r.oninput = () => { raise = +r.value; fill(); go.textContent = raise >= c.raise.max ? 'All in' : `${word} ${fmt(raise)}`; };
           const pot = v.pot + v.seats.reduce((n, s) => n + (s ? s.bet : 0), 0);
           const preset = (label, to) => btn(label, 'ghost mini', () => { raise = Math.max(c.raise.min, Math.min(c.raise.max, Math.round(to / v.small) * v.small)); controls(); });
           kids.push(r, preset('½ pot', v.current + (pot + (v.current - m.bet)) / 2), preset('Pot', v.current + pot + (v.current - m.bet)), go);
@@ -153,13 +157,13 @@
       else if (v.turn >= 0) line = `Waiting for ${(v.seats[v.turn] || {}).name || 'the others'}`;
       if (v.mine && m && !m.folded) kids.unshift(el('span', 'pkMine', v.mine));
       if (m && !m.left && !v.can && (!m.inHand || m.folded || v.phase === 'showdown' || v.phase === 'waiting')) kids.push(btn('Stand up', 'ghost', () => send({ op: 'stand' })));
-      bar.replaceChildren(...(line ? [el('span', 'bjLine', line)] : []), ...kids);
+      bar.replaceChildren(...(line ? [typeof line === 'string' ? el('span', 'bjLine', line) : line] : []), ...kids);       // (a win's line comes with its number rolling)
       bar.dataset.phase = v.phase;
       status.replaceChildren(...statusLine());
     }
     function summary(m) {
       if (!m.inHand) return 'You\'re in from the next hand.';
-      if (m.won && m.net > 0) return `You win ${fmt(m.won)}${m.best ? ' with ' + m.best.toLowerCase() : ''}!`;
+      if (m.won && m.net > 0) return roll.line('bjLine', 'You win ', roll.num(`pk:me:${v.hand}`, m.won, fmt, { cls: 'bjWon', from0: true }), `${m.best ? ' with ' + m.best.toLowerCase() : ''}!`);
       if (m.won) return `You get ${fmt(m.won)} back.`;
       return m.folded ? 'You folded this one.' : `You lose${m.best ? ' with ' + m.best.toLowerCase() : ''}.`;
     }
