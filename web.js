@@ -634,20 +634,29 @@ module.exports = function createWeb(hooks, opts = {}) {
   const view = () => { const t = cur() || {}; return { sid, out: out ? out.name : '', url: out ? '' : t.url || t.pending || '', title: out ? out.title || out.name : t.title || '', tabs: tabs.map(tabView), active, back: hist(-1), fwd: hist(1) }; };
   // What friends are told about the browser. The picture and sound of the tab in front reach them as a stream, named by `sid`.
   const shared = () => (on && !parked && (alive() || (out && out.id)) && sid ? view() : null);
+  // The Drift window holding the browser now. Pages drawn offscreen outlive the windows: when main makes its windows again (a monitor
+  // turned on or off, the window mode left for full screen) the pages stay, still holding the window they were made in, which is gone,
+  // and every move, click and key for them was dropped (holder.isDestroyed()). They follow the window on their screen now instead.
+  // (A <webview> goes with its window, and is made again in the new one: bind gives it its new holder.)
+  function holderNow() {
+    if (!headless && on && gpu && (!holder || holder.isDestroyed())) { const hw = hooks.win(key); if (hw && !hw.isDestroyed()) holder = hw.webContents; }
+    return holder;
+  }
   // The frame whose picture and sound `hostWc` (the Drift window holding the browser) may capture to send to friends.
-  const frame = (hostWc) => (!headless && !out && !parked && alive() && holder === hostWc ? cur().wc.mainFrame : null);
+  const frame = (hostWc) => (!headless && !out && !parked && alive() && holderNow() === hostWc ? cur().wc.mainFrame : null);
   // The hub's browser: the frame of the tab in front, for the Surf stream's capture (main.js answers its getDisplayMedia with it)
   const captureFrame = () => (headless && on && alive() && cur().ready ? cur().wc.mainFrame : null);
   // ...or, while the page is open in the PC's own browser, that browser's window (a desktop capture source id)
-  const source = (hostWc) => (out && out.id && holder === hostWc ? out.id : null);
+  const source = (hostWc) => (out && out.id && holderNow() === hostWc ? out.id : null);
   // Plays back what a friend did over their picture of the page, or (local) what this PC did over a picture of it on one of its
   // monitors. Positions are fractions of the page's width and height.
   // `who`: whose input it is (the hub's browser remembers, to name who started a download); `from`: where on this PC it came from
   // (handed back to hooks.chat)
   function input(e, local, who, from) {
     if (out || !alive() || !e || typeof e !== 'object') return;       // friends can't click in the PC's own browser
-    if (!headless && (parked || !holder || holder.isDestroyed())) return;
-    const wc = cur().wc, win = BrowserWindow.fromWebContents(wc.drift ? wc : holder);
+    const hold = headless ? holder : holderNow();
+    if (!headless && (parked || !hold || hold.isDestroyed())) return;
+    const wc = cur().wc, win = BrowserWindow.fromWebContents(wc.drift ? wc : hold);
     const mouse = e.k === 'move' || e.k === 'down' || e.k === 'up' || e.k === 'wheel';
     const took = mouse ? takeHover(who ? String(who) : local ? 'here' : 'friend', !!local, e) : false;
     if (took === null) return;       // someone else has the hover: their pointer still shows, the page doesn't follow it
@@ -760,25 +769,49 @@ module.exports = function createWeb(hooks, opts = {}) {
   async function goOutside() {
     if (headless || !on || parked || !alive()) return;
     if (out) { hooks.say(`The page is already open in ${out.name}. Close its window to come back to Surf.`); return; }
+    if (taking) { await taking; if (out || !on || parked || !alive()) return; }       // (a window opened now would join the copy reading the sign-ins)
     const t = cur(), url = isWeb(t.url) ? t.url : '';
     const me = out = { name: outside.name() || 'your browser', id: '', title: '', stop: () => {} };
     hooks.changed();
     try {
       const o = await outside.open(url, hooks.bounds(key), hooks.profile(), (w) => {
         if (out !== me) return;
-        if (!w) { if (!me.id) hooks.say(`${me.name} didn't open a window.`); endOut(); return; }
+        if (!w) { if (!me.id) hooks.say(`${me.name} didn't open a window.`); endOut(); if (me.id) takeSignins(me.name); return; }
         const first = !me.id;
         me.id = w.id; me.title = w.title;
         if (first) {
           if (live(t)) t.wc.setAudioMuted(true);       // one soundtrack: the one in the browser
           hooks.away(true); restream();
-          hooks.say(`Opened in ${me.name}. Friends see its window but can't click in it. Close it to come back to Surf.`);
+          hooks.say(`Opened in ${me.name}. Friends see its window but can't click in it. Close it to come back to Surf, signed in to what you signed in to there.`);
         }
         hooks.changed();
       });
       me.name = o.name; me.stop = o.stop;
       if (out !== me) o.stop();
     } catch { if (out === me) { out = null; hooks.changed(); } hooks.say('No browser was found to open the page in.'); }
+  }
+  // The browser's window was closed: the sign-ins made there come to Surf. Its cookies are copied into Surf's own (over Surf's, for
+  // the same names), and the pages in Surf load again with them. (Sign-ins a site keeps in its page storage instead don't come.)
+  let taking = null;
+  function takeSignins(name) {
+    if (taking) return taking;
+    return (taking = (async () => {
+      const list = await outside.cookies(hooks.profile());
+      const s = sess(), same = { Strict: 'strict', Lax: 'lax', None: 'no_restriction' };
+      let n = 0;
+      await Promise.all(list.map(async (c) => {
+        if (c.partitionKey) return;       // (one kept for a site inside another site's page: Electron can't set those)
+        const d = { url: `${c.secure ? 'https' : 'http'}://${c.domain.replace(/^\./, '')}${c.path || '/'}`, name: c.name, value: c.value,
+          path: c.path || '/', secure: !!c.secure, httpOnly: !!c.httpOnly, sameSite: same[c.sameSite] || 'unspecified' };
+        if (c.domain.startsWith('.')) d.domain = c.domain;       // (without one it's the host's alone, as it was)
+        if (!c.session && c.expires > 0) d.expirationDate = c.expires;
+        try { await s.cookies.set(d); n++; } catch {}
+      }));
+      if (!n) return;
+      await s.cookies.flushStore().catch(() => {});
+      for (const t of tabs) if (live(t) && isWeb(t.url)) t.wc.reload();
+      hooks.say(`Your sign-ins from ${name} are in Surf now.`);
+    })().catch(() => {}).finally(() => { taking = null; }));
   }
   // Surf takes over again: the window was closed, or the browser left the screen (then the window is left as it is)
   function endOut(quiet) {

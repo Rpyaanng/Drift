@@ -143,7 +143,7 @@ function createTable(opts = {}) {
     const i = at(id);
     if (i >= 0) { players[i].name = name; return { seat: i }; }
     if (players.length >= R.players) { if (!watchers.some((w) => w.id === id)) { watchers.push({ id, name }); changed(); } return { watching: true }; }
-    players.push({ id, name, score: 0, gained: 0, guessed: false, at: 0, drew: phase === 'idle' || phase === 'waiting' || phase === 'over' ? 0 : -1 });
+    players.push({ id, name, score: 0, gained: 0, guessed: false, at: 0, drew: 0 });       // (partway through: they guess from now, and take a turn drawing before this round ends)
     say('join', `${name} joined`);
     if (phase === 'idle') { phase = 'waiting'; deadline = 0; }
     return { seat: players.length - 1 };
@@ -174,9 +174,8 @@ function createTable(opts = {}) {
   function nextTurn() {
     for (const p of players) { p.guessed = false; p.gained = 0; p.at = 0; }
     const who = opts.solo ? players.filter((p) => p.id === opts.solo) : players;       // (solo practice: only you draw, once a round)
-    let d = who.find((p) => p.drew < round && p.drew !== -1) || null;
-    if (!d) {       // everyone has drawn this round
-      for (const p of players) if (p.drew === -1) p.drew = 0;       // (came in partway: in from the next round)
+    let d = who.find((p) => p.drew < round) || null;
+    if (!d) {       // everyone has drawn this round (those who came in partway too: they're last in line)
       if (round >= R.rounds) { endGame(false); return; }
       round++;
       d = who.find((p) => p.drew < round) || null;

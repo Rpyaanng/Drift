@@ -234,10 +234,13 @@ canvas#webGpu { position: fixed; inset: 0; width: 100%; height: 100%; background
 #webEdge { position: fixed; left: 0; right: 0; bottom: 0; height: 5px; display: none; }
 body.web #webEdge { display: block; }
 /* other people's pointers over the page */
-#ptrs { position: fixed; inset: 0; pointer-events: none; z-index: 6; overflow: hidden; display: none; }       /* over the Surf bar (5), so a pointer on the tabs or address bar shows; under the panel (22) and chat */
+/* Every layer of other people's pointers sits at 9998: over all of Drift's own chrome (the Surf bar, the window's title bar 33, the
+   call bar, the chat, the panel, the held card 40), the way a real pointer would, and under only the picture viewer (.chLight, 9999)
+   and our own pointer (10000). They take no clicks, so nothing under them is in their way. */
+#ptrs { position: fixed; inset: 0; pointer-events: none; z-index: 9998; overflow: hidden; display: none; }
 body.web #ptrs { display: block; }
 /* and over a shared video while it's paused (app.js showVptrs) */
-#vptrs { position: fixed; inset: 0; pointer-events: none; z-index: 3; overflow: hidden; }
+#vptrs { position: fixed; inset: 0; pointer-events: none; z-index: 9998; overflow: hidden; }
 /* our own pointer, as the others see it, standing in for the real one over those pictures (app.js showSelf) */
 html.selfPtr, html.selfPtr * { cursor: none !important; }
 #selfPtrBox { position: fixed; inset: 0; pointer-events: none; z-index: 10000; overflow: hidden; }       /* over everything, the picture viewer (.chLight) too */
@@ -1471,18 +1474,18 @@ body.bcfull:not(.surfing):not(:has(#bcBar.show, #bcBar:hover, #bcBar:focus-withi
    Over the room the shader draws: a lamp's pool of light in the accent, a felt from the palette's second colour, a rail lit
    by a thin line of the accent, and a small spot of each player's colour at their seat. app.js sets the colours (--bjAccent,
    --bjFelt, --bjFeltDeep, --bjHi, --bjDark, --bjLamp) from the palette, again on every change. */
-:is(#bjTable, #rlTable, #pkTable, #skTable) { position: fixed; inset: 0; z-index: 2; display: none; pointer-events: none; color: #f4f1ea;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) { position: fixed; inset: 0; z-index: 2; display: none; pointer-events: none; color: #f4f1ea;
   --bjAccent: #22c08a; --bjFelt: #0f4a3a; --bjFeltDeep: #06241c; --bjHi: #b58cff; --bjDark: #040816; --bjLamp: #a8f0d2;
   font: 500 14px/1.3 "Segoe UI Variable Text", "Segoe UI", system-ui; }
-:is(#bjTable, #rlTable, #pkTable, #skTable).on { display: block; }
-:is(#bjTable, #rlTable, #pkTable, #skTable).on.live .bjFelt, :is(#bjTable, #rlTable, #pkTable, #skTable).on .bjBar { pointer-events: auto; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjLamp { position: absolute; left: 50%; top: 46%; width: min(120vw, 190vh); height: min(80vw, 120vh); transform: translate(-50%, -50%); border-radius: 50%;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable).on { display: block; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable).on.live .bjFelt, :is(#bjTable, #rlTable, #pkTable, #skTable, #paTable).on .bjBar { pointer-events: auto; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjLamp { position: absolute; left: 50%; top: 46%; width: min(120vw, 190vh); height: min(80vw, 120vh); transform: translate(-50%, -50%); border-radius: 50%;
   background: radial-gradient(closest-side, color-mix(in srgb, var(--bjLamp) 26%, transparent), color-mix(in srgb, var(--bjLamp) 8%, transparent) 55%, transparent);
   mix-blend-mode: screen; transition: opacity .6s, filter .6s; }
-:is(#bjTable, #rlTable, #pkTable, #skTable).fWin .bjLamp { animation: bjWarm 2.4s ease-out; }
-:is(#bjTable, #rlTable, #pkTable, #skTable).fLose .bjLamp { animation: bjDim 2.4s ease-out; }
-:is(#bjTable, #rlTable, #pkTable, #skTable).fBj .bjLamp { animation: bjWarm 2.4s ease-out; }
-:is(#bjTable, #rlTable, #pkTable, #skTable).fBj .bjRail { animation: bjShimmer 2.4s ease-out; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable).fWin .bjLamp { animation: bjWarm 2.4s ease-out; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable).fLose .bjLamp { animation: bjDim 2.4s ease-out; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable).fBj .bjLamp { animation: bjWarm 2.4s ease-out; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable).fBj .bjRail { animation: bjShimmer 2.4s ease-out; }
 @keyframes bjWarm { 0% { filter: none; } 20% { filter: brightness(1.7) saturate(1.2); } 100% { filter: none; } }
 @keyframes bjDim { 0% { opacity: 1; } 25% { opacity: .45; } 100% { opacity: 1; } }
 @keyframes bjShimmer { 0%, 100% { filter: none; } 30% { filter: brightness(2) drop-shadow(0 0 18px var(--bjAccent)); } }
@@ -1526,13 +1529,13 @@ body.bcfull:not(.surfing):not(:has(#bcBar.show, #bcBar:hover, #bcBar:focus-withi
 #bjTable .bjTray .t25 { --chip: color-mix(in srgb, var(--bjAccent) 85%, #000); }
 #bjTable .bjTray .t100 { --chip: color-mix(in srgb, var(--bjDark) 50%, #2a2a33); }
 #bjTable .bjTray .t500 { --chip: color-mix(in srgb, var(--bjHi) 75%, #000); }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjSign { position: absolute; left: 59cqw; top: 2.2cqh; width: 13cqw; padding: .55cqw .7cqw; border-radius: .45cqw; text-align: center;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjSign { position: absolute; left: 59cqw; top: 2.2cqh; width: 13cqw; padding: .55cqw .7cqw; border-radius: .45cqw; text-align: center;
   background: linear-gradient(160deg, rgba(255,255,255,.14), rgba(255,255,255,.04)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bjAccent) 40%, rgba(255,255,255,.2)), 0 .6cqh 1.4cqh rgba(0,0,0,.35); }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjMode { font: 700 .85cqw/1.2 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: .22em; text-transform: uppercase; color: color-mix(in srgb, var(--bjAccent) 60%, #fff); }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjLimits { margin-top: .25cqw; font: 600 .78cqw/1.2 "Segoe UI Variable Text", "Segoe UI", system-ui; letter-spacing: .08em; color: rgba(255,255,255,.7); font-variant-numeric: tabular-nums; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjStatus { position: absolute; left: 50%; top: 26.5cqh; transform: translateX(-50%); display: flex; align-items: center; gap: 1cqw; white-space: nowrap;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjMode { font: 700 .85cqw/1.2 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: .22em; text-transform: uppercase; color: color-mix(in srgb, var(--bjAccent) 60%, #fff); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjLimits { margin-top: .25cqw; font: 600 .78cqw/1.2 "Segoe UI Variable Text", "Segoe UI", system-ui; letter-spacing: .08em; color: rgba(255,255,255,.7); font-variant-numeric: tabular-nums; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjStatus { position: absolute; left: 50%; top: 26.5cqh; transform: translateX(-50%); display: flex; align-items: center; gap: 1cqw; white-space: nowrap;
   font: 600 1.7cqw/1 "Segoe UI Variable Display", "Segoe UI", system-ui; color: #fff; text-shadow: 0 1px 10px rgba(0,0,0,.5); }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjCount { display: inline-grid; place-items: center; min-width: 2.6cqw; height: 2.6cqw; padding: 0 .6cqw; border-radius: 999px; font: 700 1.3cqw/1 "Segoe UI Variable Display", "Segoe UI", system-ui;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjCount { display: inline-grid; place-items: center; min-width: 2.6cqw; height: 2.6cqw; padding: 0 .6cqw; border-radius: 999px; font: 700 1.3cqw/1 "Segoe UI Variable Display", "Segoe UI", system-ui;
   background: color-mix(in srgb, var(--bjAccent) 30%, rgba(0,0,0,.4)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--bjAccent) 70%, transparent); font-variant-numeric: tabular-nums; }
 
 /* the dealer and the shoe */
@@ -1543,28 +1546,28 @@ body.bcfull:not(.surfing):not(:has(#bcBar.show, #bcBar:hover, #bcBar:focus-withi
   background: repeating-linear-gradient(0deg, color-mix(in srgb, var(--bjAccent) 55%, #222) 0 2px, color-mix(in srgb, var(--bjAccent) 25%, #111) 2px 4px); }
 
 /* cards (drawn here: plain corners and a big suit) */
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjCards { display: flex; min-height: 7.4cqw; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjCard { position: relative; width: 5.2cqw; height: 7.4cqw; border-radius: .55cqw; flex: none; background: linear-gradient(170deg, #fffdf8, #ece6da); color: #1d1b26;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjCards { display: flex; min-height: 7.4cqw; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjCard { position: relative; width: 5.2cqw; height: 7.4cqw; border-radius: .55cqw; flex: none; background: linear-gradient(170deg, #fffdf8, #ece6da); color: #1d1b26;
   box-shadow: 0 .5cqh 1.4cqh rgba(0,0,0,.45), inset 0 0 0 1px rgba(0,0,0,.08); }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjCard + .bjCard { margin-left: -3cqw; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjCard.red { color: #c3313f; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjCard span { position: absolute; display: flex; flex-direction: column; align-items: center; line-height: .95; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjCard .cTl { left: .45cqw; top: .45cqw; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjCard .cBr { right: .45cqw; bottom: .45cqw; transform: rotate(180deg); }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjCard b { font: 700 1.35cqw/1 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: -.04em; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjCard i { font-style: normal; font-size: 1.05cqw; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjCard .cMid { inset: 0; justify-content: center; font-size: 3cqw; opacity: .9; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjCard + .bjCard { margin-left: -3cqw; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjCard.red { color: #c3313f; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjCard span { position: absolute; display: flex; flex-direction: column; align-items: center; line-height: .95; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjCard .cTl { left: .45cqw; top: .45cqw; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjCard .cBr { right: .45cqw; bottom: .45cqw; transform: rotate(180deg); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjCard b { font: 700 1.35cqw/1 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: -.04em; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjCard i { font-style: normal; font-size: 1.05cqw; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjCard .cMid { inset: 0; justify-content: center; font-size: 3cqw; opacity: .9; }
 /* the back: a white border, a fine accent line inside it, and Drift's mark on a deep ground */
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjCard.back { display: grid; place-items: center;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjCard.back { display: grid; place-items: center;
   background: radial-gradient(ellipse at 50% 40%, color-mix(in srgb, var(--bjAccent) 22%, var(--bjDark)), color-mix(in srgb, var(--bjDark) 85%, #000));
   box-shadow: 0 .5cqh 1.4cqh rgba(0,0,0,.45), inset 0 0 0 .32cqw #f4efe6, inset 0 0 0 .45cqw color-mix(in srgb, var(--bjAccent) 65%, transparent); }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjCard.back .bjMark { width: 78%; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjCard.deal { animation: bjDeal .38s cubic-bezier(.2,.8,.3,1) both; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjCard.back .bjMark { width: 78%; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjCard.deal { animation: bjDeal .38s cubic-bezier(.2,.8,.3,1) both; }
 @keyframes bjDeal { from { transform: translate(24cqw, -18cqh) rotate(-14deg); opacity: 0; } to { transform: none; opacity: 1; } }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjTotal { min-width: 2.4cqw; padding: .25cqw .7cqw; border-radius: 999px; text-align: center; font: 700 1.1cqw/1.2 "Segoe UI Variable Display", "Segoe UI", system-ui;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjTotal { min-width: 2.4cqw; padding: .25cqw .7cqw; border-radius: 999px; text-align: center; font: 700 1.1cqw/1.2 "Segoe UI Variable Display", "Segoe UI", system-ui;
   background: rgba(0,0,0,.45); font-variant-numeric: tabular-nums; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjTotal:empty { display: none; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjTotal.bust { background: rgba(190,40,52,.75); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjTotal:empty { display: none; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjTotal.bust { background: rgba(190,40,52,.75); }
 
 /* the seats along the curve: a spot of the player's colour, their hands, their bet, their name and chips */
 #bjTable .bjSeat { position: absolute; width: 15cqw; transform: translate(-50%, -100%);       /* (left / top: where its name tag sits) */ display: flex; flex-direction: column; align-items: center; gap: .8cqh; --c: rgba(255,255,255,.4); }
@@ -1594,67 +1597,67 @@ body.bcfull:not(.surfing):not(:has(#bcBar.show, #bcBar:hover, #bcBar:focus-withi
 #bjTable .bjChips i { position: absolute; left: 0; bottom: calc(var(--k) * .32cqw); width: 3cqw; height: 3cqw; }
 #bjTable .bjChips b { position: absolute; left: 3.6cqw; top: 50%; transform: translateY(-50%); font: 700 1.05cqw/1 "Segoe UI Variable Display", "Segoe UI", system-ui; white-space: nowrap; text-shadow: 0 1px 6px rgba(0,0,0,.6); }
 #bjTable .bjIns { font-size: .85cqw; color: rgba(255,255,255,.7); margin-left: 4cqw; white-space: nowrap; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjTag { position: relative; display: flex; align-items: center; gap: .6cqw; padding: .35cqw .9cqw .35cqw .4cqw; border-radius: 999px; white-space: nowrap; max-width: 15cqw;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjTag { position: relative; display: flex; align-items: center; gap: .6cqw; padding: .35cqw .9cqw .35cqw .4cqw; border-radius: 999px; white-space: nowrap; max-width: 15cqw;
   background: rgba(8,10,16,.55); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 45%, transparent); font-size: 1cqw; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjSeat.empty .bjTag { background: none; box-shadow: none; color: rgba(255,255,255,.35); }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjTag .nm { overflow: hidden; text-overflow: ellipsis; font-weight: 700; color: color-mix(in srgb, var(--c) 70%, #fff); }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjTag .ch { color: rgba(255,255,255,.7); font-variant-numeric: tabular-nums; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjSeat.empty .bjRing, :is(#bjTable, #rlTable, #pkTable, #skTable) .bjSeat.empty .ch { display: none; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjRing { width: 1.5cqw; height: 1.5cqw; border-radius: 50%; flex: none; background: var(--c); --f: 0; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjRing.on { background: conic-gradient(var(--c) calc(var(--f) * 360deg), rgba(255,255,255,.12) 0); }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjRing.av { display: grid; place-items: center; width: 2.4cqw; height: 2.4cqw; padding: .18cqw; margin-left: -.15cqw; }       /* a hub member's picture, the ring round it */
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjRing.av .face { width: 100%; height: 100%; font-size: 1cqw; box-shadow: 0 0 0 .1cqw rgba(8,10,16,.8); }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjSeat.me .bjTag { background: color-mix(in srgb, var(--c) 26%, rgba(8,10,16,.7)); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjSeat.empty .bjTag { background: none; box-shadow: none; color: rgba(255,255,255,.35); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjTag .nm { overflow: hidden; text-overflow: ellipsis; font-weight: 700; color: color-mix(in srgb, var(--c) 70%, #fff); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjTag .ch { color: rgba(255,255,255,.7); font-variant-numeric: tabular-nums; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjSeat.empty .bjRing, :is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjSeat.empty .ch { display: none; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjRing { width: 1.5cqw; height: 1.5cqw; border-radius: 50%; flex: none; background: var(--c); --f: 0; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjRing.on { background: conic-gradient(var(--c) calc(var(--f) * 360deg), rgba(255,255,255,.12) 0); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjRing.av { display: grid; place-items: center; width: 2.4cqw; height: 2.4cqw; padding: .18cqw; margin-left: -.15cqw; }       /* a hub member's picture, the ring round it */
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjRing.av .face { width: 100%; height: 100%; font-size: 1cqw; box-shadow: 0 0 0 .1cqw rgba(8,10,16,.8); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjSeat.me .bjTag { background: color-mix(in srgb, var(--c) 26%, rgba(8,10,16,.7)); }
 
 /* chips, on the table and as buttons */
-:is(#bjTable, #rlTable, #pkTable, #skTable) .chip { border-radius: 50%; --chip: #e9e5db; --edge: #fff;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .chip { border-radius: 50%; --chip: #e9e5db; --edge: #fff;
   background: radial-gradient(circle, var(--chip) 0 46%, transparent 47%), repeating-conic-gradient(var(--edge) 0 15deg, var(--chip) 15deg 45deg);
   box-shadow: 0 .2cqh .6cqh rgba(0,0,0,.5), inset 0 0 0 .18cqw rgba(0,0,0,.18); }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .chip.c10 { --chip: #ece8de; --edge: color-mix(in srgb, var(--bjAccent) 70%, #222); }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .chip.c25 { --chip: color-mix(in srgb, var(--bjAccent) 85%, #000); --edge: #f4f1ea; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .chip.c100 { --chip: color-mix(in srgb, var(--bjDark) 60%, #1b1b22); --edge: color-mix(in srgb, var(--bjAccent) 80%, #fff); }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .chip.c500 { --chip: color-mix(in srgb, var(--bjHi) 75%, #000); --edge: #f6e7b0; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .chip.c10 { --chip: #ece8de; --edge: color-mix(in srgb, var(--bjAccent) 70%, #222); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .chip.c25 { --chip: color-mix(in srgb, var(--bjAccent) 85%, #000); --edge: #f4f1ea; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .chip.c100 { --chip: color-mix(in srgb, var(--bjDark) 60%, #1b1b22); --edge: color-mix(in srgb, var(--bjAccent) 80%, #fff); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .chip.c500 { --chip: color-mix(in srgb, var(--bjHi) 75%, #000); --edge: #f6e7b0; }
 
 /* your controls, under the table */
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjBar { position: absolute; left: 50%; top: calc(9vh + min(44vw, 75vh)); transform: translateX(-50%);       /* under the table, clear of Drift's own bar */ display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 999px;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBar { position: absolute; left: 50%; top: calc(9vh + min(44vw, 75vh)); transform: translateX(-50%);       /* under the table, clear of Drift's own bar */ display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 999px;
   background: rgba(8,10,16,.62); backdrop-filter: blur(16px); box-shadow: 0 10px 34px rgba(0,0,0,.45), inset 0 0 0 1px color-mix(in srgb, var(--bjAccent) 28%, rgba(255,255,255,.06)); white-space: nowrap; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjBar:empty { display: none; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjLine { padding: 0 8px; font-weight: 600; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjBar .bjCount { min-width: 30px; height: 30px; font-size: 15px; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjBar .chip { width: 48px; height: 48px; border: 0; padding: 0; cursor: pointer; font: 800 13px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; color: #16161c; transition: transform .12s, filter .12s; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjBar .chip.c25, :is(#bjTable, #rlTable, #pkTable, #skTable) .bjBar .chip.c100, :is(#bjTable, #rlTable, #pkTable, #skTable) .bjBar .chip.c500 { color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.6); }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjBar .chip:hover:not(:disabled) { transform: translateY(-3px); filter: brightness(1.12); }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjBar .chip:disabled { opacity: .3; cursor: default; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjAmt { min-width: 110px; text-align: center; font: 700 17px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; font-variant-numeric: tabular-nums; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjBtn { height: 40px; padding: 0 20px; border: 0; border-radius: 999px; cursor: pointer; font: 700 14px/1 "Segoe UI Variable Text", "Segoe UI", system-ui; color: #fff;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBar:empty { display: none; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjLine { padding: 0 8px; font-weight: 600; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBar .bjCount { min-width: 30px; height: 30px; font-size: 15px; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBar .chip { width: 48px; height: 48px; border: 0; padding: 0; cursor: pointer; font: 800 13px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; color: #16161c; transition: transform .12s, filter .12s; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBar .chip.c25, :is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBar .chip.c100, :is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBar .chip.c500 { color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.6); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBar .chip:hover:not(:disabled) { transform: translateY(-3px); filter: brightness(1.12); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBar .chip:disabled { opacity: .3; cursor: default; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjAmt { min-width: 110px; text-align: center; font: 700 17px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; font-variant-numeric: tabular-nums; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBtn { height: 40px; padding: 0 20px; border: 0; border-radius: 999px; cursor: pointer; font: 700 14px/1 "Segoe UI Variable Text", "Segoe UI", system-ui; color: #fff;
   background: rgba(255,255,255,.1); box-shadow: inset 0 0 0 1px rgba(255,255,255,.14); transition: background .12s, transform .12s; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjBtn:hover:not(:disabled) { background: rgba(255,255,255,.18); }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjBtn.primary { background: color-mix(in srgb, var(--bjAccent) 80%, #000); box-shadow: 0 0 18px color-mix(in srgb, var(--bjAccent) 40%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--bjAccent) 80%, #fff); }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjBtn.primary:hover:not(:disabled) { background: var(--bjAccent); }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjBtn.ghost { background: none; box-shadow: none; color: rgba(255,255,255,.7); }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjBtn:disabled { opacity: .35; cursor: default; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjBtn:focus-visible, :is(#bjTable, #rlTable, #pkTable, #skTable) .bjBar .chip:focus-visible { outline: 2px solid var(--bjAccent); outline-offset: 2px; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjNote { position: absolute; left: 50%; top: 1.6vh; transform: translate(-50%, 6px); padding: 7px 16px; border-radius: 999px; background: rgba(20,10,14,.75);
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBtn:hover:not(:disabled) { background: rgba(255,255,255,.18); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBtn.primary { background: color-mix(in srgb, var(--bjAccent) 80%, #000); box-shadow: 0 0 18px color-mix(in srgb, var(--bjAccent) 40%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--bjAccent) 80%, #fff); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBtn.primary:hover:not(:disabled) { background: var(--bjAccent); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBtn.ghost { background: none; box-shadow: none; color: rgba(255,255,255,.7); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBtn:disabled { opacity: .35; cursor: default; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBtn:focus-visible, :is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBar .chip:focus-visible { outline: 2px solid var(--bjAccent); outline-offset: 2px; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjNote { position: absolute; left: 50%; top: 1.6vh; transform: translate(-50%, 6px); padding: 7px 16px; border-radius: 999px; background: rgba(20,10,14,.75);
   box-shadow: inset 0 0 0 1px rgba(255,120,130,.35); opacity: 0; transition: opacity .25s, transform .25s; pointer-events: none; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjNote.on { opacity: 1; transform: translate(-50%, 0); }
-#bjPtrs { position: fixed; inset: 0; pointer-events: none; z-index: 3; overflow: hidden; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjNote.on { opacity: 1; transform: translate(-50%, 0); }
+#bjPtrs { position: fixed; inset: 0; pointer-events: none; z-index: 9998; overflow: hidden; }       /* (with the other pointer layers: see #ptrs) */
 /* the hub's biggest pots: under the table at its left edge, level with the bar */
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjBoard { position: absolute; left: max(16px, calc(50% - min(44vw, 75vh))); top: calc(9vh + min(44vw, 75vh)); width: 260px; display: none;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBoard { position: absolute; left: max(16px, calc(50% - min(44vw, 75vh))); top: calc(9vh + min(44vw, 75vh)); width: 260px; display: none;
   padding: 10px 12px 8px; border-radius: 14px; background: rgba(8,10,16,.62); backdrop-filter: blur(16px);
   box-shadow: 0 10px 34px rgba(0,0,0,.45), inset 0 0 0 1px color-mix(in srgb, var(--bjAccent) 28%, rgba(255,255,255,.06)); }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjBoard.on { display: block; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjBHead { margin-bottom: 6px; font: 700 10.5px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: .22em; text-transform: uppercase; color: color-mix(in srgb, var(--bjAccent) 60%, #fff); }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjBNone { font-size: 12px; color: rgba(255,255,255,.6); padding: 2px 0 4px; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjBRow { display: flex; align-items: center; gap: 8px; height: 26px; padding: 0 6px; margin: 0 -6px; border-radius: 8px; font-size: 13px; transition: background 1s; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjBRow .rk { width: 12px; text-align: right; font-weight: 700; color: rgba(255,255,255,.5); font-variant-numeric: tabular-nums; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjBRow:first-of-type .rk { color: color-mix(in srgb, var(--bjHi) 70%, #fff); }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjBRow .face { width: 20px; height: 20px; font-size: 10px; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjBRow .nf { width: 20px; height: 20px; flex: none; border-radius: 50%; background: rgba(255,255,255,.12); }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjBRow .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjBRow.me .nm { font-weight: 700; color: color-mix(in srgb, var(--bjAccent) 55%, #fff); }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjBRow .bjB { font: 800 9px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; font-style: normal; padding: 3px 5px; border-radius: 5px; letter-spacing: .06em; background: linear-gradient(90deg, var(--bjAccent), var(--bjHi)); color: #fff; }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjBRow .amt { font-weight: 700; font-variant-numeric: tabular-nums; color: color-mix(in srgb, var(--bjAccent) 45%, #fff); }
-:is(#bjTable, #rlTable, #pkTable, #skTable) .bjBRow.fresh { background: color-mix(in srgb, var(--bjAccent) 26%, transparent); }       /* a record just set */
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBoard.on { display: block; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBHead { margin-bottom: 6px; font: 700 10.5px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: .22em; text-transform: uppercase; color: color-mix(in srgb, var(--bjAccent) 60%, #fff); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBNone { font-size: 12px; color: rgba(255,255,255,.6); padding: 2px 0 4px; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBRow { display: flex; align-items: center; gap: 8px; height: 26px; padding: 0 6px; margin: 0 -6px; border-radius: 8px; font-size: 13px; transition: background 1s; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBRow .rk { width: 12px; text-align: right; font-weight: 700; color: rgba(255,255,255,.5); font-variant-numeric: tabular-nums; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBRow:first-of-type .rk { color: color-mix(in srgb, var(--bjHi) 70%, #fff); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBRow .face { width: 20px; height: 20px; font-size: 10px; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBRow .nf { width: 20px; height: 20px; flex: none; border-radius: 50%; background: rgba(255,255,255,.12); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBRow .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBRow.me .nm { font-weight: 700; color: color-mix(in srgb, var(--bjAccent) 55%, #fff); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBRow .bjB { font: 800 9px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; font-style: normal; padding: 3px 5px; border-radius: 5px; letter-spacing: .06em; background: linear-gradient(90deg, var(--bjAccent), var(--bjHi)); color: #fff; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBRow .amt { font-weight: 700; font-variant-numeric: tabular-nums; color: color-mix(in srgb, var(--bjAccent) 45%, #fff); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBRow.fresh { background: color-mix(in srgb, var(--bjAccent) 26%, transparent); }       /* a record just set */
 
 /* ---------- the Games room's other tables: Roulette and Texas Hold'em (renderer/roulette.js, renderer/poker.js) ----------
    The same room as the Blackjack table's (its lamp, cards, chips, bar, board and colours above, shared), and the same place on
@@ -1671,7 +1674,94 @@ body.bcfull:not(.surfing):not(:has(#bcBar.show, #bcBar:hover, #bcBar:focus-withi
   box-shadow: 0 0 0 .18cqh color-mix(in srgb, var(--bjAccent) 85%, #fff), 0 0 2.4cqh color-mix(in srgb, var(--bjAccent) 55%, transparent), inset 0 0 0 .14cqh color-mix(in srgb, var(--bjAccent) 40%, transparent); }
 #rlTable .rlRail { border-radius: 6.1cqh; }
 #pkTable .pkRail { border-radius: 51.1cqh; }
-#gmPtrs { position: fixed; inset: 0; pointer-events: none; z-index: 3; overflow: hidden; }
+#gmPtrs { position: fixed; inset: 0; pointer-events: none; z-index: 9998; overflow: hidden; }       /* (with the other pointer layers: see #ptrs) */
+
+/* ---------- Pachinko (renderer/pachinko.js): a tall cabinet in the middle of the same room, what it pays on its left, who's
+   at it on its right, the bar under it where the tables' is. The cabinet is 640 × 940 (the board inside it 600 × 900, a
+   canvas), 78vh tall, so the bar (top 9vh + min(44vw, 75vh)) is clear of it on a 16:9 screen and a 4:3 one. */
+#paTable.on.live .paCab, #paTable.on .bjBar { pointer-events: auto; }
+#paTable .paCab { position: absolute; left: 50%; top: 4vh; height: 78vh; aspect-ratio: 640 / 940; transform: translateX(-50%); container-type: size;
+  border-radius: 48cqw 48cqw 3cqw 3cqw / 33cqh 33cqh 2cqh 2cqh;
+  background: linear-gradient(170deg, color-mix(in srgb, var(--bjDark) 70%, #3a3346), color-mix(in srgb, var(--bjDark) 85%, #000));
+  box-shadow: 0 3cqh 8cqh rgba(0,0,0,.6), inset 0 0 0 .5cqw color-mix(in srgb, var(--bjAccent) 35%, #1a1622); }
+#paTable .paTrim { position: absolute; inset: .9cqw; border-radius: inherit; pointer-events: none;
+  box-shadow: 0 0 0 .35cqw color-mix(in srgb, var(--bjAccent) 85%, #fff), 0 0 3cqw color-mix(in srgb, var(--bjAccent) 45%, transparent); }
+#paTable.fever .paTrim { animation: paChase .5s steps(2) infinite; }
+#paTable .paCab::before { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; opacity: .55;       /* candy stripes down the cabinet's sides */
+  background: repeating-linear-gradient(115deg, rgba(255,79,139,.22) 0 1.4cqw, transparent 1.4cqw 2.8cqw); }
+#paTable.fever .paCab { animation: paHue 2.4s linear infinite; }
+@keyframes paHue { to { filter: hue-rotate(360deg); } }
+#paTable.shake .paCab { animation: paShake .6s cubic-bezier(.36,.07,.19,.97), paHue 2.4s linear infinite; }
+@keyframes paShake { 10%, 90% { transform: translateX(calc(-50% - 2px)) rotate(-.3deg); } 20%, 80% { transform: translateX(calc(-50% + 5px)) rotate(.5deg); }
+  30%, 50%, 70% { transform: translateX(calc(-50% - 9px)) rotate(-.8deg); } 40%, 60% { transform: translateX(calc(-50% + 9px)) rotate(.8deg); } }
+#paTable.fever.big .paTrim { animation-duration: .3s; }
+@keyframes paChase { 0% { box-shadow: 0 0 0 .35cqw var(--bjHi), 0 0 5cqw color-mix(in srgb, var(--bjHi) 60%, transparent); } 50% { box-shadow: 0 0 0 .35cqw var(--bjAccent), 0 0 5cqw color-mix(in srgb, var(--bjAccent) 70%, transparent); } }
+#paTable .paGlass { position: absolute; left: 50%; top: 2.6cqh; height: 94cqh; aspect-ratio: 600 / 900; transform: translateX(-50%); border-radius: 46cqw 46cqw 1cqw 1cqw / 31cqh 31cqh 1cqh 1cqh;
+  overflow: hidden; cursor: grab; touch-action: none; box-shadow: inset 0 0 3cqw rgba(0,0,0,.6); }
+#paTable.holding .paGlass { cursor: grabbing; }
+#paTable .paCanvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#paTable .paBrand { position: absolute; left: 50%; bottom: .4cqh; transform: translateX(-50%); display: flex; align-items: center; gap: .6cqw; pointer-events: none;
+  font: 900 1.6cqh/1 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: .3em; white-space: nowrap; color: #fff3d6;
+  text-shadow: 0 0 .4cqh #ff4f8b, 0 0 1.2cqh #ff4f8b, 0 0 2.4cqh color-mix(in srgb, var(--bjAccent) 70%, transparent); }       /* (neon) */
+#paTable.fever .paBrand { animation: paFlicker .18s steps(2) infinite; }
+@keyframes paFlicker { 50% { opacity: .55; } }
+@media (prefers-reduced-motion: reduce) { #paTable.fever :is(.paCab, .paBrand, .paTrim) { animation: none; } }
+#paTable .paBrand svg { height: 1.6cqh; width: auto; }
+/* the reels in the board's window */
+#paTable .paWin { position: absolute; display: flex; flex-direction: column; justify-content: center; gap: 1.2cqh; pointer-events: none; }
+#paTable .paReels { display: flex; justify-content: center; gap: 2%; height: 46%; }
+#paTable .paReel { position: relative; width: 30%; height: 100%; overflow: hidden; border-radius: .8cqh;
+  background: linear-gradient(180deg, #0c0a12, #1c1826 50%, #0c0a12); box-shadow: inset 0 0 0 .15cqh color-mix(in srgb, var(--bjAccent) 50%, transparent); }
+#paTable .paStrip { position: absolute; inset: 0; display: grid; place-items: center; }
+#paTable .paReel.spin .paStrip { display: block; inset: auto 0; top: 0; height: 800%; animation: paRoll .32s linear infinite; filter: blur(.25cqh); }
+#paTable .paReel.reach .paStrip { animation-duration: .9s; filter: blur(.1cqh); }
+#paTable .paReel.reach { box-shadow: inset 0 0 0 .3cqh var(--bjHi), 0 0 2.4cqh color-mix(in srgb, var(--bjHi) 70%, transparent); animation: paPulse .6s ease-in-out infinite alternate; }
+#paTable .paReel.spin .paSym { display: block; height: 12.5%; width: 100%; padding: 8% 12%; box-sizing: border-box; }
+#paTable .paSym { width: 78%; height: auto; }
+@keyframes paRoll { from { transform: translateY(-87.5%); } to { transform: translateY(0); } }
+@keyframes paPulse { to { box-shadow: inset 0 0 0 .3cqh var(--bjAccent), 0 0 3.4cqh color-mix(in srgb, var(--bjAccent) 80%, transparent); } }
+#paTable .paSym .f { fill: color-mix(in srgb, var(--bjHi) 75%, #fff); }
+#paTable .paSym .s { fill: none; stroke: color-mix(in srgb, var(--bjHi) 75%, #fff); stroke-width: 3.4; stroke-linecap: round; stroke-linejoin: round; }
+#paTable .paSym .s.o { opacity: .55; }
+#paTable .paSym .i { fill: #1a1230; }
+#paTable .paSym.cat .f { fill: #22c08a; }       /* the cat and the seven: the big ones */
+#paTable .paSym.seven .s { stroke: #ff5a6e; stroke-width: 4.6; }
+#paTable .paSym.moon .f { fill: #ffe08a; }
+#paTable .paSym.wave .s { stroke: var(--bjAccent); }
+#paTable .paWinLine { min-height: 2.4cqh; text-align: center; font: 800 2cqh/1.2 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: .14em; color: color-mix(in srgb, var(--bjHi) 70%, #fff);
+  text-shadow: 0 0 1.6cqh color-mix(in srgb, var(--bjAccent) 70%, transparent); }
+#paTable .paWin.reach .paWinLine, #paTable .paWin.won .paWinLine { animation: paPulseText .5s ease-in-out infinite alternate; }
+@keyframes paPulseText { to { color: #fff; text-shadow: 0 0 2.4cqh var(--bjHi); } }
+#paTable .paLights { position: absolute; display: flex; justify-content: center; gap: 1.6%; pointer-events: none; }
+#paTable .paLights i { width: 3.2%; aspect-ratio: 1; border-radius: 50%; background: rgba(255,255,255,.12); }
+#paTable .paLights i.on { background: var(--bjHi); box-shadow: 0 0 1cqh var(--bjHi); }
+/* beside the cabinet: what it pays (and the fever), who's at it */
+#paTable .paSide, #paTable .paPlayers { position: absolute; top: 8vh; width: 270px; display: flex; flex-direction: column; gap: 10px; pointer-events: none; }
+#paTable .paSide { right: calc(50% + 26.6vh + 28px); }
+#paTable .paPlayers { left: calc(50% + 26.6vh + 28px); width: 250px; }
+#paTable .paSide .bjSign { position: static; width: auto; }
+#paTable .paSide .bjSign .bjMode { font-size: 12px; }
+#paTable .paSide .bjSign .bjLimits { font-size: 12px; }
+#paTable .paPays, #paTable .paFever, #paTable .paHot { padding: 10px 12px; border-radius: 14px; background: rgba(8,10,16,.62); backdrop-filter: blur(16px);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bjAccent) 28%, rgba(255,255,255,.06)); font-size: 13px; }
+#paTable .paHead { margin-bottom: 6px; font: 700 10.5px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: .22em; text-transform: uppercase; color: color-mix(in srgb, var(--bjAccent) 60%, #fff); }
+#paTable .paRow { display: flex; justify-content: space-between; gap: 10px; height: 22px; align-items: center; }
+#paTable .paRow b { color: color-mix(in srgb, var(--bjHi) 60%, #fff); font-variant-numeric: tabular-nums; }
+#paTable .paSmall { margin-top: 6px; font-size: 11.5px; line-height: 1.4; color: rgba(255,255,255,.6); }
+#paTable .paHot { display: none; font-weight: 700; color: #ffd27a; }
+#paTable .paHot.on { display: block; }
+#paTable .paFever { display: none; flex-direction: column; gap: 4px; box-shadow: inset 0 0 0 2px var(--bjHi), 0 0 24px color-mix(in srgb, var(--bjHi) 45%, transparent); }
+#paTable .paFever.on { display: flex; }
+#paTable .paFever b { font: 800 20px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: .16em; color: var(--bjHi); }
+#paTable .paGain { font-weight: 700; color: color-mix(in srgb, var(--bjAccent) 50%, #fff); font-variant-numeric: tabular-nums; }
+#paTable .paGain.dim { font-weight: 600; color: rgba(255,255,255,.6); }
+#paTable .paPlayers { padding: 10px 12px; border-radius: 14px; background: rgba(8,10,16,.5); backdrop-filter: blur(16px); }
+#paTable .paTag { max-width: none; }
+#paTable .paTag.playing .ex { color: var(--c); }
+#paTable .paTag.gone { opacity: .5; }
+#paTable .paDial { display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 600; }
+#paTable .paDial input { width: 170px; margin: 0; --fill: 60%; }
+#paTable .paDial b { width: 28px; text-align: right; font-variant-numeric: tabular-nums; }
 
 /* Roulette: the wheel on the left; the sign, the last numbers, the layout and the players on the right */
 #rlTable .rlBrand { position: absolute; left: 3cqw; top: 3cqh; display: flex; align-items: center; gap: .8cqw; opacity: .3; pointer-events: none;
@@ -1924,3 +2014,125 @@ body.bcfull:not(.surfing):not(:has(#bcBar.show, #bcBar:hover, #bcBar:focus-withi
 #skTable .skInput:focus { box-shadow: inset 0 0 0 1px var(--bjAccent), 0 0 0 .2cqw color-mix(in srgb, var(--bjAccent) 30%, transparent); }
 #skTable .skInput:disabled { opacity: .5; }
 #skTable .skInput::-webkit-search-cancel-button { display: none; }
+
+/* ---- windowed (Settings → Show Drift → In a window; app.js syncWinBar, main.js buildWindows) ----
+   Drift's own title bar: no strip of its own, just a soft shade over the top of the scene so the picture runs edge to edge
+   under it, with the name, what's on, and the window's buttons. It comes and goes with the panel (body.idle). Hidden, it isn't a
+   drag region either, so a click at the top of the window still reaches a game's table or the scene. */
+#winBar { --wbH: 38px; position: fixed; z-index: 33; left: 0; right: 0; top: 0; height: var(--wbH); display: none; align-items: stretch; justify-content: space-between;
+  padding-left: 14px; color: var(--ink); font: 12px/1 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  background: linear-gradient(180deg, rgba(6,8,13,.62) 0%, rgba(6,8,13,.34) 55%, rgba(6,8,13,0) 100%);
+  opacity: 0; transform: translateY(-6px); pointer-events: none; -webkit-app-region: no-drag;
+  transition: opacity .35s ease, transform .35s cubic-bezier(.22, 1, .36, 1); }
+body.windowed #winBar { display: flex; }
+body.windowed:not(.idle) #winBar { opacity: 1; transform: none; pointer-events: auto; -webkit-app-region: drag; }
+#winBar.blur { color: var(--dim); }
+#winBar .wbId { display: flex; align-items: center; gap: 9px; min-width: 0; text-shadow: 0 1px 3px rgba(0,0,0,.45); }
+#winBar .wbId b { font-weight: 600; letter-spacing: .02em; }
+/* the mark: Drift's own logo, the two glowing waves of icon.svg cropped to them (the same copy as Surf's start page), as it is in every view */
+#winBar .wbMark { flex: none; height: 14px; width: auto; overflow: visible; margin-right: -1px; filter: drop-shadow(0 1px 2px rgba(0,0,0,.35)); transition: filter .3s, opacity .3s; }
+#winBar.blur .wbMark { filter: saturate(.25); opacity: .7; }
+/* what's on: a small tag for the kind of view, then its name and a dim line after it (the palette, the artist, the site, who shares) */
+#winBar .wbName { flex: none; }
+#winBar .wbKind { flex: none; padding: 3px 7px 3px; border-radius: 6px; font-size: 9.5px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; line-height: 1;
+  color: color-mix(in srgb, var(--wbTone, var(--accent)) 80%, white); background: color-mix(in srgb, var(--wbTone, var(--accent)) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--wbTone, var(--accent)) 28%, transparent); text-shadow: none; transition: color .3s, background-color .3s, box-shadow .3s; }
+#winBar .wbKind:empty { display: none; }
+#winBar .wbNow { display: flex; align-items: baseline; gap: 8px; min-width: 0; max-width: 46vw; white-space: nowrap; }
+#winBar #wbTitle { font-weight: 500; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+#winBar #wbSub { flex: none; max-width: 22vw; overflow: hidden; text-overflow: ellipsis; font-style: normal; color: var(--dim); }
+#winBar #wbSub:empty { display: none; }
+#winBar .wbLock { flex: none; align-self: center; width: 11px; height: 11px; color: var(--dim); margin-right: -3px; }
+#winBar .wbLive { flex: none; align-self: center; display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px 2px 6px; border-radius: 999px; font-size: 9.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+  color: #fff; background: #e5484d; box-shadow: 0 0 12px rgba(229,72,77,.5); }
+#winBar .wbLive::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: #fff; animation: wbLive 1.6s ease-in-out infinite; }
+@keyframes wbLive { 50% { opacity: .35; } }
+#winBar [hidden] { display: none !important; }       /* (its parts set their own display, which would otherwise show them hidden: the Live tag did, always) */
+#winBar .wbBtns { display: flex; align-items: stretch; -webkit-app-region: no-drag; }
+/* the context's own controls, smaller and rounder than the window's, so the two sets never read as one */
+#winBar .wbCtl:not([hidden]) { display: flex; align-items: center; gap: 2px; padding: 0 4px; }
+#winBar .wbCtl[hidden] + .wbCtlSep { display: none; }
+#winBar .wbCtl .wbBtn { width: 30px; height: 26px; border-radius: 7px; }
+#winBar .wbCtl .wbBtn svg { width: 14px; height: 14px; }
+#winBar .wbCtl .wbBtn:disabled { opacity: .3; pointer-events: none; }
+#winBar .wbCtl .wbBtn[hidden] { display: none; }
+#winBar #wbPlay .pl, #winBar #wbPlay.paused .pz { display: none; }
+#winBar #wbPlay.paused .pl { display: block; }
+#winBar #wbPlay { color: var(--wbTone, var(--accent)); }
+#winBar .wbSep { width: 1px; margin: 11px 6px; background: rgba(255,255,255,.14); }
+#winBar .wbBtn { all: unset; position: relative; width: 46px; display: grid; place-items: center; color: inherit; cursor: default; transition: background-color .15s ease, color .15s ease; }
+#winBar .wbBtn svg { width: 15px; height: 15px; filter: drop-shadow(0 1px 2px rgba(0,0,0,.5)); }
+#winBar .wbBtn:hover { background: rgba(255,255,255,.1); }
+#winBar .wbBtn:active { background: rgba(255,255,255,.06); }
+#winBar .wbBtn:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+#winBar .wbBtn.lit { color: var(--accent); }
+#winBar .wbBtn.lit::after { content: ''; position: absolute; left: 50%; bottom: 6px; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+#winBar .wbClose:hover { background: #c42b1c; color: #fff; }
+#winBar .wbClose:active { background: #b22a1b; }
+#winBar #wbMax .two, #winBar.max #wbMax .one { display: none; }
+#winBar.max #wbMax .two { display: block; }
+/* each view's own look (app.js wbContext). Scene: the soft shade above, in the palette's accent. */
+#winBar { transition: opacity .35s ease, transform .35s cubic-bezier(.22, 1, .36, 1), background .4s ease, box-shadow .4s ease; }
+/* Video and music: a deeper, longer shade, like a film's, and the title a little bigger */
+#winBar[data-ctx="video"], #winBar[data-ctx="music"] { --wbH: 44px; height: 44px; background: linear-gradient(180deg, rgba(0,0,0,.78) 0%, rgba(0,0,0,.42) 60%, rgba(0,0,0,0) 100%); }
+#winBar[data-ctx="video"] #wbTitle, #winBar[data-ctx="music"] #wbTitle { font-size: 13px; font-weight: 600; }
+#winBar[data-ctx="music"] { --wbTone: var(--hi); }
+/* Surf: a web page's top is busy, so a solid strip in the Surf bar's glass, with a hairline under it, and the site beside its padlock */
+#winBar[data-ctx="surf"] { background: rgba(14,16,22,.9); backdrop-filter: blur(24px) saturate(160%); box-shadow: 0 1px 0 rgba(255,255,255,.07), 0 8px 24px -10px rgba(0,0,0,.6); --wbTone: #6aa8ff; }
+#winBar[data-ctx="surf"] .wbId { text-shadow: none; }
+#winBar[data-ctx="surf"] #wbSub { order: -1; color: var(--ink); opacity: .8; }       /* the site first, then the page's title */
+#winBar[data-ctx="surf"] .wbNow:has(#wbSub:not(:empty)) #wbTitle { color: var(--dim); font-weight: 400; }
+/* A game: the felt's warmth from below the bar, and the tag in the tables' gold */
+#winBar[data-ctx="game"] { --wbTone: #e3b766; background: linear-gradient(180deg, rgba(20,12,4,.7) 0%, rgba(20,12,4,.3) 60%, rgba(20,12,4,0) 100%); }/* Share: the grid of screens under it, and a red Live while you're the one sharing */
+#winBar[data-ctx="share"] { --wbTone: #ff8a7a; }
+#winBar.live { box-shadow: inset 0 -1px 0 rgba(229,72,77,.45); }
+/* Settings and the Hub, open over the screen: the panel's own glass, so the bar reads as part of what's open */
+#winBar[data-ctx="settings"], #winBar[data-ctx="hub"] { background: rgba(11,13,19,.62); backdrop-filter: blur(30px) saturate(150%); box-shadow: 0 1px 0 var(--line); }
+#winBar[data-ctx="settings"] { --wbTone: #a9b4c8; }
+/* while it shows, what else sits at the top of the window moves down out of its way */
+body.windowed:not(.idle) #surfBar { top: 50px; }       /* (under the tallest of its looks, 44px) */
+body.windowed #callBar { top: 50px; }
+body.windowed #toast { top: max(4vh, 50px); }
+body.windowed #clockFace { top: max(7vh, 56px); }
+/* Surf in a window: the window is a browser's. Surf's own bar, in whichever Surf bar style is picked, is pinned across the top as two
+   rows, the way browsers have them: the tabs in the title bar, between Drift's logo on the left and the window's buttons on the right
+   (#winBar still draws those over its two ends), the tab in front flaring down into the toolbar under it (back, forward, reload, home,
+   the address bar and its tools). The title row's empty stretch drags the window, and a double click there maximises it. The page
+   starts under both rows (--wbChrome, main.js WIN_SURF_ROW, app.js WB_ROW). All of it is CSS on Surf's own elements, so every shortcut,
+   click and tab action works as it does in full screen. */
+body.windowed.surfing { --wbRow: 40px; --wbChrome: 80px; --wbLeft: 64px; --wbRight: 252px; }
+body.windowed.surfing #surfBar, body.windowed.surfing:has(#callBar.on) #surfBar { top: 0; left: 0; width: 100%; transform: none; opacity: 1; pointer-events: auto;
+  border-radius: 0; --sbR: 0px; box-shadow: 0 1px 0 rgba(255,255,255,.07), 0 10px 30px -14px rgba(0,0,0,.7); transition: none; }
+body.windowed.surfing #surfBar.t-aurora { border-width: 0 0 1px; }
+/* the title row: the tabs, sitting on its foot */
+body.windowed.surfing #surfBar .sbTop { height: var(--wbRow); padding: 0 var(--wbRight) 0 var(--wbLeft); -webkit-app-region: drag; }
+body.windowed.surfing #surfBar .sbTop button { -webkit-app-region: no-drag; }
+body.windowed.surfing #sbTabs { height: 34px; }
+/* the toolbar: the full width of the window, the address bar taking what's left */
+body.windowed.surfing #surfBar .sbNav { height: var(--wbRow); padding: 0 8px; }
+body.windowed.surfing #surfBar .sbBtn { width: 30px; height: 30px; }
+body.windowed.surfing #surfBar .sbBtn svg { width: 16px; height: 16px; }
+body.windowed.surfing #surfBar .sbOmni { height: 30px; margin: 0 6px; border-radius: 15px; }
+body.windowed.surfing #surfBar .sbUrlView, body.windowed.surfing #sbUrl { font-size: 13px; }
+/* always in sight, so a loading tab's spinner and the loading line run whenever they're wanted (in full screen, only while the bar shows) */
+body.windowed.surfing #surfBar .sbFav.spin::after { animation: sbSpin .8s linear infinite; }
+body.windowed.surfing #surfBar.loading .sbProg::after { animation: sbProg 1.1s cubic-bezier(.45, 0, .55, 1) infinite; }
+/* Drift's own title bar over its two ends: just the logo and the window's buttons, on nothing of its own */
+body.windowed.surfing #winBar, body.windowed.surfing.idle #winBar { height: var(--wbRow); opacity: 1; transform: none; background: none; box-shadow: none; backdrop-filter: none;
+  pointer-events: none; -webkit-app-region: initial; transition: none; }       /* (no region of its own: a no-drag one, over the whole row, would cancel the toolbar's drag) */
+body.windowed.surfing #winBar .wbId { pointer-events: auto; -webkit-app-region: drag; text-shadow: none; }
+body.windowed.surfing #winBar .wbBtns { pointer-events: auto; }
+body.windowed.surfing #winBar .wbName, body.windowed.surfing #winBar .wbKind, body.windowed.surfing #winBar .wbNow, body.windowed.surfing #winBar .wbCtl, body.windowed.surfing #winBar .wbCtlSep { display: none; }
+body.windowed.surfing #winBar .wbBtn svg { filter: none; }
+/* the light Surf bar style (Daylight): the logo's row and the buttons in its dark ink */
+body.windowed.surfing:has(#surfBar.t-day) #winBar { color: #1f1f1f; }
+body.windowed.surfing:has(#surfBar.t-day) #winBar .wbBtn:not(.wbClose):hover { background: rgba(0,0,0,.07); }
+body.windowed.surfing:has(#surfBar.t-day) #winBar .wbSep { background: rgba(0,0,0,.12); }
+/* for a frame after a resize, no drag areas at all, so they're worked out afresh when they come back (app.js wbRegionsFresh) */
+body.wbRegionsOff #winBar, body.wbRegionsOff #winBar *, body.wbRegionsOff #surfBar .sbTop { -webkit-app-region: no-drag !important; }
+/* the page starts under both rows; the bar is always there, so there's no edge to bring it */
+body.windowed.surfing webview.web, body.windowed.surfing video#webStream, body.windowed.surfing video#webMirror, body.windowed.surfing canvas#webGpu { top: var(--wbChrome); height: calc(100% - var(--wbChrome)); }
+body.windowed.surfing #surfEdge { display: none; }
+body.windowed.surfing #callBar { top: calc(var(--wbChrome) + 12px); }
+/* full screen's monitor controls: one window has none of them (Settings shows "Show Drift" alone in their place) */
+body.windowed #monitors, body.windowed .monNote, body.windowed #modeRow, body.windowed .optRow:has(#surfFit), body.windowed #modeHint, body.windowed #sbMirror { display: none !important; }

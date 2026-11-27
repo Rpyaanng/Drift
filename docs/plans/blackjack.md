@@ -45,7 +45,7 @@ A pure module (no Electron, no DOM, no timers): `createTable({ now, rand, times,
 - Dealer hits 16, stands on all 17s, peeks under an ace or a ten. Hit, stand, double on two cards, split once (aces get
   one card each), **insurance** (half the bet, pays 2:1, offered to everyone at once when the dealer shows an ace) and
   **late surrender** (first two cards, half back). Blackjack 3:2, win 1:1, push returns the bet.
-- Chips start at 1,000; bets 10 to 500. **Crapping out** (chips under 10): 20 s out, then 1,000 again. The wait is kept
+- Chips start at 1,000; bets 10 and up, no top limit (bet all you have). **Crapping out** (chips under 10): 20 s out, then 1,000 again. The wait is kept
   by the table across standing up and sitting down.
 - Rounds: betting (ends when all seated have bet, or 10 s after the first bet), deal, insurance (8 s), turns in seat order
   (20 s each, then stand), the dealer, settle, 5 s to look. `onSettle` reports each player's net for the round.

@@ -316,6 +316,26 @@
       crash(a, d, t + 0.4, 0.32, 1.8); snare(a, d, t + 0.4, 0.4); applause(a, d, t + 0.5, 2.6, 0.45); },
     skApplause: (a, d, t) => { chord(a, d, t, [N.C5, E5, N.G5], 0.4, 0.045); applause(a, d, t + 0.05, 2, 0.4); },
     skLose: (a, d, t) => { [G3, 185.0, 174.61].forEach((f, i) => brass(a, d, t + i * 0.42, f, 0.36, 0.11, { bright: 1300 })); brass(a, d, t + 1.26, 164.81, 1.2, 0.11, { bright: 1300, vib: 0.025 }); },
+    // ---- Pachinko (main.js GM_SOUNDS for the reels and the fever; paBallSounds for your own balls, timed to what you see) ----
+    // a ball away: the spring's flick and a small thunk; a pin: the tiniest steel tick, a little different each time
+    paLaunch: (a, d, t) => { noise(a, d, t, { f: 3200, q: 2, dur: 0.03, level: 0.3 }); voice(a, d, t, { f: 190, f2: 95, glide: 0.05, dur: 0.08, level: 0.14, atk: 0.002 }); },
+    paPin: (a, d, t) => { noise(a, d, t, { f: 5200 + Math.random() * 1200, q: 6, dur: 0.014, level: 0.25 }); voice(a, d, t, { f: 3000 + Math.random() * 600, dur: 0.03, level: 0.025, atk: 0.001 }); },
+    // the trampoline throwing a ball back up: a springy "boing" (a rising note that wobbles as the mat settles)
+    paBounce: (a, d, t) => { voice(a, d, t, { f: 180, f2: 420, glide: 0.09, dur: 0.26, level: 0.3, atk: 0.004, vib: 0.06, cut: 2600, partials: [[2, 0.12, 0.4]] }); noise(a, d, t, { f: 700, q: 1.2, dur: 0.04, level: 0.18 }); },
+    // into the start pocket (a bright chime, the reels' cue), a tulip (two notes up), the gate in a fever (a ding and a few chips)
+    paStart: (a, d, t) => { bell(a, d, t, N.C6, 0.25, 0.5); bell(a, d, t + 0.06, N.G6, 0.18, 0.6); },
+    paTulip: (a, d, t) => { mallet(a, d, t, N.G5, 0.4, 0.3, 5000); mallet(a, d, t + 0.07, N.C6, 0.4, 0.4, 5000); },
+    paCatch: (a, d, t) => { bell(a, d, t, N.G5, 0.22, 0.4); chips(a, d, t + 0.04, 2, 0.8); },
+    // the reels going round: a whirr of clicks, quick and slowing
+    paSpin: (a, d, t) => { let x = 0; for (let i = 0; i < 16; i++) { noise(a, d, t + x, { f: 2400, q: 3, dur: 0.02, level: 0.2 - i * 0.008 }); x += 0.05 + i * 0.006; } },
+    // a reach: two alike, the third slowing: a rise with the heartbeat under it. It missed: the sag; it hit: the fever
+    paReach: (a, d, t) => { rise(a, d, t, 2.6, 0.5); suspense(a, d, t, 2.6, 0.22); },
+    paMiss: (a, d, t) => deflate(a, d, t, 0.9, 0.42),
+    paFever: (a, d, t) => { horn(a, d, t, 0.8, 0.12); celebrate(a, d, t + 0.1, 2.4, 0.65); [N.C6, N.G6, N.C7].forEach((f, i) => bell(a, d, t + 0.15 + i * 0.09, f, 0.16, 0.7)); },
+    // the gate swinging open for a round (a clank and three notes up)
+    paGate: (a, d, t) => { noise(a, d, t, { f: 420, q: 1.2, dur: 0.1, level: 0.5 }); [N.C5, N.G5, N.C6].forEach((f, i) => mallet(a, d, t + 0.05 + i * 0.07, f, 0.4, 0.4, 5000)); },
+    // the fever over, your winnings in the tray: balls pouring down, and the count running up
+    paPay: (a, d, t) => { for (let i = 0; i < 26; i++) noise(a, d, t + i * 0.045 + Math.random() * 0.02, { f: 4200 + Math.random() * 1800, q: 5, dur: 0.02, level: 0.22 }); tally(a, d, t, 1.3, 0.1); celebrate(a, d, t + 0.2, 1.2, 0.4); },
   };
   // How loud each is against the others (measured, then by ear): your own actions peak around -7 dBFS at full volume, other
   // people's news a few dB under, the clinks lowest because they sit where the ear is keenest, and a dropped connection a
@@ -333,7 +353,11 @@
     // Sketch & Guess: a game show, so the big moments (a game starting, your right guess, everyone getting it, winning) a
     // little over your own actions, the end of a game and the buzzer with them, someone else's guess, hints and the clock lower
     skStart: 1.5 /* .45 */, skRound: 1.6 /* .42 */, skPick: 2.25 /* .38 */, skTurn: 2.7 /* .38 */, skRight: 2.3 /* .45 */, skOther: 1.7 /* .26 */, skClose: 1.75 /* .32 */, skHint: 1.45 /* .25 */,
-    skTick: 0.83 /* .22 */, skTick1: 0.92 /* .26 */, skEnd: 1.3 /* .35 */, skAll: 1.55 /* .45 */, skWin: 1.5 /* .48 */, skApplause: 4 /* .38 */, skLose: 3.5 /* .38 */ };
+    skTick: 0.83 /* .22 */, skTick1: 0.92 /* .26 */, skEnd: 1.3 /* .35 */, skAll: 1.55 /* .45 */, skWin: 1.5 /* .48 */, skApplause: 4 /* .38 */, skLose: 3.5 /* .38 */,
+    // Pachinko: your balls' launches and pins a quiet texture under everything (they come often), a pocket like a chip, the
+    // reels and the gate like your turn, a reach, the fever and its payout with the tables' wins. (Set to sit with their
+    // neighbours here; not yet measured like the others.)
+    paLaunch: 0.9, paPin: 0.8, paBounce: 1.1, paStart: 1.5, paTulip: 1.1, paCatch: 1.3, paSpin: 1.6, paReach: 1.5, paMiss: 1.9, paFever: 1.4, paGate: 1.5, paPay: 1.6 };
 
   // The way out: a small dark room (1.4 s, low in the mix). No compressor: Chromium's blunts the first few milliseconds of
   // a short sound (it took 60% off the mute click's peak), and the levels here are set by hand to stay well under full scale.

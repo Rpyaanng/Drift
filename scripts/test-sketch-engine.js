@@ -97,8 +97,9 @@ ok('eraser', inkOp({ k: 'pen', e: true, p: [1, 1] }).e === 1);
   t.go('b', { do: 'guess', text: t._word() });
   t.go('c', { do: 'guess', text: t._word() });
   ok('...and can guess', t.v('c').players[2].score > 0);
-  for (let i = 0; i < 20 && t.phase !== 'over'; i++) t.wait(20000);
-  ok('they don\'t draw in a round they came into partway', t.phase === 'over');
+  const drew = [];
+  for (let i = 0; i < 20 && t.phase !== 'over'; i++) { if (t.phase === 'choosing') drew.push(t.drawerId()); t.wait(20000); }
+  ok('they still draw in the round they came into', drew.join() === 'b,c' && t.phase === 'over', drew);
   ok('settle reports every score', got.length === 3 && got.find((x) => x.id === 'b').score > 0, got);
 }
 { // leaving

@@ -129,7 +129,9 @@ ok('two aces', total(['As', 'Ad']).n === 12);
 { // bets: limits
   const t = table(); t.sit('a', 'Ann');
   ok('below min refused', t.bet('a', 5).error);
-  ok('above max refused', t.bet('a', 600).error);
+  ok('no top limit', !t.bet('a', 1000).error);
+  const u = table(); u.sit('a', 'Ann');
+  ok('but not more than you have', u.bet('a', 1001).error);
   ok('no bet before sitting', t.bet('b', 100).error);
 }
 { // crapping out: 20 s, then 1,000 again

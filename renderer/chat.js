@@ -691,8 +691,8 @@
   // ---- who's online in a hub, for the hub bar: in voice or not, what they share, and what they're looking at ----
   // share: their broadcast, or their watch-together. sees: someone's broadcast or watch-together they're watching, else the
   // screen their Drift shows (hub.js 'where': Scenes, Media, Surf, which in a hub is its shared browser, or Share).
-  const SCREEN_NAMES = { scenes: 'Scenes', media: 'Media', surf: 'Surf', broadcast: 'Share', blackjack: 'the Blackjack table', roulette: 'the Roulette table', poker: 'the Hold\'em table', sketch: 'Sketch & Guess' };
-  const AT_TABLE = new Set(['blackjack', 'roulette', 'poker', 'sketch']);       // the Games room's tables ("At", and a click sits you down there)
+  const SCREEN_NAMES = { scenes: 'Scenes', media: 'Media', surf: 'Surf', broadcast: 'Share', blackjack: 'the Blackjack table', roulette: 'the Roulette table', poker: 'the Hold\'em table', sketch: 'Sketch & Guess', pachinko: 'the Pachinko machine' };
+  const AT_TABLE = new Set(['blackjack', 'roulette', 'poker', 'sketch', 'pachinko']);       // the Games room's tables ("At", and a click sits you down there)
   function presence(x) {
     const bcs = x.bcs || [], lives = x.lives || [];
     return x.members.filter((m) => m.online).map((m) => {
@@ -725,7 +725,7 @@
       p.muted ? h('b.cbMuted', {}, icon('micOff')) : p.sees && SEES_ICON(p.sees) ? h('b.cbWhere', {}, icon(SEES_ICON(p.sees))) : null);
   }
   // the little icon in the corner the mute badge takes (muted wins): the tab they're on, or what they're watching
-  const TAB_ICONS = { scenes: 'sparkle', media: 'film', surf: 'globe', broadcast: 'screen', blackjack: 'cards', roulette: 'cards', poker: 'cards', sketch: 'pencil' };
+  const TAB_ICONS = { scenes: 'sparkle', media: 'film', surf: 'globe', broadcast: 'screen', blackjack: 'cards', roulette: 'cards', poker: 'cards', sketch: 'pencil', pachinko: 'cards' };
   const SEES_ICON = (s) => (s.kind === 'bc' ? 'screen' : s.kind === 'live' ? 'film' : TAB_ICONS[s.at]);
   async function jumpTo(x, p) {
     if (p.isMe) return;
@@ -932,7 +932,9 @@
     ['rlSpin', 'Wheel spins'], ['rlDrop', 'Ball drops'], ['rlWin', 'Wheel win'], ['rlBig', 'Big wheel win'], ['pkShuffle', 'New hand'], ['pkCheck', 'Check'], ['pkFold', 'Fold'],
     ['pkRaise', 'Raise'], ['pkAllIn', 'All in'], ['pkRiver', 'The river'], ['pkPot', 'Someone\'s pot'], ['pkBig', 'Big pot'],
     ['skStart', 'Game starts'], ['skRound', 'New round'], ['skTurn', 'Your turn to draw'], ['skPick', 'Word picked'], ['skRight', 'You guessed it'], ['skOther', 'Someone guessed'], ['skClose', 'So close'], ['skHint', 'Hint'],
-    ['skTick', 'Clock ticks'], ['skEnd', 'Time\'s up'], ['skAll', 'Everyone got it'], ['skWin', 'You win'], ['skApplause', 'Applause'], ['skLose', 'Last place']];
+    ['skTick', 'Clock ticks'], ['skEnd', 'Time\'s up'], ['skAll', 'Everyone got it'], ['skWin', 'You win'], ['skApplause', 'Applause'], ['skLose', 'Last place'],
+    ['paLaunch', 'Ball away'], ['paPin', 'Pins'], ['paBounce', 'Trampoline'],['paStart', 'Start pocket'], ['paTulip', 'Tulip'], ['paSpin', 'Reels spin'], ['paReach', 'Reach'], ['paMiss', 'So close'],
+    ['paFever', 'Fever'], ['paGate', 'Gate opens'], ['paCatch', 'In the gate'], ['paPay', 'Fever pays']];
   $('#sfxTry').replaceChildren(...SFX_TRY.map(([name, label]) => h('button.mini', { title: 'Play this sound', onclick: () => api.cmd({ type: 'sfx', name, preview: true }) }, '▶ ' + label)));
   function drawSfxOpts() {
     const r = $('#sfxVol');

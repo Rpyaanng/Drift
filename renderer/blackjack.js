@@ -99,7 +99,7 @@
       holder.classList.add('live');
       if (v.round !== lastRound) { lastRound = v.round; seen = new Set([...seen].filter((k) => k.startsWith(v.round + ':'))); }
       felt.querySelector('.bjMode').textContent = mode === 'hub' ? 'Hub table' : 'Just you';
-      limits.textContent = `Min ${fmt(v.min)} · Max ${fmt(v.max)}`;
+      limits.textContent = `Min ${fmt(v.min)} · No limit`;
       discard.firstChild.style.height = Math.round(100 * (1 - v.shoe.left / v.shoe.size)) + '%';
       cards(dCards, v.dealer.cards, `${v.round}:d`);
       dTotal.textContent = v.dealer.cards.length ? (v.dealer.cards.includes(null) ? `Showing ${v.dealer.total}` : (v.dealer.soft && v.dealer.total < 21 ? `Soft ${v.dealer.total}` : String(v.dealer.total))) : '';
@@ -173,13 +173,16 @@
         kids.push(btn('Sit back down', 'primary', () => send({ op: 'sit' })));
       } else if (me.outMs) { line = `Out of chips. Back in with ${fmt(v.start)} in `; kids.push(el('b', 'bjCount out', String(Math.ceil(me.outMs / 1000)))); }
       else if (v.phase === 'betting' && !me.bet) {
-        stake = Math.min(stake, me.chips, v.max);
+        stake = Math.min(stake, me.chips);
         for (const c of CHIPS) {
           const b = el('button', 'chip c' + c, String(c)); b.type = 'button'; b.title = `Add ${c}`;
-          b.disabled = stake + c > Math.min(me.chips, v.max);
+          b.disabled = stake + c > me.chips;
           b.onclick = () => { stake += c; send({ op: 'tap' }); controls(); };
           kids.push(b);
         }
+        const all = el('button', 'bjBtn ghost', 'All in'); all.type = 'button'; all.title = `Bet all ${fmt(me.chips)}`;       // (no top limit, so a big stack needn't be clicked in 500 at a time)
+        all.disabled = stake === me.chips || me.chips < v.min; all.onclick = () => { stake = me.chips; send({ op: 'tap' }); controls(); };
+        kids.push(all);
         const amt = el('span', 'bjAmt', stake ? fmt(stake) : 'Pick your bet');
         const clear = el('button', 'bjBtn ghost', 'Clear'); clear.type = 'button'; clear.disabled = !stake; clear.onclick = () => { stake = 0; controls(); };
         const go = el('button', 'bjBtn primary', stake ? `Bet ${fmt(stake)}` : lastBet && lastBet <= me.chips ? `Bet ${fmt(lastBet)} again` : 'Bet'); go.type = 'button';

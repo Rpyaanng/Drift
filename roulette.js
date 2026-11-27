@@ -59,11 +59,13 @@ function createTable(opts = {}) {
     if (at >= 0) { const s = seats[at]; s.name = name; if (s.left) { s.left = false; changed(); } return { seat: at }; }
     const free = seats.indexOf(null);
     if (free < 0) { if (!watchers.some((w) => w.id === id)) { watchers.push({ id, name }); changed(); } return { watching: true }; }
+    if (opts.wallet && opts.wallet.owns(id)) keep = opts.wallet.keep(id);       // (the casino's one wallet: wallet.js)
     const out = Math.max(outs.get(id) || 0, keep && +keep.outUntil || 0);
     const s = { id, name, chips: keep && Number.isFinite(+keep.chips) ? Math.max(0, Math.floor(+keep.chips)) : R.start, bets: new Map(), order: [], last: [], ready: false,
       net: 0, won: 0, played: false, outUntil: out > now() ? out : 0, left: false };
     if (s.outUntil) s.chips = 0;
     else if (s.chips < R.min) s.chips = R.start;
+    if (opts.wallet) opts.wallet.bind(s);
     seats[free] = s;
     if (phase === 'idle') { phase = 'betting'; deadline = 0; }
     changed();

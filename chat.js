@@ -1296,7 +1296,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
   // Which screen this PC shows (Scenes, Media, Surf or Share; the panel says), so friends can jump to it from the hub bar.
   let myWhere = '';
   function setWhere(at) {
-    at = ['scenes', 'media', 'surf', 'broadcast', 'blackjack', 'roulette', 'poker', 'sketch'].includes(at) ? at : '';
+    at = ['scenes', 'media', 'surf', 'broadcast', 'blackjack', 'roulette', 'poker', 'sketch', 'pachinko'].includes(at) ? at : '';
     if (myWhere === at) return;
     myWhere = at;
     for (const c of conns.values()) if (c.status === 'connected' && c.wire) c.wire.send({ t: 'where', at });

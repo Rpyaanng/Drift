@@ -12,8 +12,9 @@ const createXcoder = require('./xcode');
 const createP2P = require('./p2p');
 const createChat = require('./chat');
 const { createTable: createBjTable } = require('./blackjack');
-const GAME_RULES = { roulette: require('./roulette').createTable, poker: require('./poker').createTable, sketch: require('./sketch').createTable };       // the Games room's other tables (gmMove)
-const GAME_SOLO = { roulette: true, poker: true, sketch: false };
+const GAME_RULES = { roulette: require('./roulette').createTable, poker: require('./poker').createTable, sketch: require('./sketch').createTable, pachinko: require('./pachinko').createTable };       // the Games room's other tables (gmMove)
+const GAME_SOLO = { roulette: true, poker: true, sketch: false, pachinko: true };
+const { createWallet } = require('./wallet');
 const SKETCH = require('./sketch');
 const SKETCH_SOLO = process.env.DRIFT_SKETCH_SOLO || '';       // dev: Sketch & Guess alone. =1: you always draw ("Practice" sits in); =guess: "Practice" draws and tells you the word, "Buddy" guesses too (sketchBots)       // can it be played alone (dealt here)? Sketch & Guess needs people: only at a hub
 const createFiles = require('./files');
@@ -62,6 +63,8 @@ const DEFAULTS = {
   cycleShuffle: false,
   cycleSkip: [],           // scenes left out of the automatic scene changes
   displaysOff: [],         // indices of monitors left alone
+  windowed: false,         // one ordinary window you can move and resize instead of every monitor in full screen (see "windowed" at buildWindows)
+  winBounds: null,         // where that window was last ({ x, y, width, height }), kept by main.js only
   quality: 0.75,
   fps: 60,
   clock: false,
@@ -107,11 +110,9 @@ const DEFAULTS = {
   concerts: { key: '' },
   // files sent straight between PCs (docs/plans/files.md): where downloads go ('' = Downloads\Drift)
   files: { folder: '' },
-  // the Blackjack scene played alone (docs/plans/blackjack.md §4): your chips, and when you're back in after crapping out (a hub's table keeps nothing)
-  blackjack: { chips: 1000, outUntil: 0 },
-  // Roulette and Texas Hold'em played alone (docs/plans/games-room.md), the same way: each table's chips are its own
-  roulette: { chips: 1000, outUntil: 0 },
-  poker: { chips: 1000, outUntil: 0 },
+  // the casino's chips played alone (wallet.js): one wallet for Blackjack, Roulette, Hold'em and Pachinko, and when you're back in
+  // after crapping out. (Before 1.12 each table kept its own: blackjack, roulette, poker. The biggest of them became the wallet.)
+  wallet: { chips: 1000, outUntil: 0 },
   // Sketch & Guess (sketch.js cleanSettings): seconds to draw, rounds a game, letters shown as time runs out, and your own words (null = Drift's). They're
   // used at a hub you host, and alone in practice (DRIFT_SKETCH_SOLO); at someone else's hub, theirs are
   sketch: { draw: 80, rounds: 3, hints: true, words: null },
@@ -196,8 +197,12 @@ function loadSettings() {
     if (!known(state.scene)) state.scene = 'aurora';
     for (const k of Object.keys(state.perDisplay || {})) if (!known(state.perDisplay[k])) delete state.perDisplay[k];
     state.cycleSkip = Array.isArray(state.cycleSkip) ? state.cycleSkip.filter((id) => SCENES.includes(id) && !GAMES.includes(id)) : [];
-    state.blackjack = cleanBj(state.blackjack);
-    for (const g of ['roulette', 'poker']) state[g] = cleanBj(state[g]);
+    if (!s.wallet) {       // (from each table's own chips: the most any of them had)
+      const old = ['blackjack', 'roulette', 'poker'].map((g) => s[g]).filter(Boolean).map(cleanBj);
+      if (old.length) state.wallet = old.reduce((a, b) => (b.chips > a.chips ? b : a));
+    }
+    for (const g of ['blackjack', 'roulette', 'poker']) delete state[g];
+    state.wallet = cleanBj(state.wallet);
     state.sketch = SKETCH.cleanSettings(state.sketch);
     if (state.palette === 'custom' && !Array.isArray(state.customColors)) state.palette = 'aurora';
     state.video.folders = (state.video.folders || []).filter((p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } });
@@ -272,7 +277,24 @@ function allDisplays() {
   list.sort((a, b) => a.bounds.x - b.bounds.x || a.bounds.y - b.bounds.y);
   return list.map((d, i) => ({ ...d, index: i, key: 'd' + i }));
 }
+// Windowed: Drift is one window, whatever monitors there are. It's the one "display" (d0), with the window's own bounds, so
+// Span, Mirror and Mix all come out as the plain whole picture in it, and nothing reaches for another monitor.
+const WIN_MIN = { width: 760, height: 480 };       // room for the panel's tabs and a Settings page
+const WIN_SURF_ROW = 80;       // Surf's bar pinned across the window's top, its tabs and its toolbar, in CSS pixels (style.css --wbChrome, app.js WB_ROW): the page is drawn below it
+function winBoundsNow() {
+  const live = state.windowed && visWins[0] && !visWins[0].win.isDestroyed() ? visWins[0].win.getBounds() : null;
+  if (live) return live;
+  const b = state.winBounds, work = screen.getAllDisplays().map((d) => d.workArea);
+  const seen = b && work.some((w) => b.x < w.x + w.width - 80 && b.x + b.width > w.x + 80 && b.y >= w.y - 8 && b.y < w.y + w.height - 60);       // its title bar is on a monitor still plugged in
+  if (seen) return { x: b.x, y: b.y, width: Math.max(WIN_MIN.width, b.width), height: Math.max(WIN_MIN.height, b.height) };
+  const w = screen.getPrimaryDisplay().workArea, width = Math.min(1440, Math.round(w.width * 0.72)), height = Math.min(900, Math.round(width * 9 / 16));
+  return { x: w.x + Math.round((w.width - width) / 2), y: w.y + Math.round((w.height - height) / 2), width, height };
+}
 function activeDisplays() {
+  if (state.windowed) {
+    const bounds = winBoundsNow(), d = screen.getDisplayMatching(bounds);
+    return [{ id: d.id, bounds, primary: true, scale: d.scaleFactor || 1, index: 0, key: 'd0', windowed: true }];
+  }
   const all = allDisplays();
   const act = all.filter((d) => !state.displaysOff.includes(d.index));
   return act.length ? act : all;
@@ -1159,7 +1181,9 @@ function publicState() {
   const c = cur(), lead = visWins.find((v) => showsVideo(v.key));
   // while watching with a friend, the list, position and pause state are theirs
   const video = remote ? { ...state.video, files: remote.files.map((f) => f.name), index: remote.index, paused: !!remote.paused } : state.video;
-  return { ...state, video, subs: { ...state.subs, perFile: undefined }, subsInfo: subInfo, time: clock, nowPlaying, vclock,
+  // (windowed, one window: Span is the whole picture in it, the same as Mirror, and there's nothing to mirror Surf to. The saved setting stays for full screen)
+  const one = state.windowed ? { mode: state.mode === 'span' ? 'mirror' : state.mode, surfMirror: false, winBounds: undefined } : {};
+  return { ...state, ...one, video, subs: { ...state.subs, perFile: undefined }, subsInfo: subInfo, time: clock, nowPlaying, vclock,
     videoUrl: c ? (c.path ? pathToFileURL(c.path).href : c.src) : '', videoName: c ? c.name : '', videoPath: c ? c.path : '', videoLeader: lead && c ? lead.key : '',
     sceneFps: sceneFps(), surfVideo: surfVideo(), screens: visWins.length, spotify: { ...spotify, lead: spotifyLead() }, appNow: { ...appNow, show: appNowShown(), app: appName(appNow.id) }, videoAudio, videoInfo, audioBase: audioPort && c ? local(`/a?i=${c.index}`) : '',
     xc: { ...xc, ...xcWant(), base: xcBase() }, encoders: xcoder.list(), canTonemap: !xcoder.ready() || xcoder.canTonemap(),
@@ -1167,7 +1191,7 @@ function publicState() {
     mediaSolo: mediaSolo ? mediaSolo.text : '',       // why what this PC plays isn't on the hub's stream (mediaRefused)       // music: a friend's, playing here in place of ours; chatHub: the hub this session is in; lan: this PC's address on its network (Help)
     update: updater ? updater.info() : null,
     // this PC's own browser, or a hub's Surf stream (here on the hub's host; a picture from the host's PC elsewhere)
-    web: surfView(), bcView: bcViewInfo(), hosting: !!(chat && chat.hostedHub()), hubHeld: heldView(), hubSurf: { noDownloads: state.hubSurf.noDownloads, allowLan: state.hubSurf.allowLan.join(', '), showSpecs: state.hubSurf.showSpecs, showBrowsing: state.hubSurf.showBrowsing } };
+    web: surfView(), bcView: bcViewInfo(), bcOnAir: !!bcLiveInfo(), hosting: !!(chat && chat.hostedHub()), hubHeld: heldView(), hubSurf: { noDownloads: state.hubSurf.noDownloads, allowLan: state.hubSurf.allowLan.join(', '), showSpecs: state.hubSurf.showSpecs, showBrowsing: state.hubSurf.showBrowsing } };
 }
 function broadcast(channel, payload, includeAudio = true) {
   for (const v of visWins) if (!v.win.isDestroyed()) v.win.webContents.send(channel, payload);
@@ -1376,7 +1400,7 @@ const web = createWeb({
   escape: () => surfEsc(web.info().key),
   unfull: (hostWc) => setTimeout(() => {       // leaving a video's full screen must not take Drift's window out of full screen with it
     const x = visWins.find((y) => !y.win.isDestroyed() && y.win.webContents === hostWc);
-    if (x && FAKE <= 1 && !process.env.DRIFT_HIDDEN && !x.win.isFullScreen()) x.win.setFullScreen(true);
+    if (x && FAKE <= 1 && !process.env.DRIFT_HIDDEN && !state.windowed && !x.win.isFullScreen()) x.win.setFullScreen(true);
   }, 150),
   blockAds: () => state.share.adblock,
   ublockDir: () => path.join(app.getPath('userData'), 'ublock'),
@@ -1407,6 +1431,12 @@ const web = createWeb({
   //              off falls back to 'own'
   pageSize: (key) => {
     const fit = state.surfFit, live = visWins.filter((x) => !x.win.isDestroyed() && x.win.getContentSize().every((n) => n > 0));
+    if (state.windowed) {       // one window, nothing to mirror to: the page is the window less Surf's bar across its top (style.css --wbRow), so it fills what's under the bar, no bars beside it
+      const x = live[0];
+      if (!x) return null;
+      const k = scaleOf(x), [w, h] = x.win.getContentSize();
+      return { w: Math.round(w * k), h: Math.round(Math.max(1, h - WIN_SURF_ROW) * k) };
+    }
     const px = (x) => { const k = scaleOf(x), [w, h] = x.win.getContentSize(); return { w: Math.round(w * k), h: Math.round(h * k) }; };
     if (state.surfMirror && (fit === 'widest' || fit === 'sharpest')) {
       let best = null;
@@ -1834,9 +1864,32 @@ function bjSync() {
   else if (want) chat.bj(want, { t: 'bj-sit' }).then((r) => { if (r && r.error && bjAt === want) bjNote(r.error); });
 }
 setInterval(bjSync, 1000);       // (the hub came or went)
+// The casino's one wallet, played alone (wallet.js): Blackjack, Roulette, Hold'em and Pachinko here all play the same chips,
+// kept in the settings (state.wallet). What's saved counts bets still riding as yours (Drift closing mid-hand neither wins nor
+// loses them), and a table closing gives them back. Every table here shows the new count as soon as it changes.
+let walletPushing = null;
+const localWallet = createWallet({ owns: (id) => id === BJ_ME, load: () => state.wallet, onChange: () => { if (!walletPushing) walletPushing = setTimeout(walletChanged, 0); } });
+const localTables = () => [bjLocal, ...Object.values(gm).map((x) => x.local)].filter(Boolean);
+function walletKeep() {
+  const w = localWallet.peek(BJ_ME);
+  let riding = 0;
+  for (const t of localTables()) { const k = t.mine(BJ_ME); if (k) riding += Math.max(0, k.chips - w.chips); }
+  const k = { chips: w.chips + riding, outUntil: w.outUntil };
+  if (k.chips !== state.wallet.chips || k.outUntil !== state.wallet.outUntil) { state.wallet = k; saveSoon(); }
+}
+function walletChanged() {
+  walletPushing = null;
+  walletKeep();
+  if (bjLocal) { bjLocalSent = -1; bjLocalPush(); }
+  for (const g of Object.keys(gm)) if (gm[g].local) { gm[g].sent = -1; gmLocalPush(g); }
+}
+function walletGiveBack(t) {       // a table here closing (or you standing up) with bets on it that won't be played: back to the wallet
+  const k = t && t.mine(BJ_ME), w = localWallet.peek(BJ_ME);
+  if (k && k.chips > w.chips) localWallet.set(BJ_ME, { chips: k.chips, outUntil: w.outUntil });
+}
 function bjLocalStart() {
-  bjLocal = createBjTable({ times: BJ_FAST });
-  bjLocal.sit(BJ_ME, 'You', state.blackjack);
+  bjLocal = createBjTable({ times: BJ_FAST, wallet: localWallet });
+  bjLocal.sit(BJ_ME, 'You');
   bjLocalSent = -1; bjLocalPush();
   clearInterval(bjLocalTimer);
   bjLocalTimer = setInterval(() => { if (bjLocal) { bjLocal.tick(); bjLocalPush(); } }, 200);
@@ -1845,13 +1898,13 @@ function bjLocalPush() {
   if (!bjLocal || bjLocal.version === bjLocalSent) return;
   bjLocalSent = bjLocal.version;
   bjShow(bjLocal.view(BJ_ME), 'local');
-  const k = bjLocal.mine(BJ_ME);
-  if (k && (k.chips !== state.blackjack.chips || k.outUntil !== state.blackjack.outUntil)) { state.blackjack = k; saveSoon(); }
+  walletKeep();
 }
 function bjLocalStop() {
   clearInterval(bjLocalTimer); bjLocalTimer = null;
-  if (bjLocal) { const k = bjLocal.mine(BJ_ME); if (k) { state.blackjack = k; saveSoon(); } }
+  if (bjLocal) walletGiveBack(bjLocal);
   bjLocal = null;
+  walletKeep();
 }
 function bjMove(c) {
   const op = String(c.op || '');
@@ -1869,8 +1922,8 @@ function bjMove(c) {
   if ((op === 'stand' || op === 'sit') && bjAt) {       // up from your seat (a bet not dealt yet comes back; a hand in play stands), or back down
     bjStanding = op === 'stand';
     if (bjAt === 'local') {
-      if (op === 'stand') { const k = bjLocal.mine(BJ_ME); if (k) { state.blackjack = k; saveSoon(); } bjLocal.leave(BJ_ME); }
-      else bjLocal.sit(BJ_ME, 'You', state.blackjack);
+      if (op === 'stand') bjLocal.leave(BJ_ME);
+      else bjLocal.sit(BJ_ME, 'You');
       bjLocal.tick(); bjLocalPush();
     } else { const hub = bjAt; chat.bj(hub, { t: 'bj-' + op }).then((r) => { if (r && r.error && bjAt === hub) bjNote(r.error); }); }
     return;
@@ -1897,13 +1950,26 @@ function bjFromHub(hub, m) {
 // ---- the Games room's other tables: Roulette, Texas Hold'em and Sketch & Guess (docs/plans/games-room.md) ----
 // The same as the Blackjack table's above, for each game in GAME_RULES (gm[g]): a screen showing the table says so, and
 // while any does this PC is at that table, the active hub's when online in one (moves up with chat.game, the table and
-// pointers down as game-view and game-ptrs), otherwise its own, dealt here with the chips kept in the settings (state[g]).
+// pointers down as game-view and game-ptrs), otherwise its own, dealt here with the casino's one wallet (localWallet).
 // Hold'em alone fills the table with three computer players. Sketch & Guess has no game alone ('alone': the screen says to go
 // online), and its drawing comes down apart from the views (game-ink), kept here too for a screen that comes to it later.
+// Pachinko's balls come the same way, as frames (only the last ones are kept: GAME_INK_KEEP).
 // The screens get { type: 'game', g, v, mode, hub }, { ptrs }, { ink: { rev, from, list } } and { note }.
 const GAME_FAST = process.env.DRIFT_BJ_FAST ? { roulette: { bet: 8000, spin: 1200, done: 1500, out: 3000 }, poker: { turn: 6000, think: [150, 300], street: 250, show: 1500, fold: 800, out: 3000, start: 300 },
-  sketch: { start: 500, choose: 4000, draw: 25000, reveal: 1500, over: 2000 } } : undefined;       // tests: rounds in seconds
-const gm = Object.fromEntries(Object.keys(GAME_RULES).map((g) => [g, { local: null, timer: null, sent: -1, at: '', last: null, standing: false, screens: new Set(), ink: { rev: -1, list: [] } }]));       // at: '' (not at the table), 'local', 'alone' (a game that needs a hub, without one), or the hub's id
+  sketch: { start: 500, choose: 4000, draw: 25000, reveal: 1500, over: 2000 }, pachinko: { stop: [400, 700, 1000], reach: 1800, show: 400, feverIn: 600, round: 3000, between: 400, out: 3000 } } : undefined;       // tests: rounds in seconds
+const GAME_INK_KEEP = { pachinko: 45 };       // (a drawing is kept whole; the balls' frames only for a second and a half)
+const gm = Object.fromEntries(Object.keys(GAME_RULES).map((g) => [g, { local: null, timer: null, sent: -1, at: '', last: null, standing: false, screens: new Set(), ink: { rev: -1, list: [], n: 0 } }]));       // at: '' (not at the table), 'local', 'alone' (a game that needs a hub, without one), or the hub's id
+// The ink (a drawing, or the balls) as it comes: `from` is the number of its first piece, n how many there have been
+function gmInkTake(g, rev, from, list) {
+  const x = gm[g];
+  if (rev !== x.ink.rev || from === 0) x.ink = { rev, list: list.slice(), n: from + list.length };
+  else if (from <= x.ink.n) { const fresh = list.slice(x.ink.n - from); x.ink.list.push(...fresh); x.ink.n += fresh.length; if (!fresh.length) return false; }
+  else return false;       // (out of step: the next new sheet puts it right)
+  const keep = GAME_INK_KEEP[g];
+  if (keep && x.ink.list.length > keep) x.ink.list.splice(0, x.ink.list.length - keep);
+  if (g === 'pachinko') paBallSounds(list);
+  return true;
+}
 const gmOnHub = (x) => !!x.at && x.at !== 'local' && x.at !== 'alone';
 const gmHeard = [];       // (tests: every sound the tables asked for)
 function gmSend(g, m) { for (const v of visWins) if (!v.win.isDestroyed() && gm[g].screens.has(v.key)) v.win.webContents.send('cmd', { type: 'game', g, ...m }); }
@@ -1980,7 +2046,41 @@ const GM_SOUNDS = {
     }
     return [...new Set(out)].slice(0, 2);
   },
+  pachinko(a, b) {       // the reels (everyone at the machine hears them: they're everyone's), a reach, the fever and its gate,
+    // and your payout when it's over (the balls' own sounds come with them: paBallSounds)
+    const out = [], me = b.you >= 0 ? b.seats[b.you] : null, was = a.you >= 0 ? a.seats[a.you] : null;
+    const sa = a.spin, sb = b.spin;
+    if (sb && (!sa || sa.n !== sb.n)) out.push('paSpin');
+    if (sb && sb.reach && !(sa && sa.n === sb.n && sa.reach)) out.push('paReach');
+    if (sb && sa && sa.n === sb.n && sa.spinning[2] && !sb.spinning[2]) out.push(sb.won ? 'paFever' : sb.reach ? 'paMiss' : 'bjCard');
+    if (b.fever && b.fever.open && !(a.fever && a.fever.open)) out.push('paGate');
+    if (a.fever && !b.fever && a.fever.gained > 0) out.push('paPay');
+    if (me && was && me.outMs && !was.outMs) out.push('bjOut');
+    if (me && was && !me.outMs && was.outMs) out.push('bjBack');
+    return [...new Set(out)].slice(0, 2);
+  },
 };
+// Pachinko's balls' sounds: your own only (a machine of eight people's balls would be a hailstorm), each when your screen
+// shows it happen. The screens draw the balls PA_LAG behind the newest frame (renderer/pachinko.js), so each sound waits the
+// same. A launch's thunk, the pins' ticks (a few a second at most), and a pocket catching.
+const PA_LAG = 160;
+let paPinAt = 0;
+function paBallSounds(list) {
+  const l = gm.pachinko.last, you = l && l.v ? l.v.you : -1;
+  if (you < 0 || !list.length) return;
+  const newest = list[list.length - 1].t;
+  for (const f of list) {
+    const mine = (f.e || []).filter((e) => e[1] === you).map((e) => e[0]);
+    if (!mine.length) continue;
+    const names = [];
+    if (mine.includes('s')) names.push('paStart'); else if (mine.includes('u')) names.push('paTulip'); else if (mine.includes('g')) names.push('paCatch'); else if (mine.includes('t')) names.push('paBounce');
+    if (mine.includes('n')) names.push('paLaunch');
+    const delay = Math.max(0, PA_LAG + f.t - newest);
+    if (mine.includes('p') && names.length < 2) { const at = Date.now() + delay; if (at - paPinAt > 90) { paPinAt = at; names.push('paPin'); } }
+    if (!names.length) continue;
+    setTimeout(() => { sfxPlay(names.slice(0, 2)); if (SHOT_DIR) gmHeard.push(...names.slice(0, 2)); }, delay);
+  }
+}
 function gmSync(g) {
   const x = gm[g];
   for (const k of [...x.screens]) if (!visWins.some((v) => v.key === k && !v.win.isDestroyed())) x.screens.delete(k);
@@ -1989,7 +2089,7 @@ function gmSync(g) {
   const was = x.at; x.at = want; x.standing = false;
   if (was === 'local') gmLocalStop(g); else if (gmOnHub({ at: was }) && chat) chat.game(was, { t: 'game-leave', g });
   gmShow(g, null, ''); gmSend(g, { ptrs: [] });
-  x.ink = { rev: -1, list: [] }; gmSend(g, { ink: { rev: -1, from: 0, list: [] } });
+  x.ink = { rev: -1, list: [], n: 0 }; gmSend(g, { ink: { rev: -1, from: 0, list: [] } });
   if (g === 'sketch') gmSend(g, { settings: sketchSettingsView() });       // (where they're used has changed)
   if (want === 'alone') gmSend(g, { v: null, mode: 'alone' });
   else if (want === 'local') gmLocalStart(g);
@@ -2009,14 +2109,14 @@ setInterval(() => {
 function gmLocalStart(g) {
   const x = gm[g];
   const solo = g === 'sketch' && SKETCH_SOLO, guess = solo && SKETCH_SOLO === 'guess';
-  x.local = GAME_RULES[g](solo ? { solo: guess ? 'practice-bot' : BJ_ME, times: { start: 500 }, settings: sketchSettings } : { times: (GAME_FAST || {})[g], fill: 4 });
-  x.local.sit(BJ_ME, 'You', state[g]);
+  x.local = GAME_RULES[g](solo ? { solo: guess ? 'practice-bot' : BJ_ME, times: { start: 500 }, settings: sketchSettings } : { times: (GAME_FAST || {})[g], fill: 4, wallet: localWallet });
+  x.local.sit(BJ_ME, 'You');
   if (solo) x.local.sit('practice-bot', 'Practice');       // (someone to "guess", or to draw: the game needs two)
   if (guess) x.local.sit('buddy-bot', 'Buddy');       // (someone else guessing: "someone guessed", "everyone got it")
   x.bot = {};
   x.sent = -1; gmLocalPush(g);
   clearInterval(x.timer);
-  x.timer = setInterval(() => { if (x.local) { x.local.tick(); if (guess) sketchBots(x); gmLocalPush(g); } }, 200);
+  x.timer = setInterval(() => { if (x.local) { x.local.tick(); if (guess) sketchBots(x); gmLocalPush(g); } }, x.local.tickMs || 200);       // (Pachinko's balls: more often)
 }
 // Guessing practice (DRIFT_SKETCH_SOLO=guess): "Practice" picks a word after a moment, scribbles while you guess (it can't
 // draw: these are only so there's ink), and tells you the word in your feed, so you can try a right guess, a near one, or
@@ -2039,10 +2139,6 @@ function sketchBots(x) {
   if (!b.wrong && frac > 0.25) { b.wrong = true; t.move('buddy-bot', { do: 'guess', text: ['a banana?', 'is it a cat', 'spaceship!', 'umm… a tree'][Math.floor(Math.random() * 4)] }); }
   if (!b.right && frac > 0.55) { b.right = true; t.move('buddy-bot', { do: 'guess', text: w }); }
 }
-function gmKeep(g) {
-  const k = gm[g].local && gm[g].local.mine(BJ_ME);
-  if (k && (k.chips !== state[g].chips || k.outUntil !== state[g].outUntil)) { state[g] = k; saveSoon(); }
-}
 // Sketch & Guess's settings (state.sketch): read by the tables between games (rev: they've changed), shown on its screens
 let sketchRev = 0;
 const sketchSettings = () => ({ ...state.sketch, rev: sketchRev });
@@ -2054,13 +2150,12 @@ function sketchSettingsView() {
         : 'Used at a hub you host.';
   return { draw: state.sketch.draw, rounds: state.sketch.rounds, hints: state.sketch.hints, words: state.sketch.words, defaults: SKETCH.WORD_LIST, where };
 }
-function gmLocalInk(g) {       // Sketch & Guess dealt here (solo practice): the drawing goes to the screens as it grows
-  const x = gm[g], t = x.local; if (!t || g !== 'sketch') return;
-  const rev = t.inkRev, from = rev === x.ink.rev ? x.ink.list.length : 0;
+function gmLocalInk(g) {       // dealt here (Sketch & Guess's solo practice, Pachinko): the drawing, or the balls, go to the screens as they come
+  const x = gm[g], t = x.local; if (!t || typeof t.ink !== 'function') return;
+  const rev = t.inkRev, from = rev === x.ink.rev ? x.ink.n : 0;
   if (rev === x.ink.rev && t.inkLen === from) return;
-  const list = t.ink(from);
-  if (from === 0) x.ink = { rev, list: list.slice() }; else x.ink.list.push(...list);
-  gmSend(g, { ink: { rev, from, list } });
+  const list = t.ink(from), first = from === 0 ? t.inkLen - list.length : from;
+  if (gmInkTake(g, rev, first, list)) gmSend(g, { ink: { rev, from: first, list } });
 }
 function gmLocalPush(g) {
   const x = gm[g];
@@ -2068,13 +2163,14 @@ function gmLocalPush(g) {
   if (!x.local || x.local.version === x.sent) return;
   x.sent = x.local.version;
   gmShow(g, x.local.view(BJ_ME), 'local');
-  gmKeep(g);
+  walletKeep();
 }
 function gmLocalStop(g) {
   const x = gm[g];
   clearInterval(x.timer); x.timer = null;
-  gmKeep(g);
+  if (x.local) walletGiveBack(x.local);
   x.local = null;
+  walletKeep();
 }
 function gmMove(c) {
   const g = String(c.g || ''); if (!Object.hasOwn(gm, g)) return;
@@ -2110,7 +2206,7 @@ function gmMove(c) {
   if ((op === 'stand' || op === 'sit') && x.at) {       // up from your place (bets not played yet come back; a hand in play folds), or back down
     x.standing = op === 'stand';
     if (x.at === 'local') {
-      if (op === 'stand') { gmKeep(g); x.local.leave(BJ_ME); } else x.local.sit(BJ_ME, 'You', state[g]);
+      if (op === 'stand') x.local.leave(BJ_ME); else x.local.sit(BJ_ME, 'You');
       x.local.tick(); gmLocalPush(g);
     } else { const hub = x.at; chat.game(hub, { t: 'game-' + op, g }).then((r) => { if (r && r.error && x.at === hub) gmNote(g, r.error); }); }
     return;
@@ -2132,12 +2228,9 @@ function gmFromHub(hub, m) {
   else if (m.t === 'game-ptrs') {
     const blocked = new Set(chat.info().blocked || []);
     gmSend(g, { ptrs: ptrClean(m.list).filter((q) => !blocked.has(q.id)) });
-  } else if (m.t === 'game-ink' && Array.isArray(m.list)) {       // the drawing growing: kept, and passed on to the screens (they draw it)
-    const x = gm[g], rev = +m.rev || 0, from = Math.max(0, Math.floor(+m.from || 0)), list = m.list.slice(0, 7000);
-    if (rev !== x.ink.rev || from === 0) x.ink = { rev, list: list.slice() };
-    else if (from === x.ink.list.length) x.ink.list.push(...list);
-    else return;       // (out of step: the next new sheet puts it right)
-    gmSend(g, { ink: { rev, from, list } });
+  } else if (m.t === 'game-ink' && Array.isArray(m.list)) {       // the drawing growing (or Pachinko's balls): kept, and passed on to the screens (they draw it)
+    const rev = +m.rev || 0, from = Math.max(0, Math.floor(+m.from || 0)), list = m.list.slice(0, 7000);
+    if (gmInkTake(g, rev, from, list)) gmSend(g, { ink: { rev, from, list } });
   }
 }
 // The mouse moving over one of Drift's screens, told to that screen (at most 5 times a second, only while it moves): over a
@@ -2265,11 +2358,12 @@ const SFX_NAMES = new Set(['join', 'leave', 'peerJoin', 'peerLeave', 'mute', 'un
   'liveOn', 'liveOff', 'viewerJoin', 'viewerLeave', 'bcStart', 'shareOn', 'shareOff', 'message',
   'bjCard', 'bjDeal', 'bjChip', 'bjTurn', 'bjWin', 'bjBlackjack', 'bjPush', 'bjLose', 'bjBust', 'bjOut', 'bjBack',       // (the Blackjack table's: bjSounds)
   'bjShuffle', 'rlSpin', 'rlDrop', 'rlWin', 'rlBig', 'pkCheck', 'pkFold', 'pkShuffle', 'pkRaise', 'pkAllIn', 'pkRiver', 'pkPot', 'pkBig',       // (Roulette's and Hold'em's, with the Blackjack table's cards and chips: GM_SOUNDS)
-  'skStart', 'skRound', 'skPick', 'skTurn', 'skRight', 'skOther', 'skClose', 'skHint', 'skTick', 'skTick1', 'skEnd', 'skAll', 'skWin', 'skApplause', 'skLose']);       // (Sketch & Guess's)
+  'skStart', 'skRound', 'skPick', 'skTurn', 'skRight', 'skOther', 'skClose', 'skHint', 'skTick', 'skTick1', 'skEnd', 'skAll', 'skWin', 'skApplause', 'skLose',       // (Sketch & Guess's)
+  'paLaunch', 'paPin', 'paBounce', 'paStart', 'paTulip', 'paCatch', 'paSpin', 'paReach', 'paMiss', 'paFever', 'paGate', 'paPay']);       // (Pachinko's: GM_SOUNDS, paBallSounds)
 let sfxWas = null, sfxJoinedAt = 0;
 function sfxPlay(names, preview = false) {
   // the game tables' sounds have their own switch (Sounds → Game table sounds): hub sounds off needn't hush the cards
-  const on = names.every((n) => /^(bj|rl|pk|sk)[A-Z]/.test(String(n))) ? state.sfx.table !== false : state.sfx.on;
+  const on = names.every((n) => /^(bj|rl|pk|sk|pa)[A-Z]/.test(String(n))) ? state.sfx.table !== false : state.sfx.on;
   if ((!on && !preview) || !audioWin || audioWin.isDestroyed()) return;
   const vol = mixGain().master * state.sfx.volume * state.sfx.volume;       // (squared, like the mixer's sliders: the slider feels even)
   if (vol > 0) { audioWin.webContents.send('cmd', { type: 'sfx', names, vol }); if (SHOT_DIR) sfxSent.push(...names); }
@@ -2396,8 +2490,8 @@ function syncLive() {
   if (!chat) return;
   const p = p2p.info();
   // reach: can friends elsewhere get to this PC (p2p.js openInternet)? 'internet' yes; 'lan' no, only those on this network can
-  // (or so it turned out: someone couldn't, mediaRefused); 'manual' couldn't be checked. The hub uses it to keep the share off
-  // the stream while someone online couldn't watch it (hub.js "reach").
+  // (or so it turned out: someone couldn't, mediaRefused); 'manual' couldn't be checked. Unless it's 'internet', the hub takes the
+  // share off the stream when someone says they couldn't connect (hub.js "reach").
   const reach = p.reach === 'manual' && mediaUnreached.has(liveHub) ? 'lan' : p.reach || 'lan';
   if (p.role === 'host' && p.reach && !p.settling) shareReach = { ...shareReach, reach: p.reach, port: p.port, at: Date.now(), key: reachKey() };       // (what a real share found beats a dry run)
   const live = p.role === 'host' && liveHub && p.code && !p.settling ? { code: p.code, title: shareTitle(), watching: (p.peers || []).map((x) => x.name).slice(0, 8), reach } : null;
@@ -2448,7 +2542,7 @@ function mediaRefused(hub, m) {
 // What to do about friends elsewhere not getting in (why: p2p.js lookOut's, 'cgnat' or anything else).
 function reachFix(why, port) {
   return state.share.internet === false ? 'Sharing over the internet is off in Options, so only people on this network can watch.'
-    : why === 'cgnat' ? 'Your internet provider shares one address between several homes, so nobody outside can connect to this PC. A VPN such as Tailscale on both PCs gets round it.'
+    : why === 'cgnat' ? 'Your internet provider shares one address between several homes, so friends elsewhere can only get in over IPv6, or a VPN such as Tailscale on both PCs.'
     : `Your router doesn't let friends in by itself: forward TCP port ${port || state.share.port || 47800} to this PC in the router's settings, or turn on UPnP there.`;
 }
 // ---- before sharing: could friends elsewhere watch? ----
@@ -2471,7 +2565,7 @@ function reachSoon() {
     .finally(() => { reachBusy = false; });
 }
 // What sharing to hub `h` would do, for the question a pick asks: null if it's fine (or can't be told yet), else { block, text }.
-// block: the hub would turn it down (hub.js "reach"), so Share is greyed out; otherwise friends elsewhere might not get in.
+// block (Share greyed out) is never set now: a hub before 1.11.2 still turns a 'lan' share down by itself (mediaRefused says so).
 function shareCheck(h) {
   if (!h || (p2p.role() === 'host' && liveHub === h.id)) return null;       // (sharing there already: it's on, or it's been said)
   const apart = Array.isArray(h.apart) ? h.apart : null;       // (null: a hub from before 1.9.1 doesn't say)
@@ -2481,10 +2575,10 @@ function shareCheck(h) {
   if (reach === 'manual' && mediaUnreached.has(h.id)) reach = 'lan';       // (it was tried, and a friend couldn't get in: as syncLive)
   if (!reach || reach === 'internet') return null;
   const who = (apart || []).map((id) => ((h.members || []).find((m) => m.id === id) || {}).name).filter(Boolean).slice(0, 3);
-  const names = who.length ? who.join(', ') : 'Friends on other networks', one = who.length === 1;
-  const fix = reachFix(known.why, known.port);
-  if (reach === 'lan' && apart) return { block: true, text: `${names} ${one ? 'isn\'t' : 'aren\'t'} on your network and can't reach this PC, so it can only play here. ${fix}` };
-  if (reach === 'lan') return { block: false, text: `Friends on other networks can't reach this PC. ${fix}` };
+  const names = who.length ? who.join(', ') : 'Friends on other networks';
+  // (Never block: the guess is only about the router's IPv4 port, and friends often get in another way, IPv6 or a VPN. If someone
+  // can't, the hub takes it off the stream and it plays here: mediaRefused.)
+  if (reach === 'lan') return { block: false, text: `${names} might not be able to reach this PC. ${reachFix(known.why, known.port)} If someone can't connect, it comes off the hub's stream and plays just here.` };
   return { block: false, text: `${names} might not be able to watch: Drift couldn't check whether TCP port ${known.port || state.share.port || 47800} is open to this PC from outside. If it's forwarded already, share away.` };
 }
 // Playing something of your own while watching someone else's: leave theirs (it isn't joined again), then share yours.
@@ -2725,7 +2819,7 @@ let bcSource = null, bcListed = new Map();
 async function bcSources() {
   const own = new Set(BrowserWindow.getAllWindows().map((w) => { try { return w.getMediaSourceId(); } catch { return ''; } }));
   const src = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 180 }, fetchWindowIcon: true });
-  const covered = new Set(visWins.filter((v) => !v.win.isDestroyed()).map((v) => String(screen.getDisplayMatching(v.win.getBounds()).id)));       // monitors Drift is showing on
+  const covered = new Set(state.windowed ? [] : visWins.filter((v) => !v.win.isDestroyed()).map((v) => String(screen.getDisplayMatching(v.win.getBounds()).id)));       // monitors Drift is showing on
   const displays = screen.getAllDisplays();
   bcListed = new Map();
   const out = { screens: [], apps: [] };
@@ -3502,7 +3596,7 @@ function initFor(wc) {
   const act = activeDisplays();
   return {
     key: v ? v.key : 'd0', index: v ? v.index : 0,
-    bounds: v ? v.bounds : act[0].bounds,
+    bounds: v && !state.windowed ? v.bounds : act[0].bounds,       // (windowed: where the window is now, which is the whole "union" too)
     union: unionOf(act),
     displays: allDisplays().map((d) => ({ index: d.index, key: d.key, width: d.bounds.width, height: d.bounds.height, primary: d.primary })),
     cats: catAt,
@@ -3536,13 +3630,18 @@ function buildWindows() {
   visWins = [];
   const act = activeDisplays();
   for (const d of act) {
+    // Windowed: still frameless (the title bar is Drift's own, renderer #winBar, so the scene runs edge to edge under it), but
+    // resizable with Windows' own edges, rounded corners and shadow, and a size the panel always fits in
     const win = new BrowserWindow({
       x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height,
       frame: false, show: false, backgroundColor: '#000000', skipTaskbar: false,
       title: 'Drift', icon: path.join(__dirname, 'icon.png'),
+      ...(d.windowed ? { minWidth: WIN_MIN.width, minHeight: WIN_MIN.height, resizable: true, maximizable: true, thickFrame: true, roundedCorners: true, hasShadow: true } : {}),
       webPreferences: { preload: path.join(__dirname, 'preload.js'), backgroundThrottling: false, webviewTag: true },       // the tag is for a web page watched together: see web.js
     });
     win.setMenuBarVisibility(false);
+    if (d.windowed) winWatch(win);
+    else { let t = null; win.on('resize', () => { clearTimeout(t); t = setTimeout(() => { if (!win.isDestroyed()) web.resized(); }, 250); }); }       // (going full screen, from the window mode too: a page drawn offscreen takes the new size, not the window's it had)
     web.host(win.webContents);
     win.on('app-command', (_e, c) => { if (c === 'browser-backward') web.nav(-1); else if (c === 'browser-forward') web.nav(1); });       // the mouse's side buttons
     if (process.env.DRIFT_MUTE) win.webContents.setAudioMuted(true);      // dev: silent runs
@@ -3551,7 +3650,8 @@ function buildWindows() {
     win.once('ready-to-show', () => {
       if (win.isDestroyed()) return;
       win.setBounds(d.bounds);
-      if (FAKE <= 1 && !process.env.DRIFT_HIDDEN) win.setFullScreen(true);
+      if (d.windowed) { if (state.winBounds && state.winBounds.max) win.maximize(); }
+      else if (FAKE <= 1 && !process.env.DRIFT_HIDDEN) win.setFullScreen(true);
       if (state.onTop) win.setAlwaysOnTop(true, 'screen-saver');
       if (!process.env.DRIFT_HIDDEN) win.show();        // dev: run without putting anything on screen
       if (d.key === refocusKey) win.focus();
@@ -3572,6 +3672,24 @@ function buildWindows() {
 function rebuildSoon() {
   clearTimeout(rebuildTimer);
   rebuildTimer = setTimeout(buildWindows, 600);
+}
+// The windowed window: where it is and how big is kept for next time, a page in Surf follows its size, and its title bar
+// (renderer #winBar) is told whether it's maximised or full screen, to show the right buttons.
+function winWatch(win) {
+  let t = null;
+  const tell = () => { if (!win.isDestroyed()) win.webContents.send('cmd', { type: 'win-state', max: win.isMaximized(), full: win.isFullScreen(), focus: win.isFocused() }); };
+  const keep = () => {
+    clearTimeout(t);
+    t = setTimeout(() => {
+      if (win.isDestroyed() || !state.windowed || win.isFullScreen() || win.isMinimized()) return;
+      const b = win.getNormalBounds();
+      state.winBounds = { x: b.x, y: b.y, width: b.width, height: b.height, max: win.isMaximized() };
+      saveSoon(); web.resized();
+    }, 250);
+  };
+  for (const ev of ['resize', 'move']) win.on(ev, keep);
+  for (const ev of ['maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen', 'focus', 'blur']) win.on(ev, () => { tell(); keep(); });
+  win.webContents.on('did-finish-load', tell);
 }
 
 function createAudioWindow() {
@@ -3607,17 +3725,17 @@ function applySideEffects(prev) {
     }
   }
   // monitors on/off
-  if (prev && JSON.stringify(prev.displaysOff) !== JSON.stringify(state.displaysOff)) rebuildSoon();
+  if (prev && (prev.windowed !== state.windowed || (!state.windowed && JSON.stringify(prev.displaysOff) !== JSON.stringify(state.displaysOff)))) rebuildSoon();       // (and full screen on every monitor, or one window)
 }
 
 const SCENES = ['aurora', 'nebula', 'silk', 'water', 'stars', 'lava', 'ridges', 'ripples', 'mandala', 'bokeh', 'lines',
   'sierpinski', 'sorting', 'life', 'maze', 'julia', 'hilbert', 'voronoi',
   'polyhedra', 'globe', 'tunnel', 'cubes', 'lattice', 'menger',
   'quasi', 'hyperbolic', 'apollonian', 'phyllotaxis', 'rose', 'chladni',
-  'lake', 'pines', 'dunes', 'seaside', 'meadow', 'canyon', 'blackjack', 'roulette', 'poker', 'sketch'];
+  'lake', 'pines', 'dunes', 'seaside', 'meadow', 'canyon', 'blackjack', 'roulette', 'poker', 'sketch', 'pachinko'];
 // The Games room's scenes (docs/plans/blackjack.md §1): picked from their tile only. Neither the automatic changes nor Next /
 // Previous land on one, and an automatic change never takes you away from one (you may be in the middle of a hand).
-const GAMES = ['blackjack', 'roulette', 'poker', 'sketch'];
+const GAMES = ['blackjack', 'roulette', 'poker', 'sketch', 'pachinko'];
 function stepScene(dir, shuffle, auto) {
   // automatic changes only pick the scenes ticked for rotation; Next / Previous still go through all of them (but the games)
   const pool = (auto ? SCENES.filter((id) => !state.cycleSkip.includes(id)) : SCENES).filter((id) => !GAMES.includes(id));
@@ -3706,12 +3824,27 @@ function patch(p) {
     else if (k === 'customColors') { if (Array.isArray(p[k]) && p[k].length === 4 && p[k].every((c) => /^#[0-9a-f]{6}$/i.test(c))) state.customColors = p[k].map((c) => c.toLowerCase()); }
     else if (k === 'mode') { if (['span', 'mirror', 'mix'].includes(p[k])) state.mode = p[k]; }
     else if (k === 'surfMirror') state.surfMirror = !!p[k];
+    else if (k === 'windowed') state.windowed = !!p[k];
+    else if (k === 'winBounds') { /* main.js keeps it (winWatch) */ }
     else if (k === 'surfGpu') state.surfGpu = !!p[k];
     else if (k === 'surfTheme') { if (['glass', 'tint', 'graphite', 'day', 'aurora', 'min'].includes(p[k])) state.surfTheme = p[k]; }
     else if (k === 'surfFit') { if (['own', 'exact', 'widest', 'sharpest'].includes(p[k]) || /^d\d+$/.test(p[k])) state.surfFit = p[k]; }
     else if (k in DEFAULTS) state[k] = p[k];
   }
   if (allDisplays().every((d) => state.displaysOff.includes(d.index))) state.displaysOff = prev.displaysOff;
+  // Into Mirror: every monitor takes what the one it was picked on shows. From Mix, that monitor's scene (or its video: the timeline is
+  // already shared) becomes the one scene; its screen (Scenes or Media) goes up on the others after the state does (mirrorScreens).
+  const from = p.mirrorFrom && typeof p.mirrorFrom === 'object' ? p.mirrorFrom : null;
+  if (prev.mode !== 'mirror' && state.mode === 'mirror' && from) {
+    const key = String(from.key || ''), was = prev.mode === 'mix' ? (prev.perDisplay[key] || prev.scene) : prev.scene;
+    if (!('scene' in p) && was && was !== state.scene) { if (was === 'video' && state.scene !== 'video') state.prevScene = state.scene; state.scene = was; }
+    if (['scenes', 'media'].includes(from.tab)) setImmediate(() => mirrorScreens(from.tab, key));
+  }
+  // Into Mix: every monitor starts from the one scene (or video) Mirror or Span was showing, not what it had in Mix before
+  if (prev.mode !== 'mix' && state.mode === 'mix' && !('perDisplay' in p)) {
+    state.perDisplay = { ...state.perDisplay };
+    for (const d of allDisplays()) state.perDisplay[d.key] = state.scene;
+  }
   // Settings' Mirror layout takes a page open in our own Surf along with it: Mirror shows it on every monitor, Span and Mix put it back on its own one
   if (prev.mode !== state.mode && !('surfMirror' in p) && !remote && web.info().open) state.surfMirror = state.mode === 'mirror';
   applySideEffects(prev);
@@ -3728,6 +3861,11 @@ function patch(p) {
   saveSoon();
 }
 
+// Mirror was just picked on monitor `key`: the others put up its screen (Scenes or Media), as a pick there would (app.js 'screen-pick')
+function mirrorScreens(tab, key) {
+  if (state.mode !== 'mirror') return;
+  for (const x of visWins) if (x.key !== key && !x.win.isDestroyed()) x.win.webContents.send('cmd', { type: 'screen-pick', tab, into: true });       // (into: Mirror has started, even if the new state isn't there yet)
+}
 function setVideos(files, key, index = 0) {
   const c = cur(), shows = key && state.mode === 'mix' ? { [key]: 'video' } : null;
   if (!remote && c && c.path && files[index] === c.path && visWins.some((v) => showsVideo(v.key))) {      // already playing on a monitor: join it where it is
@@ -3906,6 +4044,14 @@ ipcMain.on('cmd', async (e, c) => {
   const parent = BrowserWindow.fromWebContents(e.sender);
   switch (c.type) {
     case 'quit': quitting = true; app.quit(); break;
+    case 'win': {       // the windowed window's own title bar (renderer #winBar): minimise, maximise / restore, full screen in its own monitor
+      const w = state.windowed && visWins[0] && visWins[0].win === parent ? parent : null;
+      if (!w || w.isDestroyed()) break;
+      if (c.op === 'min') w.minimize();
+      else if (c.op === 'max') { if (w.isFullScreen()) w.setFullScreen(false); else if (w.isMaximized()) w.unmaximize(); else w.maximize(); }
+      else if (c.op === 'full') w.setFullScreen(!w.isFullScreen());
+      break;
+    }
     case 'cat-shoo': catShoo(+c.from); break;
     case 'update-check': if (updater) updater.check(); break;
     case 'update-download': if (updater) updater.download(); break;
@@ -3996,6 +4142,9 @@ ipcMain.on('cmd', async (e, c) => {
       else if (d === 'outside') web.outside();       // open the page in the PC's own browser
       else if (d === 'view') { if (k) web.viewer(e.sender, !!c.on); }       // this window starts or stops drawing the offscreen page
       else if (SURF.includes(d)) { const r = web.act(c, was ? web.info().key : k); if (r.error) say(r.error); }       // (the bar on a monitor mirroring the page steers it where it is)
+      // Mirror: the browser put up (the Surf tab, or a link with no page open) shows on every monitor. Turning that off from the
+      // bar's button still holds for the page that's up; it comes back on the next time Surf is picked.
+      if (state.mode === 'mirror' && !state.surfMirror && !remote && (['show', 'move', 'new'].includes(d) || (SURF.includes(d) && !was))) patch({ surfMirror: true });
       break;
     }
     case 'ss': {       // the Surf stream's picture, in the screen window that shows it (renderer/app.js)
@@ -4152,7 +4301,13 @@ ipcMain.on('cmd', async (e, c) => {
       mediaPrivate = '';       // (back on the hub's stream: the next thing put on there pulls this PC in)
       if (remote) { p2p.stop(); break; }       // stopping a friend's video means leaving their session
       noteProgress();
-      if (state.mode === 'mix') { const pd = { ...state.perDisplay }; pd[c.key] = state.prevScene || 'aurora'; state.perDisplay = pd; if (state.scene === 'video') state.scene = state.prevScene || 'aurora'; pushState(); saveSoon(); }
+      // (Eject closes it on every monitor showing it, not just the one it was pressed on)
+      if (state.mode === 'mix') {
+        const back = state.prevScene && state.prevScene !== 'video' ? state.prevScene : 'aurora', pd = { ...state.perDisplay };
+        for (const k of Object.keys(pd)) if (pd[k] === 'video') pd[k] = back;
+        if (c.key) pd[c.key] = back;
+        state.perDisplay = pd; if (state.scene === 'video') state.scene = back; pushState(); saveSoon();
+      }
       else patch({ scene: state.prevScene && state.prevScene !== 'video' ? state.prevScene : 'aurora' });
       break;
     case 'video-next':   // sent by the leading monitor when a clip ends
@@ -5722,6 +5877,21 @@ async function runShots() {
       gmSend('sketch', { v, mode: 'hub', hub: '' }); gmSend('sketch', { ink: { rev: t.inkRev, from: 0, list: t.ink(0) } });
       await wait(1000);
       await pic('sketch', gm.sketch.screens);
+      // Pachinko: a few seconds of balls, aimed just beside the window
+      patch({ scene: 'pachinko' });
+      log.push('gamepics pachinko machine: ' + await until(() => gm.pachinko.at === 'local' && !!gm.pachinko.local, 15000));
+      gmMove({ g: 'pachinko', op: 'move', m: { do: 'hold', amount: 55 } });
+      await wait(7000);
+      await pic('pachinko', gm.pachinko.screens);
+      if (process.env.DRIFT_GAMEPICS_EXTRA) {       // (to look at by eye: the machine full size, then in a fever)
+        const full = async (name) => { const w = visWins.find((x) => gm.pachinko.screens.has(x.key)); const img = w && await Promise.race([w.win.webContents.capturePage(), wait(5000)]); if (img && !img.isEmpty()) fs.writeFileSync(path.join(dir, name + '.png'), img.toPNG()); };
+        await full('pachinko-full');
+        gm.pachinko.local._rules.feverOdds = 1;
+        await until(() => G('pachinko') && G('pachinko').spin && G('pachinko').spin.reach, 60000); await wait(150); await full('pachinko-reach');
+        await until(() => G('pachinko') && G('pachinko').fever, 60000); await wait(500); await full('pachinko-fever');
+        await until(() => G('pachinko').fever && G('pachinko').fever.open, 20000); await wait(2500); await full('pachinko-gate');
+      }
+      gmMove({ g: 'pachinko', op: 'move', m: { do: 'let go' } });
     } catch (e) { log.push('gamepics error: ' + String(e && e.stack || e)); }
     fs.writeFileSync(path.join(SHOT_DIR, 'log.txt'), log.join('\n')); quitting = true; app.quit(); return;
   }
@@ -5800,7 +5970,7 @@ async function runShots() {
       const net = mine().net;
       tl('settled: the chips say how it went', mine().chips === c0 + net && ['win', 'blackjack', 'push', 'lose', 'bust', 'surrender'].includes(mine().hands[0].result));
       await wait(400);
-      tl('...and they\'re kept in the settings', state.blackjack.chips === mine().chips);
+      tl('...and they\'re kept in the settings', state.wallet.chips === mine().chips);
       // insurance and surrender, with the cards stacked: the dealer shows an ace (no blackjack under it), the player has 16
       need('next hand', await until(() => V().phase === 'betting' && !mine().bet, 10000));
       bjLocal._stack(['Ts', 'Ad', '6h', '7c']);
@@ -5814,14 +5984,14 @@ async function runShots() {
       tl('surrender gives half back', mine().chips === c1 - 50 && mine().hands[0].result === 'surrender');
       // crapping out: down to 10 chips, a losing hand stacked, then 20 s (3 s here) out
       scene('aurora'); await until(() => bjAt === '', 5000);
-      state.blackjack = { chips: 10, outUntil: 0 };
+      localWallet.set(BJ_ME, { chips: 10, outUntil: 0 });
       scene('blackjack');
       need('back with 10 chips', await until(() => bjAt === 'local' && !!mine() && mine().chips === 10 && V().phase === 'betting', 8000));
       bjLocal._stack(['Ts', '9d', '6h', 'Tc']);
       bjMove({ op: 'bet', amount: 10 });
       need('the last 10 lost', await standOut(10000) && mine().chips === 0);
       need('out of chips', await until(async () => { p = await page(); return mine().outMs > 0 && /Out of chips/.test(p.bar); }, 5000));
-      tl('...for the wait, kept in the settings too', state.blackjack.outUntil > Date.now());
+      tl('...for the wait, kept in the settings too', state.wallet.outUntil > Date.now());
       bjMove({ op: 'bet', amount: 10 });
       tl('no bet while out', !mine().bet);
       scene('aurora'); await until(() => bjAt === '', 5000); scene('blackjack');
@@ -6022,14 +6192,17 @@ async function runShots() {
       tl(`the number shows, and the payout (${n0}: ${net0 >= 0 ? '+' : ''}${net0})`, /^\d+ (Red|Black|Green)/.test(p.status) && p.hist[0] === String(n0) && mine('roulette').chips === c0 - 125 + 125 + net0);
       await wait(700); await shot('roulette', 'rl-landed');       // (the ball settling: 1.4 s; here the result shows for 1.5 s)
       await wait(400);
-      tl('...kept in the settings', state.roulette.chips === mine('roulette').chips);
+      tl('...kept in the settings, the casino\'s one wallet', state.wallet.chips === mine('roulette').chips);
       need('the next spin', await until(() => V('roulette').phase === 'betting', 8000));
       tl('Same again puts last spin\'s bets back', !!(await press('roulette', '^Same again$')) && await until(() => mine('roulette').staked === 125, 3000));
       await press('roulette', '^Clear$');
       tl('Clear takes them back', await until(() => mine('roulette').staked === 0, 3000));
 
+      const rlLeft = mine('roulette').chips;
       // ---- Hold'em, alone, against the computer players ----
       scene('poker');
+      need('the Hold\'em table, with the roulette wheel\'s chips', await until(() => gm.poker.at === 'local' && !!mine('poker'), 15000));
+      tl('one wallet: the chips left at the wheel are the stack at Hold\'em', mine('poker').chips + mine('poker').put === rlLeft);
       need('the Hold\'em table comes up, with three computer players', await until(() => gm.poker.at === 'local' && !!V('poker') && V('poker').seats.filter((s) => s && s.bot).length === 3, 15000));
       need('a hand is dealt', await until(() => !!mine('poker') && mine('poker').cards.length === 2, 10000));
       p = await page('poker');
@@ -6048,9 +6221,42 @@ async function runShots() {
       tl('...and never before one', leaks === 0);
       await until(() => V('poker').phase !== 'showdown' && !V('poker').can, 8000);
       await wait(400);
-      tl('your chips are kept in the settings', Math.abs(state.poker.chips - (mine('poker').chips + (mine('poker').inHand && !mine('poker').folded ? mine('poker').put : 0))) === 0);
+      tl('your chips are kept in the settings', Math.abs(state.wallet.chips - (mine('poker').chips + (mine('poker').inHand && !mine('poker').folded ? mine('poker').put : 0))) === 0);
       log.push('games: sounds ' + gmHeard.join(' '));
       tl('the tables\' sounds: the wheel, the drop, chips, the shuffle and deal, cards, your turn', ['rlSpin', 'rlDrop', 'bjChip', 'pkShuffle', 'bjCard', 'bjTurn'].every((n) => gmHeard.includes(n)));
+      // ---- Pachinko, alone: held with the real button, balls up the lane and onto the pins, a chip each ----
+      await until(() => !mine('poker').inHand || mine('poker').folded || V('poker').phase === 'showdown', 15000);
+      const paPage = () => pageRun(tw('pachinko'), () => {
+        const t = document.querySelector('#paTable'), c = t.querySelector('.paCanvas'), cab = t.querySelector('.paCab').getBoundingClientRect(), bar = t.querySelector('.bjBar').getBoundingClientRect();
+        return { on: t.classList.contains('on') && t.classList.contains('live'), mode: (t.querySelector('.bjMode') || {}).textContent || '', canvas: c.width, reels: t.querySelectorAll('.paReel').length,
+          holding: t.classList.contains('holding'), bar: t.querySelector('.bjBar').innerText.replace(/\n+/g, ' | '), names: [...t.querySelectorAll('.paTag .nm')].map((n) => n.textContent),
+          layout: { cab: [Math.round(cab.left), Math.round(cab.top), Math.round(cab.width), Math.round(cab.height)], barTop: Math.round(bar.top), w: innerWidth, h: innerHeight } };
+      });
+      const paHold = (on) => pageRun(tw('pachinko'), (down) => { const b = document.querySelector('#paTable .paHold'); if (!b) return false; b.dispatchEvent(new PointerEvent(down ? 'pointerdown' : 'pointerup', { bubbles: true, button: 0, pointerId: 1 })); return true; }, on);
+      const before = localWallet.peek(BJ_ME).chips;
+      scene('pachinko');
+      const paUp = await until(() => gm.pachinko.at === 'local' && !!mine('pachinko'), 15000);
+      if (!paUp) log.push('pa: not up: ' + JSON.stringify({ at: gm.pachinko.at, screens: [...gm.pachinko.screens], v: V('pachinko') && { you: V('pachinko').you, seats: V('pachinko').seats, watching: V('pachinko').watching }, wallet: localWallet.peek(BJ_ME), scene: state.scene }));
+      need('the pachinko machine comes up, played here', paUp);
+      tl('...with the same chips as the other tables', mine('pachinko').chips === before);
+      let pp = await paPage();
+      tl('it shows: the board drawn, the three reels, just you', await until(async () => { pp = await paPage(); return pp.on && pp.mode === 'Just you' && pp.canvas > 300 && pp.reels === 3 && pp.names.join() === 'You'; }, 5000), pp);
+      log.push('pa: layout ' + JSON.stringify(pp.layout));
+      tl('the cabinet fits, the bar under it', pp.layout.cab[1] >= 0 && pp.layout.cab[1] + pp.layout.cab[3] <= pp.layout.barTop && pp.layout.cab[0] >= 0 && pp.layout.cab[0] + pp.layout.cab[2] <= pp.layout.w);
+      const pressed = await paHold(true), held = pressed && await until(() => mine('pachinko').holding, 3000);
+      if (!held) log.push('pa: not held: ' + JSON.stringify({ pressed, me: mine('pachinko'), page: await paPage() }));
+      need('holding the button holds the handle', held);
+      need('balls come: frames with them in', await until(() => gm.pachinko.ink.list.some((f) => f.b.length >= 4), 5000));
+      await wait(4000);
+      const fired = mine('pachinko').fired;
+      tl(`a ball each 0.6 s while held (${fired} in 4 s)`, fired >= 5 && fired <= 8);
+      await shot('pachinko', 'pa-alone');
+      await paHold(false);
+      need('letting go stops it', await until(() => !mine('pachinko').holding, 3000));
+      await until(() => !mine('pachinko').flying, 20000);
+      await wait(400);
+      tl(`${V('pachinko').cost} chips a ball (and what came back), kept in the wallet and the settings`, state.wallet.chips === mine('pachinko').chips && V('pachinko').cost === require('./pachinko').RULES.cost);
+      tl('the balls\' sounds: away, and the pins', gmHeard.includes('paLaunch') && gmHeard.includes('paPin'));
       // ---- Sketch & Guess, alone: there's no game without people, and it says so ----
       scene('sketch');
       tl('Sketch & Guess alone says to go online in a hub', await until(async () => gm.sketch.at === 'alone' && /for friends/.test(await pageRun(tw('sketch'), () => { const c = document.querySelector('#skTable .skCard'); return c.classList.contains('on') ? c.textContent : ''; })), 10000));
@@ -6094,10 +6300,11 @@ async function runShots() {
       await step('poker-played');
       await step('poker-played');       // (both files written)
       // ---- the hub's roulette table ----
+      const pkStack = mine('poker').chips;
       scene('roulette');
       need('at the hub\'s roulette table', await until(() => hubNow() && gm.roulette.at === hubNow().id && !!V('roulette') && V('roulette').you >= 0, 15000));
       need('both of us at it', await until(() => V('roulette').seats.filter(Boolean).length === 2, 30000));
-      tl('fresh chips at the hub\'s wheel', mine('roulette').chips === 1000);
+      tl(`the hub's one wallet: the chips from its Hold'em table come to the wheel (${pkStack} → ${mine('roulette').chips})`, mine('roulette').chips >= pkStack && mine('roulette').chips <= 2000);
       await step('rl-seated');
       need('a betting round', await until(() => V('roulette').phase === 'betting', 15000));
       gmMove({ g: 'roulette', op: 'move', m: { do: 'bet', key: role === 'host' ? 'red' : 'black', amount: 100 } });
@@ -6119,6 +6326,23 @@ async function runShots() {
           await until(async () => { b = V('roulette').records || []; p = await page('roulette'); return b.length === won.length && won.every((w) => b.some((x) => x.name === w.name && x.win === w.net)) && p.board !== null; }, 5000));
       }
       await step('rl-done');
+      // ---- the hub's pachinko machine: one board, both of us firing into it ----
+      await until(() => V('roulette').phase === 'betting', 10000);
+      const rlLeftHub = mine('roulette').chips;
+      scene('pachinko');
+      need('at the hub\'s pachinko machine', await until(() => hubNow() && gm.pachinko.at === hubNow().id && !!mine('pachinko'), 15000));
+      need('both of us at the one machine', await until(() => V('pachinko').seats.filter(Boolean).length === 2, 30000));
+      tl('the wheel\'s chips came along', mine('pachinko').chips === rlLeftHub);
+      tl('the machine says it\'s the hub\'s', await until(async () => (await paPage()).mode === 'Hub machine', 5000));
+      await step('pa-seated');
+      gmMove({ g: 'pachinko', op: 'move', m: { do: 'hold', amount: role === 'host' ? 35 : 65 } });
+      const seats2 = () => { const s = new Set(); for (const f of gm.pachinko.ink.list) for (let k = 1; k < f.b.length; k += 4) s.add(f.b[k]); return s; };
+      need('both people\'s balls on the one board', await until(() => seats2().size === 2, 15000));
+      await shot('pachinko', 'pa-hub');
+      await step('pa-both');
+      gmMove({ g: 'pachinko', op: 'move', m: { do: 'let go' } });
+      tl('letting go: no more of mine', await until(() => !mine('pachinko').holding, 5000));
+      await step('pa-done');
       // ---- Sketch & Guess at the hub: one draws (a pen stroke and a rectangle, with the real tools), the other guesses ----
       scene('sketch');
       const SV = () => V('sketch');

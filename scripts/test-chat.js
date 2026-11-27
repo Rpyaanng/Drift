@@ -171,7 +171,7 @@ async function until(pred, what, ms = 8000) {
   ana.chat.announce('', null);
   await until(() => !livesOf(cat).length, 'nothing on');
 
-  // ---- reach (hub.js "reach"): a share nobody elsewhere can get to stays off the stream while someone online is elsewhere ----
+  // ---- reach (hub.js "reach"): a share goes on however far it reaches, and comes off once someone says they couldn't connect ----
   const near = ['127.0.0.1', '::ffff:192.168.1.20', '10.0.0.5', '100.101.1.2', '::1', 'fd12:3456::1', 'fe80::1'].map(placeOf);
   ok(near.every((p) => p === 'near'), `this PC, its network and private ranges (a VPN's too) are all one place (${near})`);
   ok(placeOf('::ffff:203.0.113.7') === '203.0.113.7' && placeOf('203.0.113.7') !== placeOf('198.51.100.2'), 'two homes on the internet are two places');
@@ -181,9 +181,11 @@ async function until(pred, what, ms = 8000) {
   ok([ana, ben, cat].every((p) => Array.isArray(p.hub(H).apart) && !p.hub(H).apart.length), 'everyone hears that nobody online is on another network');
   ben.events.length = 0;
   ben.chat.announce(H, { code: 'drift:benlan', title: 'B', watching: [], reach: 'lan' });
-  await until(() => livesOf(cat).join() === ben.chat.myId(), 'only reachable on its own network, but everyone online is on it: it goes on');
+  await until(() => livesOf(cat).join() === ben.chat.myId(), 'only reachable on its own network (as far as the router says): it goes on');
+  cat.chat.liveFail(H, 'drift:benlan');
+  await until(() => !livesOf(ana).length, '...and comes off once a member says they couldn\'t connect');
   ben.chat.announce('', null);
-  await until(() => !livesOf(cat).length, 'off again');
+  ben.events.length = 0;
   ben.chat.announce(H, { code: 'drift:benman', title: 'B', watching: [], reach: 'manual' });
   await until(() => livesOf(cat).join() === ben.chat.myId(), 'couldn\'t be checked: it goes on');
   ok((cat.hub(H).lives[0] || {}).reach === 'manual' && !('place' in (cat.hub(H).lives[0] || {})), 'members hear how far it reaches, not where anyone is');

@@ -89,10 +89,12 @@ function createTable(opts = {}) {
 
   // ------------------------------------------------------------------ seats, and the computer players
   function seatIn(i, id, name, keep, bot) {
+    if (!bot && opts.wallet && opts.wallet.owns(id)) keep = opts.wallet.keep(id);       // (the casino's one wallet: wallet.js)
     const out = bot ? 0 : Math.max(outs.get(id) || 0, keep && +keep.outUntil || 0);
     const s = fresh({ id, name, bot: !!bot, chips: keep && Number.isFinite(+keep.chips) ? Math.max(0, Math.floor(+keep.chips)) : R.start, outUntil: out > now() ? out : 0, left: false });
     if (s.outUntil) s.chips = 0;
     else if (s.chips < R.big) s.chips = R.start;
+    if (!bot && opts.wallet) opts.wallet.bind(s);
     seats[i] = s;
     return s;
   }

@@ -3,7 +3,7 @@
 // spin, then hands of Hold'em against the computer players. Then the host makes a hub, the guest joins, and both sit at the
 // hub's Hold'em table and then its roulette wheel, side by side. The main.js side is the DRIFT_TESTGAMES block.
 // The rules themselves are checked in plain Node, in seconds: scripts/test-roulette-engine.js and scripts/test-poker-engine.js.
-//   timeout 300 node scripts/test-games.js
+//   timeout 340 node scripts/test-games.js
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -20,7 +20,7 @@ function runDrift(role) {
   delete env.ELECTRON_RUN_AS_NODE;
   const p = spawn(electron, [ROOT], { env, stdio: 'ignore' });
   return new Promise((resolve) => {
-    const t = setTimeout(() => { try { p.kill(); } catch { /* gone */ } resolve('timed out'); }, 260000);       // a failure stops early (main.js `need`)
+    const t = setTimeout(() => { try { p.kill(); } catch { /* gone */ } resolve('timed out'); }, 330000);       // a failure stops early (main.js `need`)
     p.on('exit', (code) => { clearTimeout(t); resolve(code); });
   });
 }

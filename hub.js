@@ -34,7 +34,8 @@ const crypto = require('crypto');
 const { wire, ipBytes, ipText, localAddrs } = require('./p2p');
 const createTurn = require('./turn');
 const { createTable } = require('./blackjack');
-const GAME_RULES = { roulette: require('./roulette').createTable, poker: require('./poker').createTable, sketch: require('./sketch').createTable };       // the Games room's other tables (hub `games`)
+const GAME_RULES = { roulette: require('./roulette').createTable, poker: require('./poker').createTable, sketch: require('./sketch').createTable, pachinko: require('./pachinko').createTable };       // the Games room's other tables (hub `games`)
+const { createWallet } = require('./wallet');
 
 const VERSION = 1;
 const LIMITS = { line: 256 * 1024, text: 4000, name: 24, channel: 32, channels: 50, page: 100, actions: 10, perSecs: 10, connections: 64, avatar: 14000, voice: 16, talkers: 8, signals: 200, broadcasts: 4, viewers: 7, bcTitle: 80, bcThumb: 200000, surfWatchers: 7,
@@ -285,26 +286,22 @@ module.exports = function createHub(opts) {
   // A share is watched by connecting straight to the sharing PC (p2p.js), so someone whose router doesn't let friends in can only
   // be watched from their own network. Listed anyway, everyone else was pulled into something they couldn't get, while its sender
   // thought it was on. So the sharer says how far their PC can be reached (reach: 'internet', 'lan', or 'manual': couldn't be
-  // checked), and the hub, which sees where each member connects from (place), keeps a 'lan' share off the stream while anyone
-  // online is somewhere else, now or when they come online. A 'manual' one goes on, and comes off if a member says they couldn't
-  // connect to it (live-fail). Taken off, its sender hears why (live-no, why 'reach' or 'unreached', with who), and plays it alone.
+  // checked). 'lan' and 'manual' are only guesses about the router's IPv4 port: the invite also carries the PC's IPv6 and VPN
+  // (Tailscale) addresses, which friends elsewhere often get in by. So they go on anyway, and come off if a member says they
+  // couldn't connect to it (live-fail). Taken off, its sender hears why (live-no, why 'unreached', with who), and plays it alone.
   // ('internet', and a Drift from before that says nothing, are left on: a member who can't connect then is likely the trouble.)
+  // (Hubs before 1.11.2 kept a 'lan' share off while anyone online was elsewhere: live-no why 'reach'. main.js still reads it.)
   const placesOf = (id) => new Set([...(online.get(id) || [])].map((x) => x.place));
   const nameOf = (id) => (S.member.get(id) || {}).name || 'Someone';
-  function outside(l) {       // who online can't get to share `l`: not on its sender's network
-    if (l.reach !== 'lan') return [];
-    return [...online.keys()].filter((id) => id !== l.from && !placesOf(id).has(l.place));
-  }
   function liveOff(from, why, who) {
     if (!lives.delete(from)) return;
     everyone({ t: 'lives', list: liveList() });
     for (const x of online.get(from) || []) x.wire.send({ t: 'live-no', why, who: who.slice(0, 3).map(nameOf) });
     recount();       // (a vote to replace it has nothing left to replace)
   }
-  // Who online a share from session `s` couldn't reach if it turned out 'lan' (only their ids: nobody learns where anyone is).
-  // Each member's Drift uses it to say, before they share, whether their router matters (main.js shareCheck).
+  // Who online is somewhere else than session `s` (only their ids: nobody learns where anyone is). Each member's Drift uses it to
+  // say, before they share, whether their router matters (main.js shareCheck).
   const apartFrom = (s) => [...online.keys()].filter((id) => id !== s.id && !placesOf(id).has(s.place));
-  const reachCheck = () => { for (const l of [...lives.values()]) { const out = outside(l); if (out.length) liveOff(l.from, 'reach', out); } };
   const sessions = new Set();
   let server = null, port = 0;
   const everyone = (m, but) => { const line = JSON.stringify(m); for (const s of sessions) if (s.id && s !== but) s.wire.send(line); };
@@ -312,12 +309,24 @@ module.exports = function createHub(opts) {
   // ---- the blackjack table (docs/plans/blackjack.md §5): one per hub, dealt here ----
   // Members at it send what they want to do (bj-sit, or bj-watch to look on; bj-bet, bj-insure, bj-act; bj-stand to give up their
   // seat and keep looking on; bj-leave), the rules (blackjack.js) decide, and
-  // everyone at the table gets the table as they see it (bj-view) whenever it changes. Nothing is kept: chips start fresh each
-  // time someone sits, and only a crapped-out member's wait is remembered (in the table) so standing up doesn't skip it.
+  // everyone at the table gets the table as they see it (bj-view) whenever it changes. Chips are the hub's wallet (below),
+  // shared with the other casino tables; a crapped-out member's wait is the wallet's too, so standing up doesn't skip it.
   // Where everyone's mouse is over the table goes round too (bj-ptr up, bj-ptrs down), at most 25 times a second.
   // The biggest pots: whenever a round settles, each member's winnings for it (net, over all their hands) beat their record
   // or don't; the top five go out with the table (board), with how long ago each was set (ago, so a new one can light up).
-  const bj = createTable({ times: opts.bjTimes, onSettle: (list) => { const now = Date.now(); for (const x of list) if (x.net > 0 && S.member.get(x.id)) S.bjPot.run(x.id, Math.floor(x.net), x.blackjack ? 1 : 0, now); } });
+  // The casino's one wallet at this hub (wallet.js): each member's chips at Blackjack, Roulette, Hold'em and Pachinko are the
+  // same chips, 1,000 the first time they sit at any of them, kept while the hub runs (not across a restart). A change shows at
+  // every table they're at (walletNews), a moment later and once however many balls went in.
+  const walletDirty = new Set();
+  let walletTimer = null;
+  const wallet = createWallet({ owns: (id) => !!S.member.get(id), onChange: (id) => { walletDirty.add(id); if (!walletTimer) walletTimer = setTimeout(walletNews, 60); } });
+  function walletNews() {
+    walletTimer = null;
+    const ids = [...walletDirty]; walletDirty.clear();
+    if (ids.some((id) => bjAt.has(id))) bjNews(true);
+    for (const x of games.values()) if (ids.some((id) => x.at.has(id))) gameNews(x, true);
+  }
+  const bj = createTable({ times: opts.bjTimes, wallet, onSettle: (list) => { const now = Date.now(); for (const x of list) if (x.net > 0 && S.member.get(x.id)) S.bjPot.run(x.id, Math.floor(x.net), x.blackjack ? 1 : 0, now); } });
   const bjAt = new Map();       // member id -> their session at the table, seated or looking on (one: the last PC they came to it from)
   const bjPtrs = new Map();     // member id -> { x, y } over the table
   let bjSent = -1, bjTimer = null, bjPtrTimer = null;
@@ -391,7 +400,7 @@ module.exports = function createHub(opts) {
     let x = games.get(g);
     if (!x) {
       x = { g, at: new Map(), ptrs: new Map(), sent: -1, timer: null, ptrTimer: null };
-      x.t = GAME_RULES[g]({ times: (opts.gameTimes || {})[g], fill: 2, settings: opts.gameSettings ? () => opts.gameSettings(g) : undefined, onSettle: (list) => { const now = Date.now(); for (const r of list) if (r.score > 0 && !r.bot && S.member.get(r.id)) S.gameRecord.run(g, r.id, Math.floor(r.score), now); } });
+      x.t = GAME_RULES[g]({ times: (opts.gameTimes || {})[g], fill: 2, wallet, settings: opts.gameSettings ? () => opts.gameSettings(g) : undefined, onSettle: (list) => { const now = Date.now(); for (const r of list) if (r.score > 0 && !r.bot && S.member.get(r.id)) S.gameRecord.run(g, r.id, Math.floor(r.score), now); } });
       games.set(g, x);
     }
     return x;
@@ -420,7 +429,7 @@ module.exports = function createHub(opts) {
     x.timer = setInterval(() => {
       x.t.tick(); gameNews(x);
       if (!x.at.size && x.t.phase === 'idle') { clearInterval(x.timer); x.timer = null; }
-    }, 200);
+    }, x.t.tickMs || 200);       // (Pachinko's balls: every 50 ms)
   }
   function gamePtrNews(x) {
     if (x.ptrTimer) return;
@@ -560,7 +569,6 @@ module.exports = function createHub(opts) {
       s.id = id;
       if (!online.has(id)) online.set(id, new Set());
       online.get(id).add(s);
-      reachCheck();       // (a share they couldn't get to comes off before they hear of it)
       reply(s, m, { me: id, host: id === ownerId, hub: hubName, addrs: opts.addrs ? opts.addrs() : [], members: bent.list(s, memberList()), apart: apartFrom(s), channels: channelList(), lives: liveList(), voice: voiceList(), room: roomId, bcs: bcList(), surf: surfOut() });       // addrs: so members can still find the hub when its addresses change
       membersNews(s);
       for (const b of bcs.values()) if (b.thumb) s.wire.send({ t: 'bc-thumb', id: b.id, from: b.from, ...b.thumb });       // each broadcast's latest still, for their grid
@@ -710,8 +718,7 @@ module.exports = function createHub(opts) {
         if (slow(s, 'live')) return;
         const code = String(m.code || '').replace(/[^A-Za-z0-9_:-]/g, '').slice(0, 400);
         if (!code) return;
-        const reach = ['lan', 'manual'].includes(m.reach) ? m.reach : 'internet', out = outside({ from: s.id, reach, place: s.place });
-        if (out.length) { if (lives.has(s.id)) liveOff(s.id, 'reach', out); else s.wire.send({ t: 'live-no', why: 'reach', who: out.slice(0, 3).map(nameOf) }); return; }       // (see "reach")
+        const reach = ['lan', 'manual'].includes(m.reach) ? m.reach : 'internet';       // (see "reach")
         if (sharingBesides(s.id)) {       // someone else's is on: only the winner of a vote takes over, and theirs replaces it
           if (!granted || granted.id !== s.id || granted.until < Date.now()) { s.wire.send({ t: 'live-no' }); return; }
           for (const id of [...lives.keys()]) if (id !== s.id) lives.delete(id);
@@ -773,7 +780,7 @@ module.exports = function createHub(opts) {
         return;
       }
       case 'where': {       // which screen this member's Drift shows: the hub bar jumps there when someone clicks them
-        const at = ['scenes', 'media', 'surf', 'broadcast', 'blackjack', 'roulette', 'poker', 'sketch'].includes(m.at) ? m.at : '';
+        const at = ['scenes', 'media', 'surf', 'broadcast', 'blackjack', 'roulette', 'poker', 'sketch', 'pachinko'].includes(m.at) ? m.at : '';
         if ((wheres.get(s.id) || '') === at) return;
         wheres.set(s.id, at);
         membersNews();

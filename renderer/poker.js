@@ -134,17 +134,23 @@
       else if (v.can) {
         const c = v.can;
         kids.push(btn('Fold', '', act('fold')));
-        kids.push(c.check ? btn('Check', 'primary', act('check')) : btn(c.call >= m.chips ? `Call ${fmt(c.call)} (all in)` : `Call ${fmt(c.call)}`, 'primary', act('call')));
-        if (c.raise) {
+        const stay = c.check ? 'Check' : c.call >= m.chips ? `Call ${fmt(c.call)} (all in)` : `Call ${fmt(c.call)}`;
+        if (!c.raise) kids.push(btn(stay, 'primary', act(c.check ? 'check' : 'call')));
+        else {
+          // one button: the slider's left end (raise 0) checks or calls, each step right of it bets or raises one small blind more, the far right is all in
           const key = `${v.hand}:${v.phase}:${c.raise.min}`;
-          if (raiseFor !== key) { raiseFor = key; raise = c.raise.min; }
-          raise = Math.max(c.raise.min, Math.min(c.raise.max, raise));
+          if (raiseFor !== key) { raiseFor = key; raise = 0; }
+          if (raise) raise = Math.max(c.raise.min, Math.min(c.raise.max, raise));
           const word = v.current ? 'Raise to' : 'Bet';
-          const go = btn(raise >= c.raise.max ? 'All in' : `${word} ${fmt(raise)}`, 'primary', () => send({ op: 'move', m: raise >= c.raise.max ? { do: 'allin' } : { do: 'raise', amount: raise } }));
-          const r = el('input', 'pkRange'); Object.assign(r, { type: 'range', min: c.raise.min, max: c.raise.max, step: v.small, value: raise });
-          const fill = () => r.style.setProperty('--fill', (c.raise.max > c.raise.min ? (raise - c.raise.min) / (c.raise.max - c.raise.min) * 100 : 100) + '%');
+          const steps = 1 + Math.ceil((c.raise.max - c.raise.min) / v.small);
+          const amountAt = (k) => k <= 0 ? 0 : Math.min(c.raise.max, c.raise.min + (k - 1) * v.small);
+          const stepOf = (amt) => amt ? Math.min(steps, 1 + Math.round((amt - c.raise.min) / v.small)) : 0;
+          const label = () => !raise ? stay : raise >= c.raise.max ? 'All in' : `${word} ${fmt(raise)}`;
+          const go = btn(label(), 'primary', () => send({ op: 'move', m: !raise ? { do: c.check ? 'check' : 'call' } : raise >= c.raise.max ? { do: 'allin' } : { do: 'raise', amount: raise } }));
+          const r = el('input', 'pkRange'); Object.assign(r, { type: 'range', min: 0, max: steps, step: 1, value: stepOf(raise) });
+          const fill = () => r.style.setProperty('--fill', stepOf(raise) / steps * 100 + '%');
           fill();
-          r.oninput = () => { raise = +r.value; fill(); go.textContent = raise >= c.raise.max ? 'All in' : `${word} ${fmt(raise)}`; };
+          r.oninput = () => { raise = amountAt(+r.value); fill(); go.textContent = label(); };
           const pot = v.pot + v.seats.reduce((n, s) => n + (s ? s.bet : 0), 0);
           const preset = (label, to) => btn(label, 'ghost mini', () => { raise = Math.max(c.raise.min, Math.min(c.raise.max, Math.round(to / v.small) * v.small)); controls(); });
           kids.push(r, preset('½ pot', v.current + (pot + (v.current - m.bet)) / 2), preset('Pot', v.current + pot + (v.current - m.bet)), go);

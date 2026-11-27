@@ -54,6 +54,7 @@ window.SCENES = [
   { id: 'roulette', name: 'Roulette', group: 'games', game: true },
   { id: 'poker', name: "Texas Hold'em", group: 'games', game: true },
   { id: 'sketch', name: 'Sketch & Guess', group: 'games', game: true },       // (a hub only: it needs people)
+  { id: 'pachinko', name: 'Pachinko', group: 'games', game: true },       // (one machine everyone at it plays together)
 ];
 
 window.SHADER_VERT = `attribute vec2 a; void main(){ gl_Position = vec4(a, 0.0, 1.0); }`;
@@ -1251,4 +1252,4 @@ vec3 scene(vec2 uv, vec2 p){
 }`,
 };
 // Roulette's and Hold'em's rooms are the Blackjack table's: the same lamp over a different table (renderer/roulette.js, renderer/poker.js)
-SCENE_SRC.roulette = SCENE_SRC.poker = SCENE_SRC.sketch = SCENE_SRC.blackjack;       // (Sketch & Guess too: its drawing board under the same lamp)
+SCENE_SRC.roulette = SCENE_SRC.poker = SCENE_SRC.sketch = SCENE_SRC.pachinko = SCENE_SRC.blackjack;       // (Sketch & Guess too: its drawing board under the same lamp)

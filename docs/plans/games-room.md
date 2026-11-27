@@ -27,7 +27,9 @@ What was built, and how it differs from the plan:
   SQLite `game_records (game, member, value, at)` for each game's board. Blackjack stays on its own plumbing for now: it
   works and is tested, and moving it is a refactor with nothing new for people. The new games' drawing reuses its look
   (style.css: the lamp, cards, chips, bar, board and tags are shared by all three tables).
-- **Chips are per table**, as Blackjack's: no shared wallet yet (§5 question 2 is still open).
+- **Chips are one wallet** (1.12.0, `wallet.js`): Blackjack, Roulette, Hold'em and Pachinko play the same chips, alone and at
+  a hub (docs/plans/pachinko.md §5). §5 question 2 is answered.
+- **Pachinko** (not in the list below) is built too: docs/plans/pachinko.md.
 - **Hold'em has computer players**, not "hub only": alone you play three, and at a hub one sits in while only one person is
   there (`fill`), leaving between hands as people come. They decide from their own cards and the board only: a few hundred
   random deals against everyone still in, the price to call, and a little chance.
@@ -136,6 +138,6 @@ test like `test-blackjack.js` (the `until` / `need` / `abort` pattern, `tw()` fo
 ## 5. Open questions
 
 1. **Which games?** These five, or swap any out (checkers, Connect-four style drop game, trivia, solitaire alone)?
-2. **One wallet across the casino games**, or separate chips per table?
+2. ~~**One wallet across the casino games**, or separate chips per table?~~ One wallet (1.12.0).
 3. **Sketch & guess words:** our own list only, or let a hub's host add their own?
 4. **Air hockey alone:** worth a computer player, or hub only?

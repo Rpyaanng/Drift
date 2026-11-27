@@ -3,7 +3,8 @@
 // browser is left alone, never remote-controlled (a remote-controlled browser is turned away by those sites too), so
 // friends can watch its window (main.js streams it) but not click in it.
 // It runs with Drift's own profile, apart from the everyday one, so what friends see is never the host's own browser,
-// with its accounts, history and open tabs.
+// with its accounts, history and open tabs. When its window closes, the sign-ins made in it come over to Surf (cookies(), and
+// takeSignins in web.js).
 const { desktopCapturer } = require('electron');
 const { execFile, spawn } = require('child_process');
 const fs = require('fs');
@@ -80,8 +81,46 @@ module.exports = function createOutside() {
     setTimeout(tick, 500);
     return { name: b.name, stop: () => { stopped = true; } };
   }
+  // The cookies in Drift's profile (the sign-ins made in that browser), for Surf to take over once its window is closed. They're
+  // read by starting the browser again on the profile, headless and out of sight, and asking it over DevTools: it unlocks its own
+  // cookie store, which nothing else can (Windows binds the key to the browser). The window the person signed in in was never
+  // remote-controlled; this copy has no page any site sees. Chromium browsers only: resolves [] for Firefox, or if it can't.
+  async function cookies(profile) {
+    const b = await detect();
+    if (!b || b.kind !== 'chromium') return [];
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const lock = path.join(profile, 'lockfile'), portFile = path.join(profile, 'DevToolsActivePort');
+    // Wait for the browser to finish closing: while it runs it holds `lockfile` (Windows won't let it be deleted), and a second
+    // copy started on the profile would only hand its job to it and quit. One left by a crash just gets deleted.
+    for (const t0 = Date.now(); ;) {
+      try { fs.rmSync(lock, { force: true }); break; } catch { if (Date.now() - t0 > 20000) return []; await sleep(400); }
+    }
+    try { fs.rmSync(portFile, { force: true }); } catch {}
+    const child = spawn(b.exe, [`--user-data-dir=${profile}`, '--headless=new', '--remote-debugging-port=0', '--no-first-run',
+      '--no-default-browser-check', '--disable-sync', '--disable-extensions', 'about:blank'], { stdio: 'ignore', windowsHide: true });
+    child.on('error', () => {});
+    let ws = null;
+    try {
+      let port = '';
+      for (const t0 = Date.now(); !port && Date.now() - t0 < 15000;) { await sleep(200); try { port = fs.readFileSync(portFile, 'utf8'); } catch {} }
+      try { fs.rmSync(portFile, { force: true }); } catch {}
+      const [num, at] = port.split(/\r?\n/);
+      if (!num || !at) return [];
+      ws = new WebSocket(`ws://127.0.0.1:${num}${at}`);
+      return await new Promise((ok) => {
+        const give = setTimeout(() => ok([]), 10000);
+        ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: 'Storage.getCookies' }));
+        ws.onmessage = (m) => { let r = null; try { r = JSON.parse(m.data); } catch {} if (r && r.id === 1) { clearTimeout(give); ok((r.result && r.result.cookies) || []); } };
+        ws.onerror = ws.onclose = () => { clearTimeout(give); ok([]); };
+      });
+    } catch { return []; }
+    finally {
+      try { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ id: 2, method: 'Browser.close' })); } catch {}
+      setTimeout(() => { try { child.kill(); } catch {} }, 3000);       // (it closes itself first, normally)
+    }
+  }
   // The page's own title, without " - Microsoft Edge" and the like
   const clean = (t) => String(t || '').replace(/​/g, '').replace(/\s*[-—–]\s*(Microsoft ?Edge|Google Chrome|Brave|Vivaldi|Chromium|Mozilla Firefox)\s*$/i, '').replace(/\s+-\s+(Personal|Profile \d+|Person \d+)\s*$/i, '')       /* the profile's name, which some browsers add */.slice(0, 200);
 
-  return { detect, open, name: () => (found ? found.name : '') };
+  return { detect, open, cookies, name: () => (found ? found.name : '') };
 };

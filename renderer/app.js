@@ -715,7 +715,7 @@
     const p = S.p2p || {}, n = (p.peers || []).length;
     const note = p.role === 'host' && n ? `${n === 1 ? p.peers[0].name : n + ' friends'} will stop seeing your video.`
       : p.role === 'guest' ? `You'll leave ${p.host || 'your friend'}'s video.` : 'Your settings are saved for next time.';
-    question({ title: 'Close Drift?', note, yes: 'Close Drift', no: 'Stay', quit: true, mon: init.displays.filter((d) => !S.displaysOff.includes(d.index)).length > 1 })
+    question({ title: 'Close Drift?', note, yes: 'Close Drift', no: 'Stay', quit: true, mon: !S.windowed && init.displays.filter((d) => !S.displaysOff.includes(d.index)).length > 1 })
       .then((yes) => { if (yes) api.cmd({ type: 'quit' }); });
   }
   function closeAsk() { if (asking) asking.done(false); }
@@ -746,6 +746,109 @@
   // Settings' "Mirrored page size": after the styles, one choice per monitor, whose layout the mirrored page then takes
   if (init.displays.length > 1) $('#surfFit').insertAdjacentHTML('beforeend', init.displays.map((d) => `<option value="${d.key}">Match monitor ${d.index + 1} (${d.width} × ${d.height})</option>`).join(''));
   $('#monitors').innerHTML = init.displays.map((d) => `<button class="mon" data-i="${d.index}"><b>Monitor ${d.index + 1}</b>${d.width} × ${d.height}${d.index === me.index ? '<em>this screen</em>' : ''}</button>`).join('');
+
+  // ---------- windowed (Settings → Show Drift → In a window; main.js buildWindows) ----------
+  // Drift's own title bar over the top of the scene: it shows with the panel and the pointer, and goes with them (body.idle),
+  // so the scene stays whole. It names what's on, and has the window's buttons. Its middle drags the window; a double click
+  // there maximises it, as Windows does with any title bar.
+  // It follows what you're looking at (data-ctx, and style.css #winBar[data-ctx]): what's on, in words that fit it, a look that
+  // suits what's under it (a soft shade over a scene, a deeper one over a video, a solid strip over a web page, the felt's gold over
+  // a game), and the two or three controls that matter there, which are the panel toolbar's own (ctx, ctxToggle, ctxStep).
+  // Settings and the Hub, open over the screen, name themselves while they're open.
+  const winBar = $('#winBar');
+  const WB_GAMES = ['blackjack', 'roulette', 'poker', 'sketch', 'pachinko'];
+  const wbHost = (u) => { try { const x = new URL(u); return /^https?:$/.test(x.protocol) ? { host: x.hostname.replace(/^www\./, ''), safe: x.protocol === 'https:' } : null; } catch { return null; } };
+  let wbLast = null, wbOnAir = null;       // (null: not heard yet, so S.bcOnAir from the last state)
+  api.on('chat', (c) => { if (c && c.type === 'bclive') { wbOnAir = !!c.live; if (S.windowed) syncWinBar(); } });
+  function wbContext(a) {
+    const open = panel.classList.contains('show') && panel.classList.contains('open');
+    if (open && tab === 'settings') return { ctx: 'settings', kind: '', title: 'Settings', sub: 'Saved as you change them' };
+    if (open && tab === 'hub') { const pp = S.p2p || {}; return { ctx: 'hub', kind: 'Hub', title: 'Friends', sub: pp.role === 'guest' ? `with ${pp.host || 'a friend'}` : pp.role === 'host' && (pp.peers || []).length ? `${pp.peers.length} watching with you` : '' }; }
+    const bv = S.bcView;
+    if (bv && bv.key === me.key) {
+      // Live: this PC is really sending your screen (main.js bcLiveInfo, as 'bclive' says it changes), not just the hub listing a broadcast as yours
+      const tiles = bv.tiles || [], full = bv.full ? tiles.find((t) => t.bc === bv.full) : null, live = wbOnAir === null ? !!S.bcOnAir : wbOnAir;
+      return { ctx: 'share', kind: 'Share', title: full ? (full.mine ? 'Your screen' : `${full.who}'s ${full.kind === 'window' ? 'window' : 'screen'}`) : 'Shared screens',
+        sub: full ? full.title || '' : tiles.length ? `${tiles.length} sharing` : 'Nobody is sharing yet', live };
+    }
+    if (a.c === 'surf') {
+      const w = S.web || {}, h = wbHost(w.url || '');
+      if (w.hub && w.mine === false) return { ctx: 'surf', kind: 'Surf', title: w.title || (h ? h.host : 'New tab'), sub: `${w.hubName || 'Hub'}'s stream`, ctl: 'surf' };
+      return { ctx: 'surf', kind: 'Surf', title: w.has ? w.title || (h ? h.host : 'New tab') : 'No page open', sub: h ? h.host : '', safe: !!(h && h.safe), ctl: 'surf' };
+    }
+    if (WB_GAMES.includes(a.cur)) {
+      const pp = S.p2p || {};
+      return { ctx: 'game', kind: 'Games room', title: (SCENES.find((s) => s.id === a.cur) || {}).name || 'Game', sub: pp.status === 'connected' ? `at ${pp.role === 'host' ? 'your' : `${pp.host || 'a friend'}'s`} table` : 'Practice table' };
+    }
+    if (a.c === 'video') {
+      const pp = S.p2p || {};
+      return { ctx: 'video', kind: 'Video', title: a.nowName, sub: pp.role === 'guest' ? `from ${pp.host || 'a friend'}` : !videoOn() ? '' : S.video.paused ? 'Paused' : '', ctl: 'media' };
+    }
+    if (a.c === 'music' || a.c === 'spotify') {
+      const artist = a.c === 'spotify' || a.tm ? '' : (S.nowPlaying || {}).artist;       // (Spotify's title has the artist in it already)
+      return { ctx: 'music', kind: a.c === 'spotify' ? 'Spotify' : 'Music', title: a.nowName, sub: artist || (a.playing ? '' : 'Paused'), ctl: 'media' };
+    }
+    const pal = S.palette === 'cycle' ? 'Every colour' : S.palette === 'content' ? 'Cover colours' : S.palette === 'custom' ? 'Your colours' : (PALETTES[S.palette] || {}).name || '';
+    return { ctx: 'scene', kind: 'Scene', title: a.nowName || 'Scene', sub: S.frozen ? 'Paused' : pal, ctl: a.cur === 'video' ? '' : 'media' };
+  }
+  function syncWinBar(a) {
+    const on = !!S.windowed;
+    document.body.classList.toggle('windowed', on);
+    $$('#windowed button').forEach((x) => x.classList.toggle('active', x.dataset.v === (on ? 'win' : 'full')));
+    $('#winNote').textContent = on ? 'One window you can move and resize. Monitor layouts come back in full screen.'
+      : init.displays.length > 1 ? 'Edge to edge on every monitor that\'s on.' : 'Edge to edge on your monitor.';
+    if (a) wbLast = a;
+    if (!on || !wbLast) return;
+    const k = wbContext(wbLast), w = S.web || {};
+    winBar.dataset.ctx = k.ctx;
+    winBar.classList.toggle('live', !!k.live);
+    const set = (sel, v) => { const el = $(sel); if (el.textContent !== v) el.textContent = v; };
+    set('#wbKind', k.kind); set('#wbTitle', k.title || ''); set('#wbSub', k.sub || '');
+    $('#wbLock').toggleAttribute('hidden', !k.safe);       // (an <svg>: no .hidden property)
+    $('#wbLive').hidden = !k.live;
+    // the controls for this context: a scene, a video or music step and pause; a web page goes back, forward and reloads
+    const ctl = k.ctl || '';
+    $('#wbCtl').dataset.ctl = ctl; $('#wbCtl').hidden = !ctl;
+    const surfing = ctl === 'surf';
+    $('#wbPrev').title = surfing ? 'Back' : k.ctx === 'scene' ? 'Previous scene' : 'Previous';
+    $('#wbNext').title = surfing ? 'Forward' : k.ctx === 'scene' ? 'Next scene' : 'Next';
+    $('#wbPrev').disabled = surfing && !w.back; $('#wbNext').disabled = surfing && !w.fwd;
+    $('#wbPlay').hidden = surfing; $('#wbReload').hidden = !surfing;
+    $('#wbPlay').classList.toggle('paused', !wbLast.playing);
+    $('#wbPlay').title = wbLast.playing ? (k.ctx === 'scene' ? 'Pause the scene' : 'Pause') : (k.ctx === 'scene' ? 'Play the scene' : 'Play');
+    $('#wbTop').classList.toggle('lit', !!S.onTop);
+    $('#wbTop').title = S.onTop ? 'Staying above other windows. Click to stop' : 'Stay above other windows';
+  }
+  new MutationObserver(() => { if (S.windowed) syncWinBar(); }).observe(panel, { attributes: true, attributeFilter: ['class'] });       // Settings or the Hub opened or put away
+  $('#wbPrev').addEventListener('click', () => ($('#wbCtl').dataset.ctl === 'surf' ? surf('back') : ctxStep(-1)));
+  $('#wbNext').addEventListener('click', () => ($('#wbCtl').dataset.ctl === 'surf' ? surf('fwd') : ctxStep(1)));
+  $('#wbPlay').addEventListener('click', () => ctxToggle());
+  $('#wbReload').addEventListener('click', () => surf('reload'));
+  // The parts of the window that drag it (Surf's toolbar, the logo) are worked out from the layout and handed to Windows. After a
+  // resize Electron can keep the old ones: part of the address bar, which grew or moved, then sat in a stale drag area, with no hover
+  // or click there until something else (maximising) had them worked out again. So once a resize settles they're dropped for a frame
+  // and put back, which makes them be worked out afresh from the layout as it is now.
+  let wbRegionT = null;
+  function wbRegionsFresh() {
+    clearTimeout(wbRegionT);
+    wbRegionT = setTimeout(() => {
+      document.body.classList.add('wbRegionsOff');
+      requestAnimationFrame(() => requestAnimationFrame(() => document.body.classList.remove('wbRegionsOff')));
+    }, 150);
+  }
+  addEventListener('resize', () => { if (S.windowed) wbRegionsFresh(); });
+  function winState(c) {
+    wbRegionsFresh();       // (maximised, restored, full screen: the same)
+    winBar.classList.toggle('max', !!c.max || !!c.full);
+    winBar.classList.toggle('blur', c.focus === false);
+    $('#wbMax').title = $('#wbMax').ariaLabel = c.full ? 'Leave full screen' : c.max ? 'Restore' : 'Maximise';
+  }
+  $('#wbMin').addEventListener('click', () => api.cmd({ type: 'win', op: 'min' }));
+  $('#wbMax').addEventListener('click', () => api.cmd({ type: 'win', op: 'max' }));
+  $('#wbClose').addEventListener('click', () => askQuit());
+  $('#wbTop').addEventListener('click', () => P({ onTop: !S.onTop }));
+  $('#wbSpan').addEventListener('click', () => P({ windowed: false }));
+  $('#windowed').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) P({ windowed: b.dataset.v === 'win' }); });
 
   function showPanel(open) {
     panel.classList.add('show'); document.body.classList.remove('idle');
@@ -802,7 +905,8 @@
   function surfFor(t) {
     const w = S.web || {};
     if (t === 'surf') {
-      if (w.has) { if (!w.open) surf('show'); else if (w.key !== me.key) surf('move'); }
+      // (Mirror: a page already up on another monitor is mirrored here, so it stays where it is; main.js turns mirroring on)
+      if (w.has) { if (!w.open) surf('show'); else if (w.key !== me.key) surf(S.mode === 'mirror' && !w.hub ? 'show' : 'move'); }       // (a hub's Surf is one picture: it moves)
       else surf('new');
     }
     else if (!SIDE_TABS.includes(t) && w.open && (w.key === me.key || S.mode === 'mirror')) surf('hide');       // (Mirror: whichever monitor it was picked on, it comes down on all of them)
@@ -852,7 +956,7 @@
   }
   // The song that's on, for its cover: another app's when none of Drift's own is on, as syncMediaBack picks it; a friend's has none
   function nowArtPath() {
-    const an = S.appNow, sp = !musicOn() && an && an.show && an.title ? an : null;
+    const an = S.appNow, sp = !musicPlaying() && an && an.show && an.title ? an : null;
     if (sp) return 'app:' + (sp.key || 0);
     const list = musicOn() && !theirMusic() && filesOn() ? S.music.playlist : [], at = (S.nowPlaying || {}).index ?? -1;
     return list.length && at >= 0 ? list[at] || '' : '';
@@ -1058,8 +1162,9 @@
     // a video playing on another monitor shares the GPU with this screen: its drifting lights hold still meanwhile (tickMediaBack)
     const vidElsewhere = S.mode === 'mix' && !!S.videoUrl && !S.video.paused && Object.entries(S.perDisplay || {}).some(([k, v]) => k !== me.key && v === 'video');
     mbEl.classList.toggle('rest', vidElsewhere);
-    // another app's song (Spotify, Apple Music, a browser...: main.js appNowWatch) when none of Drift's own is on and it has played (appNowShown)
-    const tm = theirMusic(), an = S.appNow, sp = !musicOn() && an && an.show && an.title ? an : null, music = musicOn() || !!sp;
+    // another app's song (Spotify, Apple Music, a browser...: main.js appNowWatch) when none of Drift's own is playing (a paused
+    // playlist doesn't hide it) and it has played (appNowShown)
+    const tm = theirMusic(), an = S.appNow, sp = !musicPlaying() && an && an.show && an.title ? an : null, music = musicOn() || !!sp;
     const playingNow = sp ? !!sp.playing : musicPlaying();
     const title = sp ? sp.title : tm ? (tm.src === 'files' ? tm.title || 'Music' : (PRESETS.find((x) => x.id === tm.preset) || { name: 'Ambient' }).name) : (S.nowPlaying || {}).title || 'Music';
     const artist = !music ? '' : sp ? sp.artist || '' : tm ? (tm.src === 'files' ? tm.artist || '' : '') : (S.nowPlaying || {}).artist || '';
@@ -1173,12 +1278,13 @@
     const dA = aTime - mbAT; mbAT = aTime;
     if (playing && !stillMotion.matches) { mbSpin = (mbSpin + dt * 200 + Math.max(0, Math.min(1, dA)) * 140) % 360; mbLabel.style.setProperty('--spin', mbSpin.toFixed(1) + 'deg'); }
   }
-  window.appUI = { toTable: (g) => { g = ['roulette', 'poker', 'sketch'].includes(g) ? g : 'blackjack'; P(S.mode === 'mix' ? { perDisplay: { [me.key]: g } } : { scene: g }); window.appUI.setTab('scenes'); }, tab: () => tab, setTab: (t) => { if (panel.classList.contains('open')) setTab(t); else { tab = t; if (!SIDE_TABS.includes(t)) screenTab = t; pickScreen(t); tellTab(); syncUI(); } }, open: () => panel.classList.contains('open'), key: me.key };       // (a closed panel stays closed)       // (broadcast.js: its tab comes and goes)
+  window.appUI = { toTable: (g) => { g = ['roulette', 'poker', 'sketch', 'pachinko'].includes(g) ? g : 'blackjack'; P(S.mode === 'mix' ? { perDisplay: { [me.key]: g } } : { scene: g }); window.appUI.setTab('scenes'); }, tab: () => tab, setTab: (t) => { if (panel.classList.contains('open')) setTab(t); else { tab = t; if (!SIDE_TABS.includes(t)) screenTab = t; pickScreen(t); tellTab(); syncUI(); } }, open: () => panel.classList.contains('open'), key: me.key };       // (a closed panel stays closed)       // (broadcast.js: its tab comes and goes)
   panel.addEventListener('mouseenter', () => { overPanel = true; });
   panel.addEventListener('mouseleave', () => { overPanel = false; armHide(); });
   let lastMove = [0, 0];
   addEventListener('mousemove', (e) => {
-    if (e.target === vidEl || e.target === mirEl || (gpuEl && e.target === gpuEl) || surfBar.contains(e.target) || e.target === surfEdge) return;       // over a friend's web page the mouse is theirs to follow, not a call for the panel; nor is the browser's own bar
+    if (e.target === vidEl || e.target === mirEl || (gpuEl && e.target === gpuEl) || surfBar.contains(e.target) || e.target === surfEdge) return;
+    if (document.body.classList.contains('surfing') && winBar.contains(e.target)) return;       // (windowed: the window's buttons over Surf's bar are part of it)       // over a friend's web page the mouse is theirs to follow, not a call for the panel; nor is the browser's own bar
     if (Math.abs(e.screenX - lastMove[0]) + Math.abs(e.screenY - lastMove[1]) < 4) return;   // ignore jitter
     lastMove = [e.screenX, e.screenY]; showPanel();
   });
@@ -1187,7 +1293,7 @@
     if (e.target === vidEl || e.target === mirEl || (gpuEl && e.target === gpuEl) || surfBar.contains(e.target)) return;
     if ($('#bcView').contains(e.target)) { panel.classList.remove('open'); return; }       // the Broadcast scene's tiles and bar: a click is for them (it only puts the panel's page away)
     if (e.target.closest('#mediaBack a, #mediaBack button')) return;       // the Media screen's links and arrows (mbPan)
-    if (e.target.closest('#bjTable .bjFelt, #bjTable .bjBar, #rlTable .rlFelt, #rlTable .bjBar, #pkTable .pkFelt, #pkTable .bjBar, #skTable .skFelt, #skTable .bjBar')) return;       // a game's table and its buttons (the room around it still brings the panel)
+    if (e.target.closest('#bjTable .bjFelt, #bjTable .bjBar, #rlTable .rlFelt, #rlTable .bjBar, #pkTable .pkFelt, #pkTable .bjBar, #skTable .skFelt, #skTable .bjBar, #paTable .paCab, #paTable .bjBar')) return;       // a game's table and its buttons (the room around it still brings the panel)
     if (!panel.contains(e.target) && !confirmEl.contains(e.target) && !$('#mixer').contains(e.target)) { if (panel.classList.contains('open')) { panel.classList.remove('open'); } else showPanel(); } });
 
   const fill = (el) => el.style.setProperty('--fill', ((el.value - el.min) / (el.max - el.min)) * 100 + '%');
@@ -1233,7 +1339,7 @@
     $('#customRow').classList.toggle('on', S.palette === 'custom');
     $$('#customRow input').forEach((el) => { if (document.activeElement !== el) el.value = cc[+el.dataset.i]; });
     $$('#mode button').forEach((x) => x.classList.toggle('active', x.dataset.v === S.mode));
-    const multi = init.displays.filter((d) => !S.displaysOff.includes(d.index)).length > 1;
+    const multi = !S.windowed && init.displays.filter((d) => !S.displaysOff.includes(d.index)).length > 1;       // (windowed: one window, so nothing is across monitors)
     $('#modeHint').textContent = S.mode === 'span' ? 'Spanned across monitors' : S.mode === 'mirror' ? 'Mirrored on each monitor' : 'Mix: picking for this monitor';
     $('#modeHint').style.display = multi ? '' : 'none';
     $('#modeNote').textContent = !multi ? 'Only one monitor is on, so this changes nothing yet.'
@@ -1319,6 +1425,7 @@
       : c === 'surf' ? ((S.web || {}).has ? (S.web.title || S.web.url || 'New tab') : 'No page open')
       : spOn ? (sp.title || 'Spotify (paused)') : tm ? `${tmName} · from ${S.p2p.host || 'your friend'}` : filesOn() ? (S.nowPlaying.title || 'Music') : 'No music chosen';
     $('#play').dataset.now = nowName; $('#play').title = (playing ? 'Pause' : 'Play') + (nowName ? `: ${nowName}` : '') + ' (Space)';
+    syncWinBar({ cur, c, nowName, playing, tm, tmName });
     const pp2 = S.p2p || {}, mine = S.music.source === 'files' || S.music.source === 'generative';
     $('#mShare').textContent = tm ? `You are listening to ${pp2.host || 'your friend'}'s music${tm.on ? '' : ' (paused)'}: ${tmName}. Your own music waits until you leave${pp2.ctrl ? '. Play, pause and skip work on theirs' : `. Only ${pp2.host || 'your friend'} can change it`}.`
       : pp2.role === 'host' ? (spOn ? 'Spotify can\'t be sent to friends. Ambient sound and music from your library can.' : mine ? `Friends${(pp2.peers || []).length ? '' : ' who join'} hear your ${S.music.source === 'files' ? 'music' : 'ambient sound'} with you.` : '') : S.mediaSolo || '';       // (mediaSolo: why what you play isn't on the hub's stream: main.js mediaRefused)
@@ -1344,11 +1451,14 @@
   };
   // A page drawn bigger than this monitor (while mirroring, other monitors' shapes stretch it a little: pageSize in main.js) is shrunk to fit, whole, with
   // black bars where its shape differs. Its layout stays its own; friends and mirrors get its full size.
+  // Windowed, the page sits under Surf's bar, pinned across the window's top as its tabs and toolbar (style.css --wbChrome, main.js WIN_SURF_ROW): its room is the window less those rows.
+  const WB_ROW = 80;
   function fitPage(el, px) {
-    const dpr = devicePixelRatio || 1, w = px ? px.w / dpr : innerWidth, h = px ? px.h / dpr : innerHeight;
-    if (Math.abs(w - innerWidth) < 2 && Math.abs(h - innerHeight) < 2) { el.style.cssText = ''; return; }
-    const k = Math.min(innerWidth / w, innerHeight / h);
-    el.style.cssText = `width:${w}px;height:${h}px;right:auto;bottom:auto;transform-origin:0 0;transform:translate(${(innerWidth - w * k) / 2}px,${(innerHeight - h * k) / 2}px) scale(${k})`;
+    const top = S.windowed ? WB_ROW : 0, iw = innerWidth, ih = innerHeight - top;
+    const dpr = devicePixelRatio || 1, w = px ? px.w / dpr : iw, h = px ? px.h / dpr : ih;
+    if (Math.abs(w - iw) < 2 && Math.abs(h - ih) < 2) { el.style.cssText = ''; return; }
+    const k = Math.min(iw / w, ih / h);
+    el.style.cssText = `top:${top}px;width:${w}px;height:${h}px;right:auto;bottom:auto;transform-origin:0 0;transform:translate(${(iw - w * k) / 2}px,${(ih - h * k) / 2}px) scale(${k})`;
   }
   addEventListener('resize', () => { for (const el of webEls.values()) fitPage(el, (S.web || {}).page); });
   function syncWeb() {
@@ -1594,7 +1704,7 @@
   // the active hub's table or your own, the others' pointers over the felt and yours to them. The same light from the palette.
   const gmPtrBox = $('#gmPtrs'), gmPtrEls = new Map();
   let gmPtrList = [], gmPtrAt = 0, gmPtrOut = false, gmHub = '';
-  const GM = { roulette: { el: $('#rlTable'), make: window.driftRoulette }, poker: { el: $('#pkTable'), make: window.driftPoker }, sketch: { el: $('#skTable'), make: window.driftSketch } };
+  const GM = { roulette: { el: $('#rlTable'), make: window.driftRoulette }, poker: { el: $('#pkTable'), make: window.driftPoker }, sketch: { el: $('#skTable'), make: window.driftSketch }, pachinko: { el: $('#paTable'), make: window.driftPachinko } };
   for (const [g, x] of Object.entries(GM)) {
     x.on = false;
     x.t = x.make(x.el, (m) => api.cmd({ type: 'game', g, ...m }), { face: (id) => (gmHub && window.chatUI ? window.chatUI.face(gmHub, id, '') : null),
@@ -2740,7 +2850,7 @@
   $('#overlay').addEventListener('change', (e) => P({ overlay: e.target.value }));
   $('#algoInfo').addEventListener('change', (e) => P({ algoInfo: e.target.checked }));
   $('#modeHint').addEventListener('click', () => setTab('settings'));
-  $('#mode').addEventListener('click', (e) => { const v = e.target.dataset.v; if (v) P({ mode: v }); });
+  $('#mode').addEventListener('click', (e) => { const v = e.target.dataset.v; if (v) P(v === 'mirror' && S.mode !== 'mirror' ? { mode: v, mirrorFrom: { key: me.key, tab: screenTab } } : { mode: v }); });       // (into Mirror: every monitor takes what this one shows)
   // Ambient sound, in Scenes: a preset, or Off. Music from the library takes over from it while it plays, and it comes back after.
   $('#presets').addEventListener('click', (e) => {
     const t = e.target.closest('.preset'); if (!t) return;
@@ -3029,6 +3139,7 @@
     if (e.target.type === 'search' || e.target.tagName === 'TEXTAREA') { if (e.key === 'Escape' && !e.defaultPrevented) e.target.blur(); return; }   // typing in a search box or a message
     const k = e.key;
     if (k === 'Escape') { if (panel.classList.contains('show') && panel.classList.contains('open')) { panel.classList.remove('open'); syncUI(); } else askQuit(); }
+    else if (k === 'F11' && S.windowed) { e.preventDefault(); api.cmd({ type: 'win', op: 'full' }); }       // the window fills its own monitor, and back
     else if (k === 'Tab' || k === 'h' || k === 'H') { e.preventDefault(); if (panel.classList.contains('show') && panel.classList.contains('open')) hidePanel(), panel.classList.remove('open'); else { showPanel(true); syncUI(); } }
     else if (k === 'ArrowRight') ctxStep(1);
     else if (k === 'ArrowLeft') ctxStep(-1);
@@ -3069,6 +3180,7 @@
   });
   api.on('now', (n) => { S.nowPlaying = n; syncUI(); });
   api.on('cmd', (c) => {
+    if (c.type === 'win-state') { winState(c); return; }
     if (c.type === 'show-panel') { tab = c.tab === 'video' || c.tab === 'music' ? 'media' : c.tab; tellTab(); showPanel(true); clearTimeout(hideTimer); syncUI(); }
     else if (c.type === 'toast') { if (isCenter || panel.classList.contains('show')) toast(c.text, Math.max(3200, Math.min(9000, c.text.length * 70))); }     // one screen is enough
     else if (c.type === 'media-ask') askMedia(c);
@@ -3078,7 +3190,7 @@
       syncContentPal();
     }
     else if (c.type === 'screen-pick') {       // Mirror: Scenes or Media was picked on another monitor (pickScreen): this one shows it too
-      if (S.mode !== 'mirror') return;
+      if (S.mode !== 'mirror' && !c.into) return;
       screenTab = c.tab;
       if (tab !== c.tab && !SIDE_TABS.includes(tab)) { tab = c.tab; tellTab(); }       // (the panel follows, unless it's on Hub or Settings)
       syncUI();
