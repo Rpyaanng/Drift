@@ -12,8 +12,8 @@ const createXcoder = require('./xcode');
 const createP2P = require('./p2p');
 const createChat = require('./chat');
 const { createTable: createBjTable } = require('./blackjack');
-const GAME_RULES = { roulette: require('./roulette').createTable, poker: require('./poker').createTable, sketch: require('./sketch').createTable, pachinko: require('./pachinko').createTable };       // the Games room's other tables (gmMove)
-const GAME_SOLO = { roulette: true, poker: true, sketch: false, pachinko: true };
+const GAME_RULES = { roulette: require('./roulette').createTable, poker: require('./poker').createTable, sketch: require('./sketch').createTable, pachinko: require('./pachinko').createTable, crane: require('./crane').createTable };       // the Games room's other tables (gmMove)
+const GAME_SOLO = { roulette: true, poker: true, sketch: false, pachinko: true, crane: true };
 const { createWallet } = require('./wallet');
 const SKETCH = require('./sketch');
 const SKETCH_SOLO = process.env.DRIFT_SKETCH_SOLO || '';       // dev: Sketch & Guess alone. =1: you always draw ("Practice" sits in); =guess: "Practice" draws and tells you the word, "Buddy" guesses too (sketchBots)       // can it be played alone (dealt here)? Sketch & Guess needs people: only at a hub
@@ -1914,10 +1914,7 @@ function bjMove(c) {
     if (c.on && bjLast) { const x = visWins.find((v) => v.key === String(c.key || '')); if (x && !x.win.isDestroyed()) x.win.webContents.send('cmd', { type: 'bj', v: bjLast.v, mode: bjLast.mode, hub: bjLast.hub }); }
     return;
   }
-  if (op === 'ptr') {
-    if (bjAt && bjAt !== 'local' && state.share.cursor) chat.bj(bjAt, { t: 'bj-ptr', x: c.x >= 0 ? +c.x : -1, y: c.y >= 0 ? +c.y : -1 });
-    return;
-  }
+  if (op === 'ptr') return;       // no pointers at this table: each player sees it turned so their seat is in the middle, so a pointer wouldn't land where it was aimed
   if (op === 'tap') { if (bjAt) { sfxPlay(['bjChip']); if (SHOT_DIR) bjHeard.push('bjChip'); } return; }
   if ((op === 'stand' || op === 'sit') && bjAt) {       // up from your seat (a bet not dealt yet comes back; a hand in play stands), or back down
     bjStanding = op === 'stand';
@@ -1941,10 +1938,7 @@ function bjMove(c) {
 function bjFromHub(hub, m) {
   if (hub !== bjAt) return;
   if (m.t === 'bj-view') { if (m.v) bjShow(m.v, 'hub'); else { bjShow(null, ''); bjNote('You sat down at this table on another PC.'); } }
-  else if (m.t === 'bj-ptrs') {
-    const blocked = new Set(chat.info().blocked || []);
-    bjSend({ ptrs: ptrClean(m.list).filter((q) => !blocked.has(q.id)) });
-  }
+  // (bj-ptrs, from an older Drift, are left out: see op 'ptr' above)
 }
 
 // ---- the Games room's other tables: Roulette, Texas Hold'em and Sketch & Guess (docs/plans/games-room.md) ----
@@ -1956,8 +1950,9 @@ function bjFromHub(hub, m) {
 // Pachinko's balls come the same way, as frames (only the last ones are kept: GAME_INK_KEEP).
 // The screens get { type: 'game', g, v, mode, hub }, { ptrs }, { ink: { rev, from, list } } and { note }.
 const GAME_FAST = process.env.DRIFT_BJ_FAST ? { roulette: { bet: 8000, spin: 1200, done: 1500, out: 3000 }, poker: { turn: 6000, think: [150, 300], street: 250, show: 1500, fold: 800, out: 3000, start: 300 },
-  sketch: { start: 500, choose: 4000, draw: 25000, reveal: 1500, over: 2000 }, pachinko: { stop: [400, 700, 1000], reach: 1800, show: 400, feverIn: 600, round: 3000, between: 400, out: 3000 } } : undefined;       // tests: rounds in seconds
-const GAME_INK_KEEP = { pachinko: 45 };       // (a drawing is kept whole; the balls' frames only for a second and a half)
+  sketch: { start: 500, choose: 4000, draw: 25000, reveal: 1500, over: 2000 }, pachinko: { stop: [400, 700, 1000], reach: 1800, show: 400, feverIn: 600, round: 3000, between: 400, out: 3000 },
+  crane: { move: 6000, idle: 8000 } } : undefined;       // tests: rounds in seconds
+const GAME_INK_KEEP = { pachinko: 45, crane: 45 };       // (a drawing is kept whole; the balls' (and the claw's) frames only for a second and a half)
 const gm = Object.fromEntries(Object.keys(GAME_RULES).map((g) => [g, { local: null, timer: null, sent: -1, at: '', last: null, standing: false, screens: new Set(), ink: { rev: -1, list: [], n: 0 } }]));       // at: '' (not at the table), 'local', 'alone' (a game that needs a hub, without one), or the hub's id
 // The ink (a drawing, or the balls) as it comes: `from` is the number of its first piece, n how many there have been
 function gmInkTake(g, rev, from, list) {
@@ -1982,6 +1977,7 @@ function gmShow(g, v, mode) {
     if (Array.isArray(v.seats)) v.seats = v.seats.map(hide);
     if (Array.isArray(v.players)) v.players = v.players.map(hide);       // (Sketch & Guess: the players, the final scores, and what they type)
     if (Array.isArray(v.standings)) v.standings = v.standings.map(hide);
+    if (Array.isArray(v.line)) v.line = v.line.map(hide);       // (the crane machine's line)
     if (Array.isArray(v.feed)) v.feed = v.feed.filter((e) => !(blocked.has(e.pid) && (e.kind === 'guess' || e.kind === 'chat'))).map((e) => (blocked.has(e.pid) ? { ...e, who: 'Someone', text: String(e.text).split(e.who).join('Someone') } : e));
   }
   const was = x.last && x.last.mode === mode ? x.last.v : null, hub = mode === 'hub' ? x.at : '';
@@ -2057,6 +2053,19 @@ const GM_SOUNDS = {
     if (a.fever && !b.fever && a.fever.gained > 0) out.push('paPay');
     if (me && was && me.outMs && !was.outMs) out.push('bjOut');
     if (me && was && !me.outMs && was.outMs) out.push('bjBack');
+    return [...new Set(out)].slice(0, 2);
+  },
+  crane(a, b) {       // the machine is everyone's to watch, so everyone at it hears it: the coin going in, the claw going down and
+    // closing, a prize slipping out, a prize down the chute (the grand prize louder), nothing at all; and your go, after waiting
+    const out = [], pa = a.play, pb = b.play;
+    if (pb && (!pa || pa.n !== pb.n)) out.push('crCoin');
+    if (b.step === 'down' && a.step !== 'down') out.push('crDrop');
+    if (b.step === 'grab' && a.step !== 'grab') out.push('crGrab');
+    if (pb && pa && pa.n === pb.n && pb.slipped && !pa.slipped) out.push('crSlip');
+    const kinds = (p) => (p ? p.kinds.length : 0), got = pb && pa && pa.n === pb.n ? pb.kinds.slice(pa.kinds.length) : pb && !pa ? pb.kinds : [];
+    if (got.length) out.unshift(got.includes(1) ? 'crGrand' : 'crWin');
+    if (pa && !pb && b.last[0] && b.last[0].n === pa.n && !b.last[0].won && !kinds(pa)) out.push('crMiss');
+    if (b.you >= 0 && a.you < 0 && a.watching >= 0) out.push('bjTurn');
     return [...new Set(out)].slice(0, 2);
   },
 };
@@ -2192,8 +2201,8 @@ function gmMove(c) {
     gmNote(g, state.sketch.words || !Array.isArray((c.s || {}).words) ? 'Settings saved' : 'Settings saved, with Drift\'s words: a list needs three or more');
     return;
   }
-  if (op === 'ptr') {
-    if (gmOnHub(x) && state.share.cursor) chat.game(x.at, { t: 'game-ptr', g, x: c.x >= 0 ? +c.x : -1, y: c.y >= 0 ? +c.y : -1 });
+  if (op === 'ptr') {       // (none at Hold'em: it's turned so each player's seat is at the bottom, as Blackjack's is, so a pointer wouldn't land where it was aimed)
+    if (g !== 'poker' && gmOnHub(x) && state.share.cursor) chat.game(x.at, { t: 'game-ptr', g, x: c.x >= 0 ? +c.x : -1, y: c.y >= 0 ? +c.y : -1 });
     return;
   }
   if (op === 'ink') {
@@ -2225,7 +2234,7 @@ function gmMove(c) {
 function gmFromHub(hub, m) {
   const g = String(m.g || ''); if (!Object.hasOwn(gm, g) || hub !== gm[g].at) return;
   if (m.t === 'game-view') { if (m.v) gmShow(g, m.v, 'hub'); else { gmShow(g, null, ''); gmNote(g, 'You sat down at this table on another PC.'); } }
-  else if (m.t === 'game-ptrs') {
+  else if (m.t === 'game-ptrs' && g !== 'poker') {
     const blocked = new Set(chat.info().blocked || []);
     gmSend(g, { ptrs: ptrClean(m.list).filter((q) => !blocked.has(q.id)) });
   } else if (m.t === 'game-ink' && Array.isArray(m.list)) {       // the drawing growing (or Pachinko's balls): kept, and passed on to the screens (they draw it)
@@ -2359,11 +2368,12 @@ const SFX_NAMES = new Set(['join', 'leave', 'peerJoin', 'peerLeave', 'mute', 'un
   'bjCard', 'bjDeal', 'bjChip', 'bjTurn', 'bjWin', 'bjBlackjack', 'bjPush', 'bjLose', 'bjBust', 'bjOut', 'bjBack',       // (the Blackjack table's: bjSounds)
   'bjShuffle', 'rlSpin', 'rlDrop', 'rlWin', 'rlBig', 'pkCheck', 'pkFold', 'pkShuffle', 'pkRaise', 'pkAllIn', 'pkRiver', 'pkPot', 'pkBig',       // (Roulette's and Hold'em's, with the Blackjack table's cards and chips: GM_SOUNDS)
   'skStart', 'skRound', 'skPick', 'skTurn', 'skRight', 'skOther', 'skClose', 'skHint', 'skTick', 'skTick1', 'skEnd', 'skAll', 'skWin', 'skApplause', 'skLose',       // (Sketch & Guess's)
-  'paLaunch', 'paPin', 'paBounce', 'paStart', 'paTulip', 'paCatch', 'paSpin', 'paReach', 'paMiss', 'paFever', 'paGate', 'paPay']);       // (Pachinko's: GM_SOUNDS, paBallSounds)
+  'paLaunch', 'paPin', 'paBounce', 'paStart', 'paTulip', 'paCatch', 'paSpin', 'paReach', 'paMiss', 'paFever', 'paGate', 'paPay',       // (Pachinko's: GM_SOUNDS, paBallSounds)
+  'crCoin', 'crDrop', 'crGrab', 'crSlip', 'crWin', 'crGrand', 'crMiss']);       // (the crane machine's: GM_SOUNDS)
 let sfxWas = null, sfxJoinedAt = 0;
 function sfxPlay(names, preview = false) {
   // the game tables' sounds have their own switch (Sounds → Game table sounds): hub sounds off needn't hush the cards
-  const on = names.every((n) => /^(bj|rl|pk|sk|pa)[A-Z]/.test(String(n))) ? state.sfx.table !== false : state.sfx.on;
+  const on = names.every((n) => /^(bj|rl|pk|sk|pa|cr)[A-Z]/.test(String(n))) ? state.sfx.table !== false : state.sfx.on;
   if ((!on && !preview) || !audioWin || audioWin.isDestroyed()) return;
   const vol = mixGain().master * state.sfx.volume * state.sfx.volume;       // (squared, like the mixer's sliders: the slider feels even)
   if (vol > 0) { audioWin.webContents.send('cmd', { type: 'sfx', names, vol }); if (SHOT_DIR) sfxSent.push(...names); }
@@ -3732,10 +3742,10 @@ const SCENES = ['aurora', 'nebula', 'silk', 'water', 'stars', 'lava', 'ridges', 
   'sierpinski', 'sorting', 'life', 'maze', 'julia', 'hilbert', 'voronoi',
   'polyhedra', 'globe', 'tunnel', 'cubes', 'lattice', 'menger',
   'quasi', 'hyperbolic', 'apollonian', 'phyllotaxis', 'rose', 'chladni',
-  'lake', 'pines', 'dunes', 'seaside', 'meadow', 'canyon', 'blackjack', 'roulette', 'poker', 'sketch', 'pachinko'];
+  'lake', 'pines', 'dunes', 'seaside', 'meadow', 'canyon', 'blackjack', 'roulette', 'poker', 'sketch', 'pachinko', 'crane'];
 // The Games room's scenes (docs/plans/blackjack.md §1): picked from their tile only. Neither the automatic changes nor Next /
 // Previous land on one, and an automatic change never takes you away from one (you may be in the middle of a hand).
-const GAMES = ['blackjack', 'roulette', 'poker', 'sketch', 'pachinko'];
+const GAMES = ['blackjack', 'roulette', 'poker', 'sketch', 'pachinko', 'crane'];
 function stepScene(dir, shuffle, auto) {
   // automatic changes only pick the scenes ticked for rotation; Next / Previous still go through all of them (but the games)
   const pool = (auto ? SCENES.filter((id) => !state.cycleSkip.includes(id)) : SCENES).filter((id) => !GAMES.includes(id));
@@ -5892,6 +5902,23 @@ async function runShots() {
         await until(() => G('pachinko').fever && G('pachinko').fever.open, 20000); await wait(2500); await full('pachinko-gate');
       }
       gmMove({ g: 'pachinko', op: 'move', m: { do: 'let go' } });
+      // The crane machine: the claw lifting the grand prize out of the pile (held for the picture: the machine stopped there)
+      patch({ scene: 'crane' });
+      log.push('gamepics crane machine: ' + await until(() => gm.crane.at === 'local' && !!gm.crane.local, 15000));
+      localWallet.set(BJ_ME, { chips: 50000, outUntil: 0 });
+      const cr = gm.crane.local, crBox = cr._items().find((q) => q.kind);
+      cr._rules.boxGrip = 1;
+      const crAt = Date.now(), CB = require('./renderer/crane-board.js');
+      move('crane', { do: 'play' });
+      await until(() => cr._claw().x >= crBox.x - 2, 10000);
+      move('crane', { do: 'drop', amount: crAt + (crBox.x - CB.RAIL.home) / CB.SWEEP.speed * 1000 });       // (timed to the moment it was over the box)
+      log.push('gamepics crane lifted: ' + await until(() => cr._step() === 'up' && cr._claw().y < 330, 15000));
+      clearInterval(gm.crane.timer);
+      await pic('crane', gm.crane.screens);
+      if (process.env.DRIFT_GAMEPICS_EXTRA) {       // (to look at by eye: the machine full size)
+        const w = visWins.find((x) => gm.crane.screens.has(x.key)), img = w && await Promise.race([w.win.webContents.capturePage(), wait(5000)]);
+        if (img && !img.isEmpty()) fs.writeFileSync(path.join(dir, 'crane-full.png'), img.toPNG());
+      }
     } catch (e) { log.push('gamepics error: ' + String(e && e.stack || e)); }
     fs.writeFileSync(path.join(SHOT_DIR, 'log.txt'), log.join('\n')); quitting = true; app.quit(); return;
   }
@@ -6044,7 +6071,8 @@ async function runShots() {
       await step('seated');
       bjMove({ op: 'ptr', x: 0.3, y: 0.6 });
       await step('ptr');
-      tl('their pointer shows over my table, by name', await until(async () => (await page()).ptrs.includes(role === 'host' ? 'Guesty' : 'Hosty'), 8000));
+      await wait(1500);
+      tl('no pointers at this table (it\'s turned for each player)', (await page()).ptrs.length === 0);
       await step('ptrs-seen');
       need('a betting round', await until(() => V().phase === 'betting', 15000));
       if (role === 'guest') await wait(500);       // (one bets first: the round waits for the other)
@@ -6236,7 +6264,9 @@ async function runShots() {
       const before = localWallet.peek(BJ_ME).chips;
       scene('pachinko');
       const paUp = await until(() => gm.pachinko.at === 'local' && !!mine('pachinko'), 15000);
-      if (!paUp) log.push('pa: not up: ' + JSON.stringify({ at: gm.pachinko.at, screens: [...gm.pachinko.screens], v: V('pachinko') && { you: V('pachinko').you, seats: V('pachinko').seats, watching: V('pachinko').watching }, wallet: localWallet.peek(BJ_ME), scene: state.scene }));
+      if (!paUp) log.push('pa: page: ' + JSON.stringify(await pageRun(tw('pachinko'), () => ({ tables: [...document.querySelectorAll('[id$=Table]')].filter((t) => t.classList.contains('on')).map((t) => t.id),
+        stage: getComputedStyle(document.querySelector('#stage')).opacity, panel: (document.querySelector('#panel') || {}).className, web: document.body.className }))));
+      if (!paUp) log.push('pa: not up: ' + JSON.stringify({ at: gm.pachinko.at, wins: visWins.map((v) => v.key), want: state.perDisplay, screens: [...gm.pachinko.screens], v: V('pachinko') && { you: V('pachinko').you, seats: V('pachinko').seats, watching: V('pachinko').watching }, wallet: localWallet.peek(BJ_ME), scene: state.scene }));
       need('the pachinko machine comes up, played here', paUp);
       tl('...with the same chips as the other tables', mine('pachinko').chips === before);
       let pp = await paPage();
@@ -6257,6 +6287,51 @@ async function runShots() {
       await wait(400);
       tl(`${V('pachinko').cost} chips a ball (and what came back), kept in the wallet and the settings`, state.wallet.chips === mine('pachinko').chips && V('pachinko').cost === require('./pachinko').RULES.cost);
       tl('the balls\' sounds: away, and the pins', gmHeard.includes('paLaunch') && gmHeard.includes('paPin'));
+      // ---- the crane machine, alone: short of a try it says so; a try with the real buttons, the claw sweeping, timed, dropped, paid ----
+      const crPage = () => pageRun(tw('crane'), () => {
+        const t = document.querySelector('#crTable'), c = t.querySelector('.crCanvas'), cab = t.querySelector('.crCab').getBoundingClientRect(), bar = t.querySelector('.bjBar').getBoundingClientRect();
+        const play = t.querySelector('.crPlay');
+        return { on: t.classList.contains('on') && t.classList.contains('live'), mode: (t.querySelector('.bjMode') || {}).textContent || '', canvas: c.width, bar: t.querySelector('.bjBar').innerText.replace(/\n+/g, ' | '),
+          play: play ? !play.disabled : null, drops: t.querySelectorAll('.crDrop').length, names: [...t.querySelectorAll('.crTag .nm')].map((n) => n.textContent),
+          layout: { cab: [Math.round(cab.left), Math.round(cab.top), Math.round(cab.width), Math.round(cab.height)], barTop: Math.round(bar.top), w: innerWidth, h: innerHeight } };
+      });
+      const crPress = (sel, how) => pageRun(tw('crane'), (s, h) => {
+        const b = document.querySelector('#crTable ' + s); if (!b || b.disabled) return false;
+        if (h === 'click') b.click(); else b.dispatchEvent(new PointerEvent(h, { bubbles: true, button: 0, pointerId: 1 }));
+        return true;
+      }, sel, how);
+      const B_CRANE = require('./renderer/crane-board.js');
+      localWallet.set(BJ_ME, { chips: 3000, outUntil: 0 });
+      scene('crane');
+      need('the crane machine comes up, played here', await until(() => gm.crane.at === 'local' && !!mine('crane'), 15000));
+      let cp = await crPage();
+      tl('it shows: the box drawn, just you, at the claw', await until(async () => { cp = await crPage(); return cp.on && cp.mode === 'Just you' && cp.canvas > 300 && cp.names.join() === 'You'; }, 5000), cp);
+      tl('3,000 chips: no try, and it says why', await until(async () => { cp = await crPage(); return cp.play === false && /A try is 5,000 chips/.test(cp.bar); }, 3000), cp);
+      log.push('cr: layout ' + JSON.stringify(cp.layout));
+      tl('the cabinet fits, the bar under it', cp.layout.cab[1] >= 0 && cp.layout.cab[1] + cp.layout.cab[3] <= cp.layout.barTop && cp.layout.cab[0] >= 0 && cp.layout.cab[0] + cp.layout.cab[2] <= cp.layout.w, cp.layout);
+      localWallet.set(BJ_ME, { chips: 20000, outUntil: 0 });
+      need('with 20,000 the button is there', await until(async () => (await crPage()).play === true, 3000));
+      need('Play: a try, 5,000 out of the wallet', await crPress('.crPlay', 'click') && await until(() => V('crane').step === 'move' && mine('crane').chips === 15000, 3000));
+      need('the Drop! button is up', await until(async () => (await crPage()).drops === 1, 2000));
+      const crX0 = gm.crane.local._claw().x;
+      await wait(1200);
+      const crX1 = gm.crane.local._claw().x;
+      tl(`the claw sweeps by itself (${Math.round(crX0)} -> ${Math.round(crX1)} in 1.2 s, nothing pressed)`, crX1 > crX0 + 150);
+      need('frames come, with the claw and the prizes in them', gm.crane.ink.list.some((f) => f.c.length === 3 && f.i.length >= 21 * 4));
+      await shot('crane', 'cr-sweep');
+      const crPressX = gm.crane.local._claw().x;
+      need('Drop! (on the press, not the click)', await crPress('.crDrop', 'pointerdown') && await until(() => V('crane').step !== 'move', 2000));
+      const crDropX = gm.crane.local._claw().x;
+      log.push(`cr: pressed with the claw at ${Math.round(crPressX)} on the table, came down at ${Math.round(crDropX)}`);
+      tl('it comes down where the screen showed it (a moment behind the table)', Math.abs(crDropX - crPressX) < 70 &&crDropX >= B_CRANE.SWEEP.x1 - 1 && crDropX <= B_CRANE.SWEEP.x2 + 1);
+      await wait(300);
+      tl('and stays there on the way down', Math.abs(gm.crane.local._claw().x - crDropX) < 0.01);
+      need('the try goes round and finishes', await until(() => V('crane').step === 'ready' && !V('crane').play && V('crane').last.length === 1, 30000));
+      await wait(300);
+      const crLast = V('crane').last[0];
+      log.push('cr: try ' + JSON.stringify(crLast));
+      tl(`its prizes paid (${crLast.won}), kept in the wallet and the settings`, mine('crane').chips === 15000 + crLast.won && state.wallet.chips === mine('crane').chips);
+      tl('its sounds: the coin, the claw going down and closing', ['crCoin', 'crDrop', 'crGrab'].every((n) => gmHeard.includes(n)), gmHeard.filter((n) => /^cr/.test(n)));
       // ---- Sketch & Guess, alone: there's no game without people, and it says so ----
       scene('sketch');
       tl('Sketch & Guess alone says to go online in a hub', await until(async () => gm.sketch.at === 'alone' && /for friends/.test(await pageRun(tw('sketch'), () => { const c = document.querySelector('#skTable .skCard'); return c.classList.contains('on') ? c.textContent : ''; })), 10000));
@@ -6285,7 +6360,8 @@ async function runShots() {
       tl('my cards face up, theirs face down (and not sent)', p.myCards.length === 2 && !p.myCards.includes('back') && V('poker').seats.every((s, i) => !s || i === V('poker').you || s.cards.every((c) => c === null)));
       gmMove({ g: 'poker', op: 'ptr', x: 0.4, y: 0.5 });
       await step('poker-ptr');
-      tl('their pointer shows over my table, by name', await until(async () => (await page('poker')).ptrs.includes(theirName), 8000));
+      await wait(1500);
+      tl('no pointers at Hold\'em (it\'s turned for each player)', (await page('poker')).ptrs.length === 0);
       await step('poker-ptrs-seen');
       const handNo = V('poker').hand;
       let river = [], drawn = 0;       // (the board of a hand that got to a showdown, as sent and as drawn)

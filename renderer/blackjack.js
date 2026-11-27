@@ -13,6 +13,17 @@
     const a = Math.PI * (0.8 - 0.12 * i);
     return [50 + 43 * Math.cos(a), 86 * Math.sin(a)];
   });
+  // Seated, you're drawn in the middle: the same curve cut into seven places so there is one, yours the fourth. The seats after
+  // yours go to your right and the ones before it to your left, as poker turns its table, and the far right place stays bare.
+  const MID_AT = [0, 1, 2, 3, 4, 5, 6].map((i) => {
+    const a = Math.PI * (0.8 - 0.1 * i);
+    return [50 + 43 * Math.cos(a), 86 * Math.sin(a)];
+  });
+  const placeOf = (i, you) => {
+    if (you < 0) return SEAT_AT[i];
+    const d = (i - you + 6) % 6;
+    return MID_AT[d === 0 ? 3 : d <= 2 ? 3 + d : d - 3];
+  };
   const RESULT = { win: 'Win', blackjack: 'Blackjack', push: 'Push', lose: 'Lose', bust: 'Bust', surrender: 'Surrendered' };
   const ACT = [['hit', 'Hit'], ['stand', 'Stand'], ['double', 'Double'], ['split', 'Split'], ['surrender', 'Surrender']];
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
@@ -114,7 +125,8 @@
       if (v.phase === 'done' && shownRound !== v.round) { shownRound = v.round; flash(); }
     }
     function seat(box, s, i) {
-      const [spot, hands, stakeEl, tag] = box.children;
+      const [spot, hands, stakeEl, tag] = box.children, [x, y] = placeOf(i, v.you);
+      box.style.left = x + '%'; box.style.top = y + '%';
       box.className = 'bjSeat' + (s ? '' : ' empty') + (s && i === v.you ? ' me' : '') + (v.turn && v.turn.seat === i ? ' turn' : '') + (s && s.outMs ? ' out' : '') + (s && s.left ? ' gone' : '');
       if (!s) { hands.replaceChildren(); stakeEl.replaceChildren(); tag.replaceChildren(); box.style.removeProperty('--c'); return; }
       box.style.setProperty('--c', i === v.you ? selfColor : colorOf(s.name));

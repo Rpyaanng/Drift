@@ -34,7 +34,7 @@ const crypto = require('crypto');
 const { wire, ipBytes, ipText, localAddrs } = require('./p2p');
 const createTurn = require('./turn');
 const { createTable } = require('./blackjack');
-const GAME_RULES = { roulette: require('./roulette').createTable, poker: require('./poker').createTable, sketch: require('./sketch').createTable, pachinko: require('./pachinko').createTable };       // the Games room's other tables (hub `games`)
+const GAME_RULES = { roulette: require('./roulette').createTable, poker: require('./poker').createTable, sketch: require('./sketch').createTable, pachinko: require('./pachinko').createTable, crane: require('./crane').createTable };       // the Games room's other tables (hub `games`)
 const { createWallet } = require('./wallet');
 
 const VERSION = 1;
@@ -780,7 +780,7 @@ module.exports = function createHub(opts) {
         return;
       }
       case 'where': {       // which screen this member's Drift shows: the hub bar jumps there when someone clicks them
-        const at = ['scenes', 'media', 'surf', 'broadcast', 'blackjack', 'roulette', 'poker', 'sketch', 'pachinko'].includes(m.at) ? m.at : '';
+        const at = ['scenes', 'media', 'surf', 'broadcast', 'blackjack', 'roulette', 'poker', 'sketch', 'pachinko', 'crane'].includes(m.at) ? m.at : '';
         if ((wheres.get(s.id) || '') === at) return;
         wheres.set(s.id, at);
         membersNews();

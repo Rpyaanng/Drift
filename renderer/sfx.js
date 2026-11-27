@@ -336,6 +336,21 @@
     paGate: (a, d, t) => { noise(a, d, t, { f: 420, q: 1.2, dur: 0.1, level: 0.5 }); [N.C5, N.G5, N.C6].forEach((f, i) => mallet(a, d, t + 0.05 + i * 0.07, f, 0.4, 0.4, 5000)); },
     // the fever over, your winnings in the tray: balls pouring down, and the count running up
     paPay: (a, d, t) => { for (let i = 0; i < 26; i++) noise(a, d, t + i * 0.045 + Math.random() * 0.02, { f: 4200 + Math.random() * 1800, q: 5, dur: 0.02, level: 0.22 }); tally(a, d, t, 1.3, 0.1); celebrate(a, d, t + 0.2, 1.2, 0.4); },
+    // ---- the crane machine (main.js GM_SOUNDS: everyone at the machine hears them) ----
+    // a try paid for: chips going in, and the machine waking with a little tune
+    crCoin: (a, d, t) => { chips(a, d, t, 3, 0.7); [N.C5, E5, N.G5, N.C6].forEach((f, i) => mallet(a, d, t + 0.12 + i * 0.07, f, 0.3, 0.32, 5000)); },
+    // the claw going down: a motor whirring down in pitch
+    crDrop: (a, d, t) => { voice(a, d, t, { f: 420, f2: 230, glide: 0.9, dur: 0.95, level: 0.16, atk: 0.04, vib: 0.03, cut: 1600, partials: [[2, 0.3, 0.6], [3, 0.12, 0.5]] }); noise(a, d, t, { f: 900, q: 0.8, dur: 0.9, level: 0.06 }); },
+    // the prongs closing: a clunk, then a ratchet
+    crGrab: (a, d, t) => { voice(a, d, t, { f: 150, f2: 90, glide: 0.06, dur: 0.12, level: 0.3, atk: 0.002 }); noise(a, d, t, { f: 600, q: 1.5, dur: 0.06, level: 0.35 }); for (let i = 0; i < 5; i++) noise(a, d, t + 0.1 + i * 0.07, { f: 3000, q: 4, dur: 0.015, level: 0.18 }); },
+    // the prize slipping out: a slide whistle falling (the stands go "ohh")
+    crSlip: (a, d, t) => voice(a, d, t, { f: 1150, f2: 360, glide: 0.55, dur: 0.6, level: 0.3, atk: 0.02, vib: 0.02, cut: 4200, partials: [[2, 0.08, 0.5]] }),
+    // a plush down the chute: a bright jingle and a pop of applause; the grand prize: the fanfare, the cymbal, the ovation
+    crWin: (a, d, t) => { [N.C6, E5 * 2, N.G6, N.C7].forEach((f, i) => bell(a, d, t + i * 0.08, f, 0.2, 0.55)); celebrate(a, d, t + 0.15, 1.2, 0.45); },
+    crGrand: (a, d, t) => { horn(a, d, t, 0.8, 0.12); [0, 0.13, 0.26].forEach((dt) => chord(a, d, t + dt, [N.G4, N.D5], 0.1, 0.055)); chord(a, d, t + 0.4, [N.C4, N.G4, N.C5, E5, N.G5], 1.3, 0.045, { vib: 0.006 });
+      crash(a, d, t + 0.4, 0.32, 1.8); celebrate(a, d, t + 0.45, 2.4, 0.6); applause(a, d, t + 0.5, 2.6, 0.45); },
+    // nothing: the sag
+    crMiss: (a, d, t) => deflate(a, d, t, 0.8, 0.38),
   };
   // How loud each is against the others (measured, then by ear): your own actions peak around -7 dBFS at full volume, other
   // people's news a few dB under, the clinks lowest because they sit where the ear is keenest, and a dropped connection a
@@ -357,7 +372,10 @@
     // Pachinko: your balls' launches and pins a quiet texture under everything (they come often), a pocket like a chip, the
     // reels and the gate like your turn, a reach, the fever and its payout with the tables' wins. (Set to sit with their
     // neighbours here; not yet measured like the others.)
-    paLaunch: 0.9, paPin: 0.8, paBounce: 1.1, paStart: 1.5, paTulip: 1.1, paCatch: 1.3, paSpin: 1.6, paReach: 1.5, paMiss: 1.9, paFever: 1.4, paGate: 1.5, paPay: 1.6 };
+    paLaunch: 0.9, paPin: 0.8, paBounce: 1.1, paStart: 1.5, paTulip: 1.1, paCatch: 1.3, paSpin: 1.6, paReach: 1.5, paMiss: 1.9, paFever: 1.4, paGate: 1.5, paPay: 1.6,
+    // the crane machine: the coin and the claw like your own actions, the slip like a near miss, a plush like a win and the
+    // grand prize like the tables' big ones (set beside their neighbours, not yet measured)
+    crCoin: 1.3, crDrop: 1.4, crGrab: 1.2, crSlip: 1.6, crWin: 1.4, crGrand: 1.4, crMiss: 1.9 };
 
   // The way out: a small dark room (1.4 s, low in the mix). No compressor: Chromium's blunts the first few milliseconds of
   // a short sound (it took 60% off the mute click's peak), and the levels here are set by hand to stay well under full scale.

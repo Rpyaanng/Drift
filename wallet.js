@@ -1,4 +1,4 @@
-// Drift — one wallet across the casino tables (Blackjack, Roulette, Hold'em, Pachinko): chips won at one are played at
+// Drift — one wallet across the casino tables (Blackjack, Roulette, Hold'em, Pachinko, the crane machine): chips won at one are played at
 // another. Pure: no Electron, no timers. Whoever runs the tables makes one (main.js for this PC alone, kept in the settings;
 // hub.js for a hub, kept while the hub runs) and hands it to each table as opts.wallet.
 //

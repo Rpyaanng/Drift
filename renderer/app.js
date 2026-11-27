@@ -756,7 +756,7 @@
   // a game), and the two or three controls that matter there, which are the panel toolbar's own (ctx, ctxToggle, ctxStep).
   // Settings and the Hub, open over the screen, name themselves while they're open.
   const winBar = $('#winBar');
-  const WB_GAMES = ['blackjack', 'roulette', 'poker', 'sketch', 'pachinko'];
+  const WB_GAMES = ['blackjack', 'roulette', 'poker', 'sketch', 'pachinko', 'crane'];
   const wbHost = (u) => { try { const x = new URL(u); return /^https?:$/.test(x.protocol) ? { host: x.hostname.replace(/^www\./, ''), safe: x.protocol === 'https:' } : null; } catch { return null; } };
   let wbLast = null, wbOnAir = null;       // (null: not heard yet, so S.bcOnAir from the last state)
   api.on('chat', (c) => { if (c && c.type === 'bclive') { wbOnAir = !!c.live; if (S.windowed) syncWinBar(); } });
@@ -1278,7 +1278,7 @@
     const dA = aTime - mbAT; mbAT = aTime;
     if (playing && !stillMotion.matches) { mbSpin = (mbSpin + dt * 200 + Math.max(0, Math.min(1, dA)) * 140) % 360; mbLabel.style.setProperty('--spin', mbSpin.toFixed(1) + 'deg'); }
   }
-  window.appUI = { toTable: (g) => { g = ['roulette', 'poker', 'sketch', 'pachinko'].includes(g) ? g : 'blackjack'; P(S.mode === 'mix' ? { perDisplay: { [me.key]: g } } : { scene: g }); window.appUI.setTab('scenes'); }, tab: () => tab, setTab: (t) => { if (panel.classList.contains('open')) setTab(t); else { tab = t; if (!SIDE_TABS.includes(t)) screenTab = t; pickScreen(t); tellTab(); syncUI(); } }, open: () => panel.classList.contains('open'), key: me.key };       // (a closed panel stays closed)       // (broadcast.js: its tab comes and goes)
+  window.appUI = { toTable: (g) => { g = ['roulette', 'poker', 'sketch', 'pachinko', 'crane'].includes(g) ? g : 'blackjack'; P(S.mode === 'mix' ? { perDisplay: { [me.key]: g } } : { scene: g }); window.appUI.setTab('scenes'); }, tab: () => tab, setTab: (t) => { if (panel.classList.contains('open')) setTab(t); else { tab = t; if (!SIDE_TABS.includes(t)) screenTab = t; pickScreen(t); tellTab(); syncUI(); } }, open: () => panel.classList.contains('open'), key: me.key };       // (a closed panel stays closed)       // (broadcast.js: its tab comes and goes)
   panel.addEventListener('mouseenter', () => { overPanel = true; });
   panel.addEventListener('mouseleave', () => { overPanel = false; armHide(); });
   let lastMove = [0, 0];
@@ -1293,7 +1293,7 @@
     if (e.target === vidEl || e.target === mirEl || (gpuEl && e.target === gpuEl) || surfBar.contains(e.target)) return;
     if ($('#bcView').contains(e.target)) { panel.classList.remove('open'); return; }       // the Broadcast scene's tiles and bar: a click is for them (it only puts the panel's page away)
     if (e.target.closest('#mediaBack a, #mediaBack button')) return;       // the Media screen's links and arrows (mbPan)
-    if (e.target.closest('#bjTable .bjFelt, #bjTable .bjBar, #rlTable .rlFelt, #rlTable .bjBar, #pkTable .pkFelt, #pkTable .bjBar, #skTable .skFelt, #skTable .bjBar, #paTable .paCab, #paTable .bjBar')) return;       // a game's table and its buttons (the room around it still brings the panel)
+    if (e.target.closest('#bjTable .bjFelt, #bjTable .bjBar, #rlTable .rlFelt, #rlTable .bjBar, #pkTable .pkFelt, #pkTable .bjBar, #skTable .skFelt, #skTable .bjBar, #paTable .paCab, #paTable .bjBar, #crTable .crCab, #crTable .bjBar')) return;       // a game's table and its buttons (the room around it still brings the panel)
     if (!panel.contains(e.target) && !confirmEl.contains(e.target) && !$('#mixer').contains(e.target)) { if (panel.classList.contains('open')) { panel.classList.remove('open'); } else showPanel(); } });
 
   const fill = (el) => el.style.setProperty('--fill', ((el.value - el.min) / (el.max - el.min)) * 100 + '%');
@@ -1654,7 +1654,7 @@
   // Span (the others have the room's light without a table). While it's up main.js is told, and seats you: at the active hub's
   // table when you're online in one, at your own otherwise. Online, the others' pointers over the table show on it, and yours goes to them.
   const bjEl = $('#bjTable'), bjPtrBox = $('#bjPtrs'), bjPtrEls = new Map();
-  let bjPtrList = [], bjPtrAt = 0, bjPtrOut = false, bjColKey = '', bjHub = '';       // bjHub: the hub whose table it is ('' alone)
+  let bjPtrList = [], bjColKey = '', bjHub = '';       // bjHub: the hub whose table it is ('' alone)
   // at a hub's table, each seat wears its player's picture from the hub (renderer/chat.js face: their initial without one)
   const bjT = window.driftBJ(bjEl, (m) => api.cmd({ type: 'bj', ...m }), { face: (id) => (bjHub && window.chatUI ? window.chatUI.face(bjHub, id, '') : null),
     me: () => (window.chatUI ? window.chatUI.info().me.id || '' : '') });       // (you, on the hub's board of biggest pots)
@@ -1664,7 +1664,7 @@
     const on = bjHere();
     if (on === bjOn) return;
     bjOn = on; bjEl.classList.toggle('on', on);
-    if (!on) { bjT.view(null); bjPtrList = []; drawPtrs(bjPtrBox, bjPtrEls, null, []); if (bjPtrOut) { bjPtrOut = false; api.cmd({ type: 'bj', op: 'ptr', x: -1, y: -1 }); } }
+    if (!on) { bjT.view(null); bjPtrList = []; drawPtrs(bjPtrBox, bjPtrEls, null, []); }
     api.cmd({ type: 'bj', op: 'here', on, key: me.key });
     syncMediaBack();       // (where you are, for friends' hub bars)
   }
@@ -1688,15 +1688,8 @@
     for (const x of Object.values(GM)) x.t.colors(look);       // (Roulette's and Hold'em's tables: the same room)
   }
   addEventListener('resize', () => { if (bjPtrEls.size) drawPtrs(bjPtrBox, bjPtrEls, bjOn ? bjT.box() : null, bjPtrList); });
-  addEventListener('mousemove', (e) => {       // your pointer over the table, for the others at it (main.js sends it only online, with cursor sharing on)
-    if (!bjOn) return;
-    const b = bjT.box(), over = !!b && (bjT.felt.contains(e.target) || bjEl.contains(e.target));
-    const x = over ? (e.clientX - b.l) / b.w : -1, y = over ? (e.clientY - b.t) / b.h : -1;
-    if (!(x >= 0 && x <= 1 && y >= 0 && y <= 1)) { if (bjPtrOut) { bjPtrOut = false; api.cmd({ type: 'bj', op: 'ptr', x: -1, y: -1 }); } return; }
-    if (Date.now() - bjPtrAt < 40) return;       // at most 25 a second
-    bjPtrAt = Date.now(); bjPtrOut = true;
-    api.cmd({ type: 'bj', op: 'ptr', x: +x.toFixed(4), y: +y.toFixed(4) });
-  });
+  // (your pointer isn't sent from this table: each player sees it turned so their own seat is in the middle, so it wouldn't
+  // land where you aimed it. main.js leaves the others' out too.)
   setInterval(() => { for (const q of bjPtrEls.values()) q.el.classList.toggle('idle', Date.now() - q.at > 6000); }, 1000);
 
   // ---------- the Games room's other tables: Roulette and Hold'em (renderer/roulette.js, renderer/poker.js; main.js gmMove) ----------
@@ -1704,7 +1697,7 @@
   // the active hub's table or your own, the others' pointers over the felt and yours to them. The same light from the palette.
   const gmPtrBox = $('#gmPtrs'), gmPtrEls = new Map();
   let gmPtrList = [], gmPtrAt = 0, gmPtrOut = false, gmHub = '';
-  const GM = { roulette: { el: $('#rlTable'), make: window.driftRoulette }, poker: { el: $('#pkTable'), make: window.driftPoker }, sketch: { el: $('#skTable'), make: window.driftSketch }, pachinko: { el: $('#paTable'), make: window.driftPachinko } };
+  const GM = { roulette: { el: $('#rlTable'), make: window.driftRoulette }, poker: { el: $('#pkTable'), make: window.driftPoker }, sketch: { el: $('#skTable'), make: window.driftSketch }, pachinko: { el: $('#paTable'), make: window.driftPachinko }, crane: { el: $('#crTable'), make: window.driftCrane } };
   for (const [g, x] of Object.entries(GM)) {
     x.on = false;
     x.t = x.make(x.el, (m) => api.cmd({ type: 'game', g, ...m }), { face: (id) => (gmHub && window.chatUI ? window.chatUI.face(gmHub, id, '') : null),
@@ -1735,7 +1728,7 @@
   }
   addEventListener('resize', () => { if (gmPtrEls.size) drawPtrs(gmPtrBox, gmPtrEls, gmBox(), gmPtrList); });
   addEventListener('mousemove', (e) => {       // your pointer over the table, for the others at it (main.js sends it only online, with cursor sharing on)
-    if (!gmOn) return;
+    if (!gmOn || gmOn === 'poker') return;       // (none from Hold'em's table: it's turned for each player, as Blackjack's is)
     const x0 = GM[gmOn], b = x0.t.box(), over = !!b && x0.el.contains(e.target);
     const x = over ? (e.clientX - b.l) / b.w : -1, y = over ? (e.clientY - b.t) / b.h : -1;
     if (!(x >= 0 && x <= 1 && y >= 0 && y <= 1)) { gmPtrOff(); return; }

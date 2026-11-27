@@ -691,8 +691,8 @@
   // ---- who's online in a hub, for the hub bar: in voice or not, what they share, and what they're looking at ----
   // share: their broadcast, or their watch-together. sees: someone's broadcast or watch-together they're watching, else the
   // screen their Drift shows (hub.js 'where': Scenes, Media, Surf, which in a hub is its shared browser, or Share).
-  const SCREEN_NAMES = { scenes: 'Scenes', media: 'Media', surf: 'Surf', broadcast: 'Share', blackjack: 'the Blackjack table', roulette: 'the Roulette table', poker: 'the Hold\'em table', sketch: 'Sketch & Guess', pachinko: 'the Pachinko machine' };
-  const AT_TABLE = new Set(['blackjack', 'roulette', 'poker', 'sketch', 'pachinko']);       // the Games room's tables ("At", and a click sits you down there)
+  const SCREEN_NAMES = { scenes: 'Scenes', media: 'Media', surf: 'Surf', broadcast: 'Share', blackjack: 'the Blackjack table', roulette: 'the Roulette table', poker: 'the Hold\'em table', sketch: 'Sketch & Guess', pachinko: 'the Pachinko machine', crane: 'the crane machine' };
+  const AT_TABLE = new Set(['blackjack', 'roulette', 'poker', 'sketch', 'pachinko', 'crane']);       // the Games room's tables ("At", and a click sits you down there)
   function presence(x) {
     const bcs = x.bcs || [], lives = x.lives || [];
     return x.members.filter((m) => m.online).map((m) => {
@@ -725,7 +725,7 @@
       p.muted ? h('b.cbMuted', {}, icon('micOff')) : p.sees && SEES_ICON(p.sees) ? h('b.cbWhere', {}, icon(SEES_ICON(p.sees))) : null);
   }
   // the little icon in the corner the mute badge takes (muted wins): the tab they're on, or what they're watching
-  const TAB_ICONS = { scenes: 'sparkle', media: 'film', surf: 'globe', broadcast: 'screen', blackjack: 'cards', roulette: 'cards', poker: 'cards', sketch: 'pencil', pachinko: 'cards' };
+  const TAB_ICONS = { scenes: 'sparkle', media: 'film', surf: 'globe', broadcast: 'screen', blackjack: 'cards', roulette: 'cards', poker: 'cards', sketch: 'pencil', pachinko: 'cards', crane: 'cards' };
   const SEES_ICON = (s) => (s.kind === 'bc' ? 'screen' : s.kind === 'live' ? 'film' : TAB_ICONS[s.at]);
   async function jumpTo(x, p) {
     if (p.isMe) return;

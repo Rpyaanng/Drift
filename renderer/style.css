@@ -1474,18 +1474,18 @@ body.bcfull:not(.surfing):not(:has(#bcBar.show, #bcBar:hover, #bcBar:focus-withi
    Over the room the shader draws: a lamp's pool of light in the accent, a felt from the palette's second colour, a rail lit
    by a thin line of the accent, and a small spot of each player's colour at their seat. app.js sets the colours (--bjAccent,
    --bjFelt, --bjFeltDeep, --bjHi, --bjDark, --bjLamp) from the palette, again on every change. */
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) { position: fixed; inset: 0; z-index: 2; display: none; pointer-events: none; color: #f4f1ea;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) { position: fixed; inset: 0; z-index: 2; display: none; pointer-events: none; color: #f4f1ea;
   --bjAccent: #22c08a; --bjFelt: #0f4a3a; --bjFeltDeep: #06241c; --bjHi: #b58cff; --bjDark: #040816; --bjLamp: #a8f0d2;
   font: 500 14px/1.3 "Segoe UI Variable Text", "Segoe UI", system-ui; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable).on { display: block; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable).on.live .bjFelt, :is(#bjTable, #rlTable, #pkTable, #skTable, #paTable).on .bjBar { pointer-events: auto; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjLamp { position: absolute; left: 50%; top: 46%; width: min(120vw, 190vh); height: min(80vw, 120vh); transform: translate(-50%, -50%); border-radius: 50%;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable).on { display: block; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable).on.live .bjFelt, :is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable).on .bjBar { pointer-events: auto; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjLamp { position: absolute; left: 50%; top: 46%; width: min(120vw, 190vh); height: min(80vw, 120vh); transform: translate(-50%, -50%); border-radius: 50%;
   background: radial-gradient(closest-side, color-mix(in srgb, var(--bjLamp) 26%, transparent), color-mix(in srgb, var(--bjLamp) 8%, transparent) 55%, transparent);
   mix-blend-mode: screen; transition: opacity .6s, filter .6s; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable).fWin .bjLamp { animation: bjWarm 2.4s ease-out; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable).fLose .bjLamp { animation: bjDim 2.4s ease-out; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable).fBj .bjLamp { animation: bjWarm 2.4s ease-out; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable).fBj .bjRail { animation: bjShimmer 2.4s ease-out; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable).fWin .bjLamp { animation: bjWarm 2.4s ease-out; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable).fLose .bjLamp { animation: bjDim 2.4s ease-out; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable).fBj .bjLamp { animation: bjWarm 2.4s ease-out; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable).fBj .bjRail { animation: bjShimmer 2.4s ease-out; }
 @keyframes bjWarm { 0% { filter: none; } 20% { filter: brightness(1.7) saturate(1.2); } 100% { filter: none; } }
 @keyframes bjDim { 0% { opacity: 1; } 25% { opacity: .45; } 100% { opacity: 1; } }
 @keyframes bjShimmer { 0%, 100% { filter: none; } 30% { filter: brightness(2) drop-shadow(0 0 18px var(--bjAccent)); } }
@@ -1529,13 +1529,13 @@ body.bcfull:not(.surfing):not(:has(#bcBar.show, #bcBar:hover, #bcBar:focus-withi
 #bjTable .bjTray .t25 { --chip: color-mix(in srgb, var(--bjAccent) 85%, #000); }
 #bjTable .bjTray .t100 { --chip: color-mix(in srgb, var(--bjDark) 50%, #2a2a33); }
 #bjTable .bjTray .t500 { --chip: color-mix(in srgb, var(--bjHi) 75%, #000); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjSign { position: absolute; left: 59cqw; top: 2.2cqh; width: 13cqw; padding: .55cqw .7cqw; border-radius: .45cqw; text-align: center;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjSign { position: absolute; left: 59cqw; top: 2.2cqh; width: 13cqw; padding: .55cqw .7cqw; border-radius: .45cqw; text-align: center;
   background: linear-gradient(160deg, rgba(255,255,255,.14), rgba(255,255,255,.04)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bjAccent) 40%, rgba(255,255,255,.2)), 0 .6cqh 1.4cqh rgba(0,0,0,.35); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjMode { font: 700 .85cqw/1.2 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: .22em; text-transform: uppercase; color: color-mix(in srgb, var(--bjAccent) 60%, #fff); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjLimits { margin-top: .25cqw; font: 600 .78cqw/1.2 "Segoe UI Variable Text", "Segoe UI", system-ui; letter-spacing: .08em; color: rgba(255,255,255,.7); font-variant-numeric: tabular-nums; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjStatus { position: absolute; left: 50%; top: 26.5cqh; transform: translateX(-50%); display: flex; align-items: center; gap: 1cqw; white-space: nowrap;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjMode { font: 700 .85cqw/1.2 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: .22em; text-transform: uppercase; color: color-mix(in srgb, var(--bjAccent) 60%, #fff); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjLimits { margin-top: .25cqw; font: 600 .78cqw/1.2 "Segoe UI Variable Text", "Segoe UI", system-ui; letter-spacing: .08em; color: rgba(255,255,255,.7); font-variant-numeric: tabular-nums; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjStatus { position: absolute; left: 50%; top: 26.5cqh; transform: translateX(-50%); display: flex; align-items: center; gap: 1cqw; white-space: nowrap;
   font: 600 1.7cqw/1 "Segoe UI Variable Display", "Segoe UI", system-ui; color: #fff; text-shadow: 0 1px 10px rgba(0,0,0,.5); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjCount { display: inline-grid; place-items: center; min-width: 2.6cqw; height: 2.6cqw; padding: 0 .6cqw; border-radius: 999px; font: 700 1.3cqw/1 "Segoe UI Variable Display", "Segoe UI", system-ui;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjCount { display: inline-grid; place-items: center; min-width: 2.6cqw; height: 2.6cqw; padding: 0 .6cqw; border-radius: 999px; font: 700 1.3cqw/1 "Segoe UI Variable Display", "Segoe UI", system-ui;
   background: color-mix(in srgb, var(--bjAccent) 30%, rgba(0,0,0,.4)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--bjAccent) 70%, transparent); font-variant-numeric: tabular-nums; }
 
 /* the dealer and the shoe */
@@ -1546,28 +1546,28 @@ body.bcfull:not(.surfing):not(:has(#bcBar.show, #bcBar:hover, #bcBar:focus-withi
   background: repeating-linear-gradient(0deg, color-mix(in srgb, var(--bjAccent) 55%, #222) 0 2px, color-mix(in srgb, var(--bjAccent) 25%, #111) 2px 4px); }
 
 /* cards (drawn here: plain corners and a big suit) */
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjCards { display: flex; min-height: 7.4cqw; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjCard { position: relative; width: 5.2cqw; height: 7.4cqw; border-radius: .55cqw; flex: none; background: linear-gradient(170deg, #fffdf8, #ece6da); color: #1d1b26;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjCards { display: flex; min-height: 7.4cqw; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjCard { position: relative; width: 5.2cqw; height: 7.4cqw; border-radius: .55cqw; flex: none; background: linear-gradient(170deg, #fffdf8, #ece6da); color: #1d1b26;
   box-shadow: 0 .5cqh 1.4cqh rgba(0,0,0,.45), inset 0 0 0 1px rgba(0,0,0,.08); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjCard + .bjCard { margin-left: -3cqw; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjCard.red { color: #c3313f; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjCard span { position: absolute; display: flex; flex-direction: column; align-items: center; line-height: .95; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjCard .cTl { left: .45cqw; top: .45cqw; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjCard .cBr { right: .45cqw; bottom: .45cqw; transform: rotate(180deg); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjCard b { font: 700 1.35cqw/1 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: -.04em; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjCard i { font-style: normal; font-size: 1.05cqw; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjCard .cMid { inset: 0; justify-content: center; font-size: 3cqw; opacity: .9; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjCard + .bjCard { margin-left: -3cqw; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjCard.red { color: #c3313f; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjCard span { position: absolute; display: flex; flex-direction: column; align-items: center; line-height: .95; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjCard .cTl { left: .45cqw; top: .45cqw; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjCard .cBr { right: .45cqw; bottom: .45cqw; transform: rotate(180deg); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjCard b { font: 700 1.35cqw/1 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: -.04em; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjCard i { font-style: normal; font-size: 1.05cqw; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjCard .cMid { inset: 0; justify-content: center; font-size: 3cqw; opacity: .9; }
 /* the back: a white border, a fine accent line inside it, and Drift's mark on a deep ground */
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjCard.back { display: grid; place-items: center;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjCard.back { display: grid; place-items: center;
   background: radial-gradient(ellipse at 50% 40%, color-mix(in srgb, var(--bjAccent) 22%, var(--bjDark)), color-mix(in srgb, var(--bjDark) 85%, #000));
   box-shadow: 0 .5cqh 1.4cqh rgba(0,0,0,.45), inset 0 0 0 .32cqw #f4efe6, inset 0 0 0 .45cqw color-mix(in srgb, var(--bjAccent) 65%, transparent); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjCard.back .bjMark { width: 78%; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjCard.deal { animation: bjDeal .38s cubic-bezier(.2,.8,.3,1) both; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjCard.back .bjMark { width: 78%; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjCard.deal { animation: bjDeal .38s cubic-bezier(.2,.8,.3,1) both; }
 @keyframes bjDeal { from { transform: translate(24cqw, -18cqh) rotate(-14deg); opacity: 0; } to { transform: none; opacity: 1; } }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjTotal { min-width: 2.4cqw; padding: .25cqw .7cqw; border-radius: 999px; text-align: center; font: 700 1.1cqw/1.2 "Segoe UI Variable Display", "Segoe UI", system-ui;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjTotal { min-width: 2.4cqw; padding: .25cqw .7cqw; border-radius: 999px; text-align: center; font: 700 1.1cqw/1.2 "Segoe UI Variable Display", "Segoe UI", system-ui;
   background: rgba(0,0,0,.45); font-variant-numeric: tabular-nums; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjTotal:empty { display: none; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjTotal.bust { background: rgba(190,40,52,.75); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjTotal:empty { display: none; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjTotal.bust { background: rgba(190,40,52,.75); }
 
 /* the seats along the curve: a spot of the player's colour, their hands, their bet, their name and chips */
 #bjTable .bjSeat { position: absolute; width: 15cqw; transform: translate(-50%, -100%);       /* (left / top: where its name tag sits) */ display: flex; flex-direction: column; align-items: center; gap: .8cqh; --c: rgba(255,255,255,.4); }
@@ -1597,67 +1597,67 @@ body.bcfull:not(.surfing):not(:has(#bcBar.show, #bcBar:hover, #bcBar:focus-withi
 #bjTable .bjChips i { position: absolute; left: 0; bottom: calc(var(--k) * .32cqw); width: 3cqw; height: 3cqw; }
 #bjTable .bjChips b { position: absolute; left: 3.6cqw; top: 50%; transform: translateY(-50%); font: 700 1.05cqw/1 "Segoe UI Variable Display", "Segoe UI", system-ui; white-space: nowrap; text-shadow: 0 1px 6px rgba(0,0,0,.6); }
 #bjTable .bjIns { font-size: .85cqw; color: rgba(255,255,255,.7); margin-left: 4cqw; white-space: nowrap; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjTag { position: relative; display: flex; align-items: center; gap: .6cqw; padding: .35cqw .9cqw .35cqw .4cqw; border-radius: 999px; white-space: nowrap; max-width: 15cqw;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjTag { position: relative; display: flex; align-items: center; gap: .6cqw; padding: .35cqw .9cqw .35cqw .4cqw; border-radius: 999px; white-space: nowrap; max-width: 15cqw;
   background: rgba(8,10,16,.55); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 45%, transparent); font-size: 1cqw; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjSeat.empty .bjTag { background: none; box-shadow: none; color: rgba(255,255,255,.35); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjTag .nm { overflow: hidden; text-overflow: ellipsis; font-weight: 700; color: color-mix(in srgb, var(--c) 70%, #fff); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjTag .ch { color: rgba(255,255,255,.7); font-variant-numeric: tabular-nums; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjSeat.empty .bjRing, :is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjSeat.empty .ch { display: none; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjRing { width: 1.5cqw; height: 1.5cqw; border-radius: 50%; flex: none; background: var(--c); --f: 0; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjRing.on { background: conic-gradient(var(--c) calc(var(--f) * 360deg), rgba(255,255,255,.12) 0); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjRing.av { display: grid; place-items: center; width: 2.4cqw; height: 2.4cqw; padding: .18cqw; margin-left: -.15cqw; }       /* a hub member's picture, the ring round it */
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjRing.av .face { width: 100%; height: 100%; font-size: 1cqw; box-shadow: 0 0 0 .1cqw rgba(8,10,16,.8); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjSeat.me .bjTag { background: color-mix(in srgb, var(--c) 26%, rgba(8,10,16,.7)); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjSeat.empty .bjTag { background: none; box-shadow: none; color: rgba(255,255,255,.35); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjTag .nm { overflow: hidden; text-overflow: ellipsis; font-weight: 700; color: color-mix(in srgb, var(--c) 70%, #fff); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjTag .ch { color: rgba(255,255,255,.7); font-variant-numeric: tabular-nums; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjSeat.empty .bjRing, :is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjSeat.empty .ch { display: none; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjRing { width: 1.5cqw; height: 1.5cqw; border-radius: 50%; flex: none; background: var(--c); --f: 0; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjRing.on { background: conic-gradient(var(--c) calc(var(--f) * 360deg), rgba(255,255,255,.12) 0); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjRing.av { display: grid; place-items: center; width: 2.4cqw; height: 2.4cqw; padding: .18cqw; margin-left: -.15cqw; }       /* a hub member's picture, the ring round it */
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjRing.av .face { width: 100%; height: 100%; font-size: 1cqw; box-shadow: 0 0 0 .1cqw rgba(8,10,16,.8); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjSeat.me .bjTag { background: color-mix(in srgb, var(--c) 26%, rgba(8,10,16,.7)); }
 
 /* chips, on the table and as buttons */
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .chip { border-radius: 50%; --chip: #e9e5db; --edge: #fff;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .chip { border-radius: 50%; --chip: #e9e5db; --edge: #fff;
   background: radial-gradient(circle, var(--chip) 0 46%, transparent 47%), repeating-conic-gradient(var(--edge) 0 15deg, var(--chip) 15deg 45deg);
   box-shadow: 0 .2cqh .6cqh rgba(0,0,0,.5), inset 0 0 0 .18cqw rgba(0,0,0,.18); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .chip.c10 { --chip: #ece8de; --edge: color-mix(in srgb, var(--bjAccent) 70%, #222); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .chip.c25 { --chip: color-mix(in srgb, var(--bjAccent) 85%, #000); --edge: #f4f1ea; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .chip.c100 { --chip: color-mix(in srgb, var(--bjDark) 60%, #1b1b22); --edge: color-mix(in srgb, var(--bjAccent) 80%, #fff); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .chip.c500 { --chip: color-mix(in srgb, var(--bjHi) 75%, #000); --edge: #f6e7b0; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .chip.c10 { --chip: #ece8de; --edge: color-mix(in srgb, var(--bjAccent) 70%, #222); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .chip.c25 { --chip: color-mix(in srgb, var(--bjAccent) 85%, #000); --edge: #f4f1ea; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .chip.c100 { --chip: color-mix(in srgb, var(--bjDark) 60%, #1b1b22); --edge: color-mix(in srgb, var(--bjAccent) 80%, #fff); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .chip.c500 { --chip: color-mix(in srgb, var(--bjHi) 75%, #000); --edge: #f6e7b0; }
 
 /* your controls, under the table */
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBar { position: absolute; left: 50%; top: calc(9vh + min(44vw, 75vh)); transform: translateX(-50%);       /* under the table, clear of Drift's own bar */ display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 999px;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBar { position: absolute; left: 50%; top: calc(9vh + min(44vw, 75vh)); transform: translateX(-50%);       /* under the table, clear of Drift's own bar */ display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 999px;
   background: rgba(8,10,16,.62); backdrop-filter: blur(16px); box-shadow: 0 10px 34px rgba(0,0,0,.45), inset 0 0 0 1px color-mix(in srgb, var(--bjAccent) 28%, rgba(255,255,255,.06)); white-space: nowrap; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBar:empty { display: none; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjLine { padding: 0 8px; font-weight: 600; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBar .bjCount { min-width: 30px; height: 30px; font-size: 15px; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBar .chip { width: 48px; height: 48px; border: 0; padding: 0; cursor: pointer; font: 800 13px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; color: #16161c; transition: transform .12s, filter .12s; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBar .chip.c25, :is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBar .chip.c100, :is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBar .chip.c500 { color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.6); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBar .chip:hover:not(:disabled) { transform: translateY(-3px); filter: brightness(1.12); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBar .chip:disabled { opacity: .3; cursor: default; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjAmt { min-width: 110px; text-align: center; font: 700 17px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; font-variant-numeric: tabular-nums; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBtn { height: 40px; padding: 0 20px; border: 0; border-radius: 999px; cursor: pointer; font: 700 14px/1 "Segoe UI Variable Text", "Segoe UI", system-ui; color: #fff;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBar:empty { display: none; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjLine { padding: 0 8px; font-weight: 600; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBar .bjCount { min-width: 30px; height: 30px; font-size: 15px; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBar .chip { width: 48px; height: 48px; border: 0; padding: 0; cursor: pointer; font: 800 13px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; color: #16161c; transition: transform .12s, filter .12s; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBar .chip.c25, :is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBar .chip.c100, :is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBar .chip.c500 { color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.6); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBar .chip:hover:not(:disabled) { transform: translateY(-3px); filter: brightness(1.12); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBar .chip:disabled { opacity: .3; cursor: default; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjAmt { min-width: 110px; text-align: center; font: 700 17px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; font-variant-numeric: tabular-nums; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBtn { height: 40px; padding: 0 20px; border: 0; border-radius: 999px; cursor: pointer; font: 700 14px/1 "Segoe UI Variable Text", "Segoe UI", system-ui; color: #fff;
   background: rgba(255,255,255,.1); box-shadow: inset 0 0 0 1px rgba(255,255,255,.14); transition: background .12s, transform .12s; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBtn:hover:not(:disabled) { background: rgba(255,255,255,.18); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBtn.primary { background: color-mix(in srgb, var(--bjAccent) 80%, #000); box-shadow: 0 0 18px color-mix(in srgb, var(--bjAccent) 40%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--bjAccent) 80%, #fff); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBtn.primary:hover:not(:disabled) { background: var(--bjAccent); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBtn.ghost { background: none; box-shadow: none; color: rgba(255,255,255,.7); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBtn:disabled { opacity: .35; cursor: default; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBtn:focus-visible, :is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBar .chip:focus-visible { outline: 2px solid var(--bjAccent); outline-offset: 2px; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjNote { position: absolute; left: 50%; top: 1.6vh; transform: translate(-50%, 6px); padding: 7px 16px; border-radius: 999px; background: rgba(20,10,14,.75);
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBtn:hover:not(:disabled) { background: rgba(255,255,255,.18); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBtn.primary { background: color-mix(in srgb, var(--bjAccent) 80%, #000); box-shadow: 0 0 18px color-mix(in srgb, var(--bjAccent) 40%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--bjAccent) 80%, #fff); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBtn.primary:hover:not(:disabled) { background: var(--bjAccent); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBtn.ghost { background: none; box-shadow: none; color: rgba(255,255,255,.7); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBtn:disabled { opacity: .35; cursor: default; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBtn:focus-visible, :is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBar .chip:focus-visible { outline: 2px solid var(--bjAccent); outline-offset: 2px; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjNote { position: absolute; left: 50%; top: 1.6vh; transform: translate(-50%, 6px); padding: 7px 16px; border-radius: 999px; background: rgba(20,10,14,.75);
   box-shadow: inset 0 0 0 1px rgba(255,120,130,.35); opacity: 0; transition: opacity .25s, transform .25s; pointer-events: none; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjNote.on { opacity: 1; transform: translate(-50%, 0); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjNote.on { opacity: 1; transform: translate(-50%, 0); }
 #bjPtrs { position: fixed; inset: 0; pointer-events: none; z-index: 9998; overflow: hidden; }       /* (with the other pointer layers: see #ptrs) */
 /* the hub's biggest pots: under the table at its left edge, level with the bar */
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBoard { position: absolute; left: max(16px, calc(50% - min(44vw, 75vh))); top: calc(9vh + min(44vw, 75vh)); width: 260px; display: none;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBoard { position: absolute; left: max(16px, calc(50% - min(44vw, 75vh))); top: calc(9vh + min(44vw, 75vh)); width: 260px; display: none;
   padding: 10px 12px 8px; border-radius: 14px; background: rgba(8,10,16,.62); backdrop-filter: blur(16px);
   box-shadow: 0 10px 34px rgba(0,0,0,.45), inset 0 0 0 1px color-mix(in srgb, var(--bjAccent) 28%, rgba(255,255,255,.06)); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBoard.on { display: block; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBHead { margin-bottom: 6px; font: 700 10.5px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: .22em; text-transform: uppercase; color: color-mix(in srgb, var(--bjAccent) 60%, #fff); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBNone { font-size: 12px; color: rgba(255,255,255,.6); padding: 2px 0 4px; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBRow { display: flex; align-items: center; gap: 8px; height: 26px; padding: 0 6px; margin: 0 -6px; border-radius: 8px; font-size: 13px; transition: background 1s; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBRow .rk { width: 12px; text-align: right; font-weight: 700; color: rgba(255,255,255,.5); font-variant-numeric: tabular-nums; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBRow:first-of-type .rk { color: color-mix(in srgb, var(--bjHi) 70%, #fff); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBRow .face { width: 20px; height: 20px; font-size: 10px; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBRow .nf { width: 20px; height: 20px; flex: none; border-radius: 50%; background: rgba(255,255,255,.12); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBRow .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBRow.me .nm { font-weight: 700; color: color-mix(in srgb, var(--bjAccent) 55%, #fff); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBRow .bjB { font: 800 9px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; font-style: normal; padding: 3px 5px; border-radius: 5px; letter-spacing: .06em; background: linear-gradient(90deg, var(--bjAccent), var(--bjHi)); color: #fff; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBRow .amt { font-weight: 700; font-variant-numeric: tabular-nums; color: color-mix(in srgb, var(--bjAccent) 45%, #fff); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable) .bjBRow.fresh { background: color-mix(in srgb, var(--bjAccent) 26%, transparent); }       /* a record just set */
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBoard.on { display: block; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBHead { margin-bottom: 6px; font: 700 10.5px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: .22em; text-transform: uppercase; color: color-mix(in srgb, var(--bjAccent) 60%, #fff); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBNone { font-size: 12px; color: rgba(255,255,255,.6); padding: 2px 0 4px; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBRow { display: flex; align-items: center; gap: 8px; height: 26px; padding: 0 6px; margin: 0 -6px; border-radius: 8px; font-size: 13px; transition: background 1s; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBRow .rk { width: 12px; text-align: right; font-weight: 700; color: rgba(255,255,255,.5); font-variant-numeric: tabular-nums; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBRow:first-of-type .rk { color: color-mix(in srgb, var(--bjHi) 70%, #fff); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBRow .face { width: 20px; height: 20px; font-size: 10px; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBRow .nf { width: 20px; height: 20px; flex: none; border-radius: 50%; background: rgba(255,255,255,.12); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBRow .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBRow.me .nm { font-weight: 700; color: color-mix(in srgb, var(--bjAccent) 55%, #fff); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBRow .bjB { font: 800 9px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; font-style: normal; padding: 3px 5px; border-radius: 5px; letter-spacing: .06em; background: linear-gradient(90deg, var(--bjAccent), var(--bjHi)); color: #fff; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBRow .amt { font-weight: 700; font-variant-numeric: tabular-nums; color: color-mix(in srgb, var(--bjAccent) 45%, #fff); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBRow.fresh { background: color-mix(in srgb, var(--bjAccent) 26%, transparent); }       /* a record just set */
 
 /* ---------- the Games room's other tables: Roulette and Texas Hold'em (renderer/roulette.js, renderer/poker.js) ----------
    The same room as the Blackjack table's (its lamp, cards, chips, bar, board and colours above, shared), and the same place on
@@ -1762,6 +1762,75 @@ body.bcfull:not(.surfing):not(:has(#bcBar.show, #bcBar:hover, #bcBar:focus-withi
 #paTable .paDial { display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 600; }
 #paTable .paDial input { width: 170px; margin: 0; --fill: 60%; }
 #paTable .paDial b { width: 28px; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* The crane machine (renderer/crane.js): the Pachinko machine's carnival, as a tall glass box. The cabinet in the middle (its
+   marquee, the glass with the canvas in it, the base with the prize door under the chute), the prizes and the last tries on
+   its left, who's at the claw and who's in line on its right, the bar under it where the tables' is. The cabinet is 640 × 1000,
+   78vh tall (64cqh wide), the glass 600 × 800 inside it (76cqh tall, 57cqh wide, so 3.5cqh in from each side). */
+#crTable.on.live .crCab, #crTable.on .bjBar { pointer-events: auto; }
+#crTable .crCab { position: absolute; left: 50%; top: 4vh; height: 78vh; aspect-ratio: 640 / 1000; transform: translateX(-50%); container-type: size;
+  border-radius: 4cqh 4cqh 2cqh 2cqh;
+  background: linear-gradient(170deg, color-mix(in srgb, var(--bjDark) 70%, #3a3346), color-mix(in srgb, var(--bjDark) 85%, #000));
+  box-shadow: 0 3cqh 8cqh rgba(0,0,0,.6), inset 0 0 0 .5cqh color-mix(in srgb, var(--bjAccent) 35%, #1a1622); }
+#crTable .crCab::before { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; opacity: .55;       /* candy stripes down the sides */
+  background: repeating-linear-gradient(115deg, rgba(255,79,139,.22) 0 1.4cqh, transparent 1.4cqh 2.8cqh); }
+#crTable .crTrim { position: absolute; inset: .7cqh; border-radius: inherit; pointer-events: none;
+  box-shadow: 0 0 0 .3cqh color-mix(in srgb, var(--bjAccent) 85%, #fff), 0 0 3cqh color-mix(in srgb, var(--bjAccent) 45%, transparent); }
+#crTable.fWin .crTrim { animation: paChase .5s steps(2) 5; }
+#crTable.shake .crCab { animation: paShake .6s cubic-bezier(.36,.07,.19,.97), paHue 2.4s linear 1; }
+#crTable .crMarquee { position: absolute; left: 3.5cqh; right: 3.5cqh; top: 1.6cqh; height: 8.4cqh; border-radius: 2.2cqh 2.2cqh .8cqh .8cqh; pointer-events: none;
+  display: flex; align-items: center; justify-content: center; gap: 1.2cqh; overflow: hidden;
+  background: linear-gradient(180deg, #ff6fa5, #a8225e 70%, #6a0d3a); box-shadow: inset 0 0 0 .3cqh #fff3d6, inset 0 -.8cqh 1.6cqh rgba(0,0,0,.35);
+  font: 900 3.6cqh/1 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: .28em; color: #fff3d6; white-space: nowrap;
+  text-shadow: 0 0 .5cqh #ffd84a, 0 0 1.4cqh #ff4f8b, 0 .3cqh 0 #6a0d3a; }       /* (neon on a striped awning) */
+#crTable .crMarquee::before { content: ''; position: absolute; inset: 0; opacity: .25; background: repeating-linear-gradient(90deg, #fff3d6 0 2.4cqh, transparent 2.4cqh 4.8cqh); }
+#crTable .crMarquee svg { position: relative; height: 4.2cqh; width: auto; }
+#crTable .crMarquee span { position: relative; }
+#crTable.busy .crMarquee span { animation: paFlicker .5s steps(2) infinite; }
+#crTable .crGlass { position: absolute; left: 50%; top: 11.2cqh; height: 76cqh; aspect-ratio: 600 / 800; transform: translateX(-50%); border-radius: 1.2cqh; overflow: hidden;
+  box-shadow: inset 0 0 3cqh rgba(0,0,0,.6), 0 0 0 .4cqh #c9d0dc, 0 0 0 .7cqh color-mix(in srgb, var(--bjDark) 60%, #000); }
+#crTable .crCanvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#crTable .crClock { position: absolute; right: 4%; top: 9%; display: none; min-width: 7cqh; padding: .4cqh 1cqh; border-radius: 1cqh; text-align: center; pointer-events: none;
+  background: rgba(8,4,16,.7); box-shadow: inset 0 0 0 .25cqh #ffd84a; font: 900 4.4cqh/1 "Segoe UI Variable Display", "Segoe UI", system-ui; color: #ffd84a;
+  font-variant-numeric: tabular-nums; text-shadow: 0 0 1.2cqh #ff9a3c; }
+#crTable .crClock.on { display: block; }
+#crTable .crClock.low { color: #ff5a6e; box-shadow: inset 0 0 0 .25cqh #ff5a6e; animation: paPulseText .4s ease-in-out infinite alternate; }
+#crTable .crBase { position: absolute; left: 3.5cqh; right: 3.5cqh; top: 88.6cqh; bottom: 1.6cqh; border-radius: .8cqh .8cqh 1.6cqh 1.6cqh; pointer-events: none;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bjDark) 50%, #2a2436), color-mix(in srgb, var(--bjDark) 80%, #000)); box-shadow: inset 0 .3cqh 0 rgba(255,255,255,.12); }
+#crTable .crBase::after { content: ''; position: absolute; right: 7cqh; top: 50%; width: 3.2cqh; height: 3.2cqh; border-radius: 50%; transform: translateY(-80%);       /* the joystick's ball */
+  background: radial-gradient(circle at 35% 30%, #fff, #ff4f8b 45%, #8a1846); box-shadow: 0 1.6cqh 0 -1.1cqh #c9d0dc, 0 .4cqh .8cqh rgba(0,0,0,.5); }
+#crTable .crDoor { position: absolute; left: 1.9cqh; width: 12cqh; top: 18%; bottom: 14%; border-radius: .8cqh; display: grid; place-items: center;
+  background: linear-gradient(180deg, #0a0812, #1c1826); box-shadow: inset 0 0 0 .25cqh #c9d0dc, inset 0 .9cqh 1.2cqh rgba(0,0,0,.6);
+  font: 900 1.5cqh/1 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: .3em; color: color-mix(in srgb, var(--bjHi) 60%, #fff); }
+#crTable.fWin .crDoor { box-shadow: inset 0 0 0 .25cqh #ffd84a, 0 0 2.4cqh #ffd84a; }
+@media (prefers-reduced-motion: reduce) { #crTable :is(.crCab, .crTrim, .crMarquee span, .crClock) { animation: none !important; } }
+/* beside the cabinet: the prizes and the last tries; who's at the claw and in line */
+#crTable .crSide, #crTable .crPlayers { position: absolute; top: 8vh; width: 270px; display: flex; flex-direction: column; gap: 10px; pointer-events: none; }
+#crTable .crSide { right: calc(50% + 25vh + 28px); }
+#crTable .crPlayers { left: calc(50% + 25vh + 28px); width: 250px; padding: 10px 12px; border-radius: 14px; background: rgba(8,10,16,.5); backdrop-filter: blur(16px); gap: 6px; }
+#crTable .crSide .bjSign { position: static; width: auto; }
+#crTable .crSide .bjSign :is(.bjMode, .bjLimits) { font-size: 12px; }
+#crTable .crPays, #crTable .crHist { padding: 10px 12px; border-radius: 14px; background: rgba(8,10,16,.62); backdrop-filter: blur(16px);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bjAccent) 28%, rgba(255,255,255,.06)); font-size: 13px; }
+#crTable .crHist { display: none; }
+#crTable .crHist.on { display: block; }
+#crTable .crHead { margin-bottom: 4px; font: 700 10.5px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: .22em; text-transform: uppercase; color: color-mix(in srgb, var(--bjAccent) 60%, #fff); }
+#crTable .crHead2 { margin-top: 8px; }
+#crTable .crRow { display: flex; justify-content: space-between; gap: 10px; min-height: 22px; align-items: center; }
+#crTable .crRow span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#crTable .crRow b { color: color-mix(in srgb, var(--bjHi) 60%, #fff); font-variant-numeric: tabular-nums; }
+#crTable .crHist .crRow { color: rgba(255,255,255,.65); }
+#crTable .crHist .crRow.won { color: #fff; }
+#crTable .crSmall { margin-top: 6px; font-size: 11.5px; line-height: 1.4; color: rgba(255,255,255,.6); }
+#crTable .crTag { max-width: none; }
+#crTable .crTag.playing .ex { color: var(--c); }
+#crTable .crTag.gone { opacity: .5; }
+#crTable .crLine { font-size: 13px; color: rgba(255,255,255,.75); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#crTable .crLine.me { font-weight: 700; color: color-mix(in srgb, var(--bjAccent) 55%, #fff); }
+#crTable .crDrop { height: 48px; padding: 0 40px; font-size: 17px; touch-action: none; animation: paPulseText .5s ease-in-out infinite alternate; }       /* the one button that matters */
+#crTable.dropping .crGlass { box-shadow: inset 0 0 3cqh rgba(0,0,0,.6), 0 0 0 .4cqh #ffd84a, 0 0 0 .7cqh color-mix(in srgb, var(--bjDark) 60%, #000); }
+@media (prefers-reduced-motion: reduce) { #crTable .crDrop { animation: none; } }
+#crTable .crPass { color: rgba(255,255,255,.65); font-weight: 500; }
 
 /* Roulette: the wheel on the left; the sign, the last numbers, the layout and the players on the right */
 #rlTable .rlBrand { position: absolute; left: 3cqw; top: 3cqh; display: flex; align-items: center; gap: .8cqw; opacity: .3; pointer-events: none;

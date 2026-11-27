@@ -29,7 +29,7 @@ What was built, and how it differs from the plan:
   (style.css: the lamp, cards, chips, bar, board and tags are shared by all three tables).
 - **Chips are one wallet** (1.12.0, `wallet.js`): Blackjack, Roulette, Hold'em and Pachinko play the same chips, alone and at
   a hub (docs/plans/pachinko.md §5). §5 question 2 is answered.
-- **Pachinko** (not in the list below) is built too: docs/plans/pachinko.md.
+- **Pachinko** (not in the list below) is built too: docs/plans/pachinko.md. So is the **crane machine**: docs/plans/crane.md.
 - **Hold'em has computer players**, not "hub only": alone you play three, and at a hub one sits in while only one person is
   there (`fill`), leaving between hands as people come. They decide from their own cards and the board only: a few hundred
   random deals against everyone still in, the price to call, and a little chance.
