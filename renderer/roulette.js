@@ -271,7 +271,7 @@
       if (!m && v.watching >= 0) { line = `The table is full. You're next for a place${v.watching ? ` (${v.watching + 1} in line)` : ''}.`; kids.push(btn('Leave the line', 'ghost', () => send({ op: 'stand' }))); }
       else if (!m) { const full = v.seats.every(Boolean); line = full ? 'You\'re standing. The table is full.' : 'You\'re standing, watching the wheel.'; kids.push(btn(full ? 'Get in line' : 'Sit down', 'primary', () => send({ op: 'sit' }))); }
       else if (m.left) { line = 'You\'ve stood up. Your bets still ride.'; kids.push(btn('Sit back down', 'primary', () => send({ op: 'sit' }))); }
-      else if (m.outMs) { line = `Out of chips. Back in with ${fmt(v.start)} in `; kids.push(el('b', 'bjCount out', String(Math.ceil(m.outMs / 1000)))); }
+      else if (m.outMs) { line = `Out of chips. Back in with ${fmt(v.back || v.start)} in `; kids.push(el('b', 'bjCount out', String(Math.ceil(m.outMs / 1000)))); }
       else if (v.phase === 'betting') {
         for (const c of CHIPS) {
           const b = el('button', 'chip c' + c + (c === chip ? ' sel' : ''), String(c)); b.type = 'button'; b.title = `Bet ${c} a click`;

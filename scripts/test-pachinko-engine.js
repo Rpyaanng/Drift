@@ -122,14 +122,51 @@ ok('the board has a version', /^b[0-9a-z]+$/.test(B.rev));
 { // ---- a fever's rounds: the gate open, shut between, the hot spell after a big one ----
   const t = machine({ rules: { feverOdds: 1, start: 1e6 }, rand: (() => { let r = 1; return (n) => (n === SYMBOLS.length ? 6 : (r = (r * 48271) % 2147483647) % n); })() });       // (always the seven)
   t.sit('a', 'Ann'); t.move('a', { do: 'hold', amount: 60 });
-  let opened = 0, wasOpen = false, big = false, hot = 0, over = false;
+  let opened = 0, wasOpen = false, big = false, hot = 0, over = false, full = 0, timedOut = 0, lastBalls = 0, filled = 0, need = 0, needs = new Set();
   t.run(400000, () => {
     const v = t.view('a');
-    if (v.fever && !over) { t._rules.feverOdds = 0; t._rules.hotOdds = 0; big = big || v.fever.big; if (v.fever.open && !wasOpen) opened++; wasOpen = v.fever.open; }
-    if (!v.fever && opened) { over = true; hot = Math.max(hot, v.hot); }
+    if (v.fever && !over) {
+      t._rules.feverOdds = 0; t._rules.hotOdds = 0; big = big || v.fever.big; if (v.fever.open && !wasOpen) opened++;
+      if (wasOpen && !v.fever.open) { if (v.fever.balls >= v.fever.roundBalls) full++; else timedOut++; }       // (a round over: filled, or time ran out)
+      if (v.fever.open) needs.add(v.fever.roundBalls);
+      wasOpen = v.fever.open; lastBalls = v.fever.balls; need = v.fever.roundBalls;
+    }
+    if (!v.fever && opened && !over) { over = true; hot = Math.max(hot, v.hot); if (wasOpen) { if (lastBalls >= need) full++; else timedOut++; } }
+    filled = v.filled;
   });
   ok(`the gate opened for every round (${opened})`, opened === RULES.rounds);
+  ok(`the rounds filled are counted for the scene tokens (${filled} of ${full} filled, ${timedOut} ran out of time)`, filled === full && full + timedOut === RULES.rounds);
+  ok(`alone, a round needs ${RULES.roundBalls[0]} balls (${[...needs]})`, needs.size === 1 && needs.has(RULES.roundBalls[0]));
   ok('sevens: a big fever, and a hot spell after it', big && hot > 0 && hot <= RULES.hotSpins);
+}
+
+{ // ---- the balls a round needs, by how many are at the machine as it opens: 1 6, 2 10, 3 12, 4 15, and 15 for more ----
+  const need = (n) => {
+    const t = machine({ rules: { feverOdds: 1, start: 1e6 } }), ids = 'abcdef'.slice(0, n).split('');
+    for (const id of ids) { t.sit(id, id); t.move(id, { do: 'hold', amount: 60 }); }
+    let got = 0; t.run(120000, () => { const v = t.view('a'); if (v.fever) t._rules.feverOdds = 0; if (!got && v.fever && v.fever.open) got = v.fever.roundBalls; });
+    return got;
+  };
+  const got = [1, 2, 3, 4, 6].map(need);
+  ok(`by players, 1 2 3 4 6: ${got.join(' ')}`, got.join(' ') === '6 10 12 15 15');
+}
+
+{ // ---- a round filled (here, one ball fills it): counted, the same for everyone at the machine, and never twice ----
+  const t = machine({ rules: { feverOdds: 1, start: 1e6, roundBalls: 1 } });
+  t.sit('a', 'Ann'); t.sit('b', 'Ben');
+  t.move('a', { do: 'hold', amount: 60 }); t.move('b', { do: 'hold', amount: 60 });
+  let full = 0, wasOpen = false, down = false, same = true, prev = 0;
+  t.run(400000, () => {
+    const a = t.view('a'), b = t.view('b');
+    if (a.fever) t._rules.feverOdds = 0;
+    if (a.filled !== b.filled) same = false;
+    if (a.filled < prev) down = true; prev = a.filled;
+    const open = !!(a.fever && a.fever.open);
+    if (wasOpen && !open && a.fever && a.fever.balls >= 1) full++;
+    wasOpen = open;
+  });
+  ok(`rounds filled are counted (${prev} of ${full})`, full > 0 && prev === full);
+  ok('the same count for everyone at the machine, and it only goes up', same && !down);
 }
 
 { // ---- out of chips: nothing fires, a wait, then fresh chips ----
@@ -139,7 +176,7 @@ ok('the board has a version', /^b[0-9a-z]+$/.test(B.rev));
   let wasOut = false, backIn = false;
   t.run(400000, () => {       // (holding on whenever there are chips for a ball, till it runs out: a few minutes, the tulips paying now and then)
     const s = t.me();
-    if (s.outMs) wasOut = true; else if (wasOut && s.chips >= 900) backIn = true;
+    if (s.outMs) wasOut = true; else if (wasOut && s.chips >= RULES.back - 100) backIn = true;
     if (s.chips >= RULES.cost && !s.outMs && !s.holding && !wasOut) t.move('a', { do: 'hold', amount: 90 });
   });
   ok('chips for three balls: three balls (and what they won)', t.me().fired >= 3);
@@ -165,12 +202,12 @@ ok('the board has a version', /^b[0-9a-z]+$/.test(B.rev));
   const clock = { t: 1e6 };
   const pa = createTable({ now: () => clock.t, rand: (n) => n - 1, wallet: w }), rl = roulette.createTable({ now: () => clock.t, rand: () => 17, wallet: w });
   pa.sit('a', 'Ann'); rl.sit('a', 'Ann');
-  ok('the same chips at both', pa.view('a').seats[0].chips === 1000 && rl.view('a').seats[0].chips === 1000);
+  ok('the same chips at both, 500 to start', pa.view('a').seats[0].chips === 500 && rl.view('a').seats[0].chips === 500);
   rl.move('a', { do: 'bet', key: 'red', amount: 100 });
-  ok('a bet at roulette is gone from the pachinko machine too', pa.view('a').seats[0].chips === 900 && w.peek('a').chips === 900);
+  ok('a bet at roulette is gone from the pachinko machine too', pa.view('a').seats[0].chips === 400 && w.peek('a').chips === 400);
   pa.move('a', { do: 'hold', amount: 60 });
   for (let x = 0; x < 3000; x += 50) { clock.t += 50; pa.tick(); }
-  ok('balls at pachinko come off the roulette count', rl.view('a').seats[0].chips === pa.view('a').seats[0].chips && rl.view('a').seats[0].chips < 900);
+  ok('balls at pachinko come off the roulette count', rl.view('a').seats[0].chips === pa.view('a').seats[0].chips && rl.view('a').seats[0].chips < 400);
   ok('each change is told', changes.length > 3 && changes.every((id) => id === 'a'));
   ok('someone it isn\'t theirs: their own chips', w.keep('bot:x') === null);
   const w2 = createWallet({ load: () => ({ chips: 333, outUntil: 0 }) });

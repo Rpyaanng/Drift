@@ -7,7 +7,7 @@
 // Cards are two-letter strings, rank then suit: 'As', 'Td', '9h', 'Qc'. The shoe never leaves here: a view has the cards
 // dealt so far and the dealer's hole card as null until it's turned over.
 const RANKS = 'A23456789TJQK', SUITS = 'shdc';
-const RULES = { decks: 6, cut: 0.75, start: 1000, min: 10, seats: 6 };       // (no top limit: bet as much as you have)
+const RULES = { decks: 6, cut: 0.75, start: 1000, back: 500, min: 10, max: 10000, seats: 6 };       // (start: a new player's chips; back: out of chips, what you're back in with; min and max: a bet's limits)
 const TIMES = { bet: 10000, insure: 8000, turn: 20000, dealer: 700, done: 5000, out: 20000 };       // ms: betting once someone has bet, insurance, a turn, each dealer card, looking at the result, crapped out
 
 const value = (c) => { const r = c[0]; return r === 'A' ? 1 : 'TJQK'.includes(r) ? 10 : +r; };
@@ -52,7 +52,7 @@ function createTable(opts = {}) {
     const out = Math.max(outs.get(id) || 0, keep && +keep.outUntil || 0);
     const s = { id, name, chips: keep && Number.isFinite(+keep.chips) ? Math.max(0, Math.floor(+keep.chips)) : R.start, bet: 0, insurance: null, hands: [], outUntil: out > now() ? out : 0, left: false, net: 0 };
     if (s.outUntil) s.chips = 0;
-    else if (s.chips < R.min) s.chips = R.start;
+    else if (s.chips < R.min) s.chips = R.back;
     if (opts.wallet) opts.wallet.bind(s);
     seats[free] = s;
     if (phase === 'idle') { phase = 'betting'; deadline = 0; }
@@ -94,6 +94,7 @@ function createTable(opts = {}) {
     if (s.bet) return { error: 'Your bet is in' };
     amount = Math.floor(+amount);
     if (!(amount >= R.min)) return { error: `Bets start at ${R.min}` };
+    if (amount > R.max) return { error: `Bets go up to ${R.max.toLocaleString('en-US')}` };
     if (amount > s.chips) return { error: 'Not enough chips' };
     s.chips -= amount; s.bet = amount;
     if (!deadline) deadline = now() + T.bet;
@@ -222,7 +223,7 @@ function createTable(opts = {}) {
   // ------------------------------------------------------------------ time
   function tick() {
     const t = now(), v0 = version;
-    for (const s of seats) if (s && s.outUntil && t >= s.outUntil) { s.outUntil = 0; s.chips = R.start; outs.delete(s.id); changed(); }       // back in with fresh chips
+    for (const s of seats) if (s && s.outUntil && t >= s.outUntil) { s.outUntil = 0; s.chips = R.back; outs.delete(s.id); changed(); }       // back in with fresh chips
     for (const [id, until] of outs) if (t >= until) outs.delete(id);
     if (phase === 'betting') {
       const able = seats.filter(canBet), bets = seats.filter((s) => s && s.bet > 0).length;
@@ -241,7 +242,7 @@ function createTable(opts = {}) {
   function view(id) {
     const t = now(), me = seatOf(String(id));
     return {
-      phase, round, min: R.min, start: R.start,
+      phase, round, min: R.min, max: R.max, start: R.start, back: R.back,
       msLeft: deadline ? Math.max(0, deadline - t) : 0,
       turn: turn ? { ...turn } : null,
       you: me, watching: watchers.findIndex((w) => w.id === String(id)), watchers: watchers.length,

@@ -13,10 +13,10 @@
 const B = require('./renderer/pachinko-board.js');
 
 const RULES = {
-  start: 1000, seats: 8, every: 600, inFlight: 14,       // ms between balls while you hold the handle; most of your balls in the air at once
+  start: 1000, back: 500, seats: 8, every: 600, inFlight: 14,       // (start: a new player's chips; back: out of chips, what you're back in with)       // ms between balls while you hold the handle; most of your balls in the air at once
   cost: 25, startPay: 100, tulipPay: 110, gatePay: 500,       // chips: a ball, and what each pocket pays
   feverOdds: 1 / 130, hotOdds: 1 / 25, hotSpins: 20, reachOdds: 1 / 9,       // a spin's chance of a fever (in a hot spell after a big one), of a reach that misses
-  rounds: 6, roundBalls: 10, queue: 8,       // a fever's rounds, the balls that close a round; spins waiting
+  rounds: 6, roundBalls: [6, 10, 12, 15], queue: 8,       // a fever's rounds; the balls that close a round, by how many are at the machine as it opens (1, 2, 3, 4 or more: asked for, easier per head the more there are, to bring friends); spins waiting
 };
 const TIMES = { stop: [1400, 2200, 3200], reach: 6800, show: 1200, feverIn: 2500, round: 15000, between: 1600, out: 20000 };
 // The reels' symbols. 0 the cat and 6 the seven are the big ones.
@@ -57,7 +57,7 @@ function createTable(opts = {}) {
   let balls = [], nextBall = 1, simT = now(), frameAt = simT, frames = [], seq = 0, flying = new Map();       // flying: seat -> balls in the air
   let events = [];       // this frame's happenings, for the screens' sounds: [kind, seat] ('n' a launch, 'p' a pin, 's' start, 'u' tulip, 'g' gate, 'f' foul)
   const tulips = B.TULIPS.map(() => ({ open: false }));
-  let spins = [], spin = null, fever = null, hot = 0, history = [], lastPays = [], spinN = 0;
+  let spins = [], spin = null, fever = null, hot = 0, history = [], lastPays = [], spinN = 0, filled = 0;       // (filled: fever rounds the gate's taken all its balls in, ever)
   // spins: [{ seat id }] waiting; spin: { id, name, reels, reach, fever, big, at }; fever: { id, name, big, round, open, balls, until, gains: Map }
 
   // ------------------------------------------------------------------ places
@@ -72,7 +72,7 @@ function createTable(opts = {}) {
     const s = { id, name, chips: keep && Number.isFinite(+keep.chips) ? Math.max(0, Math.floor(+keep.chips)) : R.start, outUntil: out > now() ? out : 0, left: false,
       holding: false, power: 60, nextAt: 0, fired: 0, won: 0 };
     if (s.outUntil) s.chips = 0;
-    else if (s.chips < R.cost) s.chips = R.start;
+    else if (s.chips < R.cost) s.chips = R.back;
     if (opts.wallet) opts.wallet.bind(s);
     seats[free] = s;
     if (phase === 'idle') { phase = 'play'; simT = now(); frameAt = simT; }
@@ -265,12 +265,18 @@ function createTable(opts = {}) {
     }
     if (fever && simT >= fever.until) {
       if (fever.open) { fever.open = false; fever.until = simT + T.between; }
-      else if (fever.round < R.rounds) { fever.round++; fever.open = true; fever.balls = 0; fever.until = simT + T.round; }
+      else if (fever.round < R.rounds) { fever.round++; fever.open = true; fever.balls = 0; fever.need = roundNeed(); fever.until = simT + T.round; }
       else endFever();
       changed();
     }
-    if (fever && fever.open && fever.balls >= R.roundBalls) { fever.open = false; fever.until = simT + T.between; changed(); }
+    if (fever && fever.open && fever.balls >= fever.need) { fever.open = false; fever.until = simT + T.between; filled++; changed(); }       // (a round filled: a scene token for everyone at the machine, main.js GM_TOKENS)
     if (!spin && !fever && spins.length) startSpin();
+  }
+  // the balls a round needs, by how many have a seat (and haven't stood up) as it opens: fixed for that round, so someone sitting
+  // down halfway doesn't move it
+  function roundNeed() {
+    const list = [].concat(R.roundBalls), n = seats.filter((s) => s && !s.left).length;
+    return list[Math.min(list.length, Math.max(1, n)) - 1];
   }
   function endFever() {
     const f = fever; fever = null;
@@ -284,7 +290,7 @@ function createTable(opts = {}) {
     const t = now(), v0 = version;
     for (let i = 0; i < seats.length; i++) {
       const s = seats[i]; if (!s) continue;
-      if (s.outUntil && t >= s.outUntil) { s.outUntil = 0; s.chips = R.start; outs.delete(s.id); changed(); }       // back in with fresh chips
+      if (s.outUntil && t >= s.outUntil) { s.outUntil = 0; s.chips = R.back; outs.delete(s.id); changed(); }       // back in with fresh chips
       if (s.left && !flying.get(i)) free(i);
     }
     for (const [id, until] of outs) if (t >= until) outs.delete(id);
@@ -315,13 +321,13 @@ function createTable(opts = {}) {
     const t = now(), me = seatOf(String(id));
     const reels = spin ? spin.reels.map((k, i) => (simT >= spin.stops[i] ? k : null)) : history.length ? history[0] : null;
     return {
-      phase, board: B.rev, you: me, watching: watchers.findIndex((w) => w.id === String(id)), watchers: watchers.length, start: R.start,
+      phase, board: B.rev, you: me, watching: watchers.findIndex((w) => w.id === String(id)), watchers: watchers.length, start: R.start, back: R.back,
       cost: R.cost, pays: { start: R.startPay, tulip: R.tulipPay, gate: R.gatePay },
-      spins: spins.length, queue: R.queue, hot,
+      spins: spins.length, queue: R.queue, hot, filled,
       spin: spin ? { n: spin.n, name: spin.name, mine: spin.id === String(id), reels, reach: !!spin.reach && simT >= spin.stops[1], spinning: reels.map((k) => k === null),
         msLeft: Math.max(0, spin.stops[2] - simT), won: spin.win && simT >= spin.stops[2] } : null,
       reels,
-      fever: fever ? { name: fever.name, mine: fever.id === String(id), big: fever.big, round: fever.round, rounds: R.rounds, open: fever.open, balls: fever.balls, roundBalls: R.roundBalls,
+      fever: fever ? { name: fever.name, mine: fever.id === String(id), big: fever.big, round: fever.round, rounds: R.rounds, open: fever.open, balls: fever.balls, roundBalls: fever.need || roundNeed(),
         msLeft: Math.max(0, fever.until - simT), gained: fever.gains.get(String(id)) || 0 } : null,
       tulips: tulips.map((x) => x.open),
       paid: lastPays.map((p) => ({ seat: p.seat, n: p.n, kind: p.kind, ago: Math.max(0, Math.round(simT - p.at)) })),

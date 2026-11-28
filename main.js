@@ -112,7 +112,12 @@ const DEFAULTS = {
   files: { folder: '' },
   // the casino's chips played alone (wallet.js): one wallet for Blackjack, Roulette, Hold'em and Pachinko, and when you're back in
   // after crapping out. (Before 1.12 each table kept its own: blackjack, roulette, poker. The biggest of them became the wallet.)
-  wallet: { chips: 1000, outUntil: 0 },
+  // The same chips at every hub too (hub.js walletTake): a hub plays these and sends the count back (walletFromHub).
+  wallet: { chips: 500, outUntil: 0 },
+  // scene tokens (won with the crane's grand prize or a Pachinko fever round filled) and the scenes they've unlocked at Scene
+  // Slots (docs/plans/scene-slots.md). Only main changes them: a screen's patch can't (ipcMain 'patch'). A new wallet comes
+  // with one, to try Scene Slots.
+  tokens: 1, unlocked: [],
   // Sketch & Guess (sketch.js cleanSettings): seconds to draw, rounds a game, letters shown as time runs out, and your own words (null = Drift's). They're
   // used at a hub you host, and alone in practice (DRIFT_SKETCH_SOLO); at someone else's hub, theirs are
   sketch: { draw: 80, rounds: 3, hints: true, words: null },
@@ -197,6 +202,10 @@ function loadSettings() {
     if (!known(state.scene)) state.scene = 'aurora';
     for (const k of Object.keys(state.perDisplay || {})) if (!known(state.perDisplay[k])) delete state.perDisplay[k];
     state.cycleSkip = Array.isArray(state.cycleSkip) ? state.cycleSkip.filter((id) => SCENES.includes(id) && !GAMES.includes(id)) : [];
+    state.tokens = Number.isFinite(+state.tokens) ? Math.max(0, Math.min(999, Math.floor(+state.tokens))) : 0;
+    state.unlocked = Array.isArray(state.unlocked) ? [...new Set(state.unlocked.filter((id) => SCENES.includes(id) && !GAMES.includes(id) && !FREE_SCENES.includes(id)))] : [];
+    if (!sceneOpen(state.scene)) state.scene = 'aurora';       // (left on a scene that's locked now)
+    for (const k of Object.keys(state.perDisplay || {})) if (!sceneOpen(state.perDisplay[k])) delete state.perDisplay[k];
     if (!s.wallet) {       // (from each table's own chips: the most any of them had)
       const old = ['blackjack', 'roulette', 'poker'].map((g) => s[g]).filter(Boolean).map(cleanBj);
       if (old.length) state.wallet = old.reduce((a, b) => (b.chips > a.chips ? b : a));
@@ -219,7 +228,7 @@ function loadSettings() {
 function cleanBj(q) {
   q = q && typeof q === 'object' ? q : {};
   const chips = Math.floor(+q.chips), out = +q.outUntil;
-  return { chips: Number.isFinite(chips) && chips >= 0 && chips <= 1e9 ? chips : 1000, outUntil: Number.isFinite(out) && out > Date.now() && out < Date.now() + 60000 ? out : 0 };
+  return { chips: Number.isFinite(chips) && chips >= 0 && chips <= 1e9 ? chips : 500, outUntil: Number.isFinite(out) && out > Date.now() && out < Date.now() + 60000 ? out : 0 };
 }
 const QUALITY = { original: { h: 0, kbps: 0 }, 1080: { h: 1080, kbps: 6000 }, 720: { h: 720, kbps: 3000 }, 480: { h: 480, kbps: 1200 } };
 function cleanShare(q) {
@@ -799,9 +808,7 @@ function appNowWatch(on) {
 // music), but a video in a page or a player comes without one, where music apps, YouTube Music, SoundCloud and podcasts give one.
 function appNowShown() {
   if (!appNow.title || !appNow.artist || !(appNow.playing || appNow.had)) return false;
-  if (remote && remote.music && remote.music.on) return false;
-  if (state.music.source === 'files' && state.music.playing && state.music.playlist.length) return false;
-  return !(cur() && !state.video.paused && visWins.some((v) => showsVideo(v.key)));
+  return !ownMediaUp();
 }
 // The app's name, from the id Windows knows it by ('Spotify.exe', 'AppleInc.AppleMusicWin_nzyj5cx40ttqa!App', 'Helium.6PROS...')
 const APP_NAMES = [[/spotify/i, 'Spotify'], [/applemusic/i, 'Apple Music'], [/amazon.*music/i, 'Amazon Music'], [/tidal/i, 'TIDAL'], [/deezer/i, 'Deezer'],
@@ -1143,13 +1150,15 @@ function spotifyVolSet(v) {
 }
 
 const showsVideo = (key) => (state.mode === 'mix' ? (state.perDisplay[key] || state.scene) : state.scene) === 'video';
-// Spotify takes the toolbar (and the visuals listen to the PC's sound) while a song is on in it and nothing of Drift's own is playing:
-// no video running and no music from the library (or a friend's).
+// Drift has media of its own up: a video on a screen or music from the library (or a friend's), playing or paused. Only Eject
+// (or Stop) puts it away; a pause doesn't hand the toolbar to Spotify.
+const ownMediaUp = () => !!(remote && remote.music && remote.music.on) || (state.music.source === 'files' && state.music.playlist.length > 0)
+  || !!(cur() && visWins.some((v) => showsVideo(v.key)));
+// Spotify may take the toolbar (and the visuals listen to the PC's sound) while a song is on in it and all of Drift's own media is
+// ejected. Which tab is open decides the rest (app.js ctx): on Scenes the toolbar stays the scene's.
 function spotifyLead() {
   if (!(spotify.status === 'playing' || (spotify.status === 'paused' && spotify.had))) return false;
-  if (remote && remote.music && remote.music.on) return false;
-  if (state.music.source === 'files' && state.music.playing && state.music.playlist.length) return false;
-  return !(cur() && !state.video.paused && visWins.some((v) => showsVideo(v.key)));
+  return !ownMediaUp();
 }
 // Every Drift window draws through Chromium's one GPU process, which works through their drawing in turn, so two monitors of
 // heavy scenes can keep a video on a third waiting for its frames. The window playing the video says when frames come late
@@ -1183,7 +1192,7 @@ function publicState() {
   const video = remote ? { ...state.video, files: remote.files.map((f) => f.name), index: remote.index, paused: !!remote.paused } : state.video;
   // (windowed, one window: Span is the whole picture in it, the same as Mirror, and there's nothing to mirror Surf to. The saved setting stays for full screen)
   const one = state.windowed ? { mode: state.mode === 'span' ? 'mirror' : state.mode, surfMirror: false, winBounds: undefined } : {};
-  return { ...state, ...one, video, subs: { ...state.subs, perFile: undefined }, subsInfo: subInfo, time: clock, nowPlaying, vclock,
+  return { ...state, ...one, locked: lockedScenes(), video, subs: { ...state.subs, perFile: undefined }, subsInfo: subInfo, time: clock, nowPlaying, vclock,
     videoUrl: c ? (c.path ? pathToFileURL(c.path).href : c.src) : '', videoName: c ? c.name : '', videoPath: c ? c.path : '', videoLeader: lead && c ? lead.key : '',
     sceneFps: sceneFps(), surfVideo: surfVideo(), screens: visWins.length, spotify: { ...spotify, lead: spotifyLead() }, appNow: { ...appNow, show: appNowShown(), app: appName(appNow.id) }, videoAudio, videoInfo, audioBase: audioPort && c ? local(`/a?i=${c.index}`) : '',
     xc: { ...xc, ...xcWant(), base: xcBase() }, encoders: xcoder.list(), canTonemap: !xcoder.ready() || xcoder.canTonemap(),
@@ -1883,6 +1892,12 @@ function walletChanged() {
   if (bjLocal) { bjLocalSent = -1; bjLocalPush(); }
   for (const g of Object.keys(gm)) if (gm[g].local) { gm[g].sent = -1; gmLocalPush(g); }
 }
+// At a hub's table, the hub plays the chips this PC sent when sitting down (hub.js walletTake) and every view brings the count
+// back: kept here, so the next hub, and the tables alone, carry on with the same wallet
+function walletFromHub(q) {
+  if (!q || !Number.isFinite(+q.chips)) return;
+  localWallet.set(BJ_ME, { chips: +q.chips, outUntil: +q.outUntil || 0 });       // (walletChanged saves it)
+}
 function walletGiveBack(t) {       // a table here closing (or you standing up) with bets on it that won't be played: back to the wallet
   const k = t && t.mine(BJ_ME), w = localWallet.peek(BJ_ME);
   if (k && k.chips > w.chips) localWallet.set(BJ_ME, { chips: k.chips, outUntil: w.outUntil });
@@ -1937,7 +1952,7 @@ function bjMove(c) {
 }
 function bjFromHub(hub, m) {
   if (hub !== bjAt) return;
-  if (m.t === 'bj-view') { if (m.v) bjShow(m.v, 'hub'); else { bjShow(null, ''); bjNote('You sat down at this table on another PC.'); } }
+  if (m.t === 'bj-view') { if (m.v) { walletFromHub(m.v.wallet); bjShow(m.v, 'hub'); } else { bjShow(null, ''); bjNote('You sat down at this table on another PC.'); } }
   // (bj-ptrs, from an older Drift, are left out: see op 'ptr' above)
 }
 
@@ -1984,6 +1999,55 @@ function gmShow(g, v, mode) {
   x.last = v ? { v, mode, hub, at: Date.now() } : null;
   gmSend(g, { v, mode, hub });
   if (was && v) { const s = (GM_SOUNDS[g] || (() => []))(was, v); if (s.length) { sfxPlay(s); if (SHOT_DIR) gmHeard.push(...s); } }
+  if (was && v) { const n = (GM_TOKENS[g] || (() => 0))(was, v, mode); if (n > 0) tokenWon(g, n); }
+}
+// Scene tokens (docs/plans/scene-slots.md), from what changed between two views of a table, the same views alone and at a hub
+// (so a token won at a friend's hub is yours, kept here): one for each grand prize the crane machine's claw wins on a try of
+// yours (counted by try, so one rolling in after the try's over still counts, and once), and one for each Pachinko fever
+// round filled (all its balls in the gate before time's up) while you've a seat at the machine: everyone there gets one; and
+// one for winning a game of Sketch & Guess at a hub (the top score, ties all win, more than nothing; never against the
+// practice bots).
+const GM_TOKENS = {
+  sketch(a, b, mode) {
+    if (mode !== 'hub' || a.phase === 'over' || b.phase !== 'over' || !Array.isArray(b.standings) || !Array.isArray(b.players)) return 0;
+    const me = b.players[b.you], st = b.standings.filter((s) => s && !/-bot$/.test(String(s.id)));
+    if (!me || st.length < 2) return 0;
+    const top = Math.max(...st.map((s) => +s.score || 0));
+    return top > 0 && st.some((s) => s.id === me.id && (+s.score || 0) === top) ? 1 : 0;
+  },
+  crane(a, b) {
+    const grands = (r) => (r && r.mine && Array.isArray(r.kinds) ? r.kinds.filter((k) => k === 1).length : 0);
+    const tries = (v) => { const m = new Map(); if (v.play) m.set(v.play.n, v.play); for (const r of v.last || []) if (!m.has(r.n)) m.set(r.n, r); return m; };
+    const was = tries(a); let n = 0;
+    for (const [k, r] of tries(b)) n += Math.max(0, grands(r) - grands(was.get(k)));
+    return n;
+  },
+  pachinko(a, b) {
+    const m = Array.isArray(b.seats) && b.you >= 0 ? b.seats[b.you] : null;
+    return m && !m.left && Number.isFinite(a.filled) && Number.isFinite(b.filled) ? Math.max(0, b.filled - a.filled) : 0;
+  },
+};
+function tokenWon(g, n) {
+  state.tokens = Math.min(999, state.tokens + n);
+  saveNow(); pushState();
+  gmNote(g, n > 1 ? `You won ${n} scene tokens! Spend them at Scene Slots.` : 'You won a scene token! Spend it at Scene Slots to unlock a scene.');
+  sfxPlay(['slToken']);
+  if (SHOT_DIR) gmHeard.push('slToken');
+}
+// Scene Slots: tokens in, scenes out (one a token: a single pull, or up to ten at once). The scenes are picked here, at random
+// among those still locked (no two the same), the tokens spent and the scenes unlocked at once (saved), and the screen that
+// asked is told which, to play the summon round to them. Nothing locked left, or no token: it says so, and nothing's spent.
+function slotsSpin(sender, n) {
+  const reply = (m) => { if (sender && !sender.isDestroyed()) sender.send('cmd', { type: 'slots', ...m }); };
+  const left = lockedScenes();
+  if (!left.length) return reply({ error: 'Every scene is unlocked already' });
+  if (state.tokens < 1) return reply({ error: 'You need a scene token: win the crane\'s grand prize, fill a Pachinko fever round, or win a game of Sketch & Guess' });
+  n = 1;       // (one pull, one scene: pulls of ten were taken out, asked for)
+  const pool = [...left], won = [];
+  for (let i = 0; i < n; i++) won.push(pool.splice(crypto.randomInt(pool.length), 1)[0]);
+  state.tokens -= n; state.unlocked = [...state.unlocked, ...won];
+  saveNow(); pushState();
+  reply({ won, left: pool.length });
 }
 // Each table's sounds, from what changed between two views of it (the Blackjack table's cards and chips, and a few of their
 // own: the ball going round and dropping, a win on the wheel, a check's knock, a fold). Two at most, the one that matters first.
@@ -2233,7 +2297,7 @@ function gmMove(c) {
 }
 function gmFromHub(hub, m) {
   const g = String(m.g || ''); if (!Object.hasOwn(gm, g) || hub !== gm[g].at) return;
-  if (m.t === 'game-view') { if (m.v) gmShow(g, m.v, 'hub'); else { gmShow(g, null, ''); gmNote(g, 'You sat down at this table on another PC.'); } }
+  if (m.t === 'game-view') { if (m.v) { walletFromHub(m.v.wallet); gmShow(g, m.v, 'hub'); } else { gmShow(g, null, ''); gmNote(g, 'You sat down at this table on another PC.'); } }
   else if (m.t === 'game-ptrs' && g !== 'poker') {
     const blocked = new Set(chat.info().blocked || []);
     gmSend(g, { ptrs: ptrClean(m.list).filter((q) => !blocked.has(q.id)) });
@@ -2305,6 +2369,7 @@ function startChat() {
   files = createFiles({ dir: path.join(app.getPath('userData'), 'chat'), downloads: ftFolder, log: chatLog });
   setInterval(ftAuto, 5000);       // (and whenever the hubs change: who's online)
   chat = createChat({
+    wallet: () => state.wallet,       // the casino's chips, sent along when sitting down at a hub's table (hub.js walletTake)
     hasOffer: (id) => files.has(id),       // files offered from this PC: still here, unchanged?
     offerGone: (id) => files.forget(id),
     dir: path.join(app.getPath('userData'), 'chat'),
@@ -2369,11 +2434,12 @@ const SFX_NAMES = new Set(['join', 'leave', 'peerJoin', 'peerLeave', 'mute', 'un
   'bjShuffle', 'rlSpin', 'rlDrop', 'rlWin', 'rlBig', 'pkCheck', 'pkFold', 'pkShuffle', 'pkRaise', 'pkAllIn', 'pkRiver', 'pkPot', 'pkBig',       // (Roulette's and Hold'em's, with the Blackjack table's cards and chips: GM_SOUNDS)
   'skStart', 'skRound', 'skPick', 'skTurn', 'skRight', 'skOther', 'skClose', 'skHint', 'skTick', 'skTick1', 'skEnd', 'skAll', 'skWin', 'skApplause', 'skLose',       // (Sketch & Guess's)
   'paLaunch', 'paPin', 'paBounce', 'paStart', 'paTulip', 'paCatch', 'paSpin', 'paReach', 'paMiss', 'paFever', 'paGate', 'paPay',       // (Pachinko's: GM_SOUNDS, paBallSounds)
-  'crCoin', 'crDrop', 'crGrab', 'crSlip', 'crWin', 'crGrand', 'crMiss']);       // (the crane machine's: GM_SOUNDS)
+  'crCoin', 'crDrop', 'crGrab', 'crSlip', 'crWin', 'crGrand', 'crMiss',       // (the crane machine's: GM_SOUNDS)
+  'slToken', 'slCoin', 'slLever', 'slReels', 'slTense', 'slReelStop', 'slThud', 'slR', 'slSR', 'slSSR', 'slWhoosh', 'slShine', 'slPower']);       // (Scene Slots' summon, and a token won: tokenWon)
 let sfxWas = null, sfxJoinedAt = 0;
 function sfxPlay(names, preview = false) {
   // the game tables' sounds have their own switch (Sounds → Game table sounds): hub sounds off needn't hush the cards
-  const on = names.every((n) => /^(bj|rl|pk|sk|pa|cr)[A-Z]/.test(String(n))) ? state.sfx.table !== false : state.sfx.on;
+  const on = names.every((n) => /^(bj|rl|pk|sk|pa|cr|sl)[A-Z]/.test(String(n))) ? state.sfx.table !== false : state.sfx.on;
   if ((!on && !preview) || !audioWin || audioWin.isDestroyed()) return;
   const vol = mixGain().master * state.sfx.volume * state.sfx.volume;       // (squared, like the mixer's sliders: the slider feels even)
   if (vol > 0) { audioWin.webContents.send('cmd', { type: 'sfx', names, vol }); if (SHOT_DIR) sfxSent.push(...names); }
@@ -3742,13 +3808,21 @@ const SCENES = ['aurora', 'nebula', 'silk', 'water', 'stars', 'lava', 'ridges', 
   'sierpinski', 'sorting', 'life', 'maze', 'julia', 'hilbert', 'voronoi',
   'polyhedra', 'globe', 'tunnel', 'cubes', 'lattice', 'menger',
   'quasi', 'hyperbolic', 'apollonian', 'phyllotaxis', 'rose', 'chladni',
-  'lake', 'pines', 'dunes', 'seaside', 'meadow', 'canyon', 'blackjack', 'roulette', 'poker', 'sketch', 'pachinko', 'crane'];
+  'lake', 'pines', 'dunes', 'seaside', 'meadow', 'canyon', 'blackjack', 'roulette', 'poker', 'sketch', 'pachinko', 'crane', 'slots'];
 // The Games room's scenes (docs/plans/blackjack.md §1): picked from their tile only. Neither the automatic changes nor Next /
 // Previous land on one, and an automatic change never takes you away from one (you may be in the middle of a hand).
-const GAMES = ['blackjack', 'roulette', 'poker', 'sketch', 'pachinko', 'crane'];
+const GAMES = ['blackjack', 'roulette', 'poker', 'sketch', 'pachinko', 'crane', 'slots'];
+// Locked scenes (docs/plans/scene-slots.md): of the scenes that aren't games, only the first in each of the picker's sections
+// is open to begin with. The rest are unlocked one at a time, at random, by spending a scene token at Scene Slots (slotsSpin);
+// a token comes with the crane machine's grand prize or a Pachinko fever round filled (tokenWon). Test runs open them all
+// (they visit scenes freely), unless one asks for the locks (DRIFT_LOCKS).
+const FREE_SCENES = ['aurora', 'lake', 'sierpinski', 'polyhedra', 'quasi'];
+const LOCKS_OFF = !!SHOT_DIR && !process.env.DRIFT_LOCKS;
+const sceneOpen = (id) => id === 'video' || GAMES.includes(id) || FREE_SCENES.includes(id) || LOCKS_OFF || state.unlocked.includes(id);
+const lockedScenes = () => SCENES.filter((id) => !sceneOpen(id));
 function stepScene(dir, shuffle, auto) {
   // automatic changes only pick the scenes ticked for rotation; Next / Previous still go through all of them (but the games)
-  const pool = (auto ? SCENES.filter((id) => !state.cycleSkip.includes(id)) : SCENES).filter((id) => !GAMES.includes(id));
+  const pool = (auto ? SCENES.filter((id) => !state.cycleSkip.includes(id)) : SCENES).filter((id) => !GAMES.includes(id) && sceneOpen(id));       // (never a locked one)
   const next = (cur) => {
     if (auto && (cur === 'video' || GAMES.includes(cur))) return cur;   // auto-change never interrupts your video, or a game
     const others = pool.filter((id) => id !== cur);
@@ -3774,6 +3848,9 @@ function patch(p) {
     p = { ...p, video: { ...p.video } }; delete p.video.paused;
   }
   if (p.video && p.video.paused === false && heldFor) { heldFor = null; p2p.carryOn(); }      // "play" while waiting for a friend: stop waiting
+  // a locked scene can't be picked, however it's asked for (its tile, a number key, Next, the rotation, Mix): left as it was
+  if ('scene' in p && !sceneOpen(p.scene)) { p = { ...p }; delete p.scene; }
+  if (p.perDisplay && typeof p.perDisplay === 'object') p = { ...p, perDisplay: Object.fromEntries(Object.entries(p.perDisplay).filter(([, id]) => sceneOpen(id))) };
   const prev = JSON.parse(JSON.stringify(state));
   if ((p.speed !== undefined && p.speed !== state.speed) || (p.frozen !== undefined && p.frozen !== state.frozen)) {
     const now = Date.now();   // keep visual time continuous when speed changes or the scene is paused / resumed
@@ -3981,7 +4058,7 @@ ipcMain.handle('init', (e) => initFor(e.sender));
 const libKind = (k) => (k === 'audio' || k === 'media' ? k : 'video');
 ipcMain.handle('list-dir', (_e, dir, kind) => listDir(dir, libKind(kind)));
 ipcMain.handle('search-lib', (_e, kind, root, q) => searchLib(libKind(kind), root, q));
-ipcMain.on('patch', (_e, p) => patch(p || {}));
+ipcMain.on('patch', (_e, p) => { p = { ...(p || {}) }; delete p.tokens; delete p.unlocked; patch(p); });       // (scene tokens and what's unlocked are main's to change: tokenWon, slotsSpin)
 ipcMain.on('levels', (_e, l) => broadcast('levels', l, false));
 ipcMain.on('now', (_e, n) => { nowPlaying = n; broadcast('now', n, false); p2p.sync(); syncLive(); });       // friends listening see the title too
 ipcMain.handle('read-file', async (_e, p) => {
@@ -4201,6 +4278,10 @@ ipcMain.on('cmd', async (e, c) => {
     case 'web-ptr': if (surfMode() === 'stream') ssOut(state.share.cursor ? { t: 'ptr', x: +c.x, y: +c.y } : { t: 'ptr', x: -1, y: -1 }); break;       // where this PC's mouse is over the Surf stream (-1: off it, or cursor sharing is off)
     case 'bj': bjMove(c); break;       // the Blackjack table: a screen showing it or not, a move, the pointer over it
     case 'game': gmMove(c); break;       // Roulette and Hold'em, the same
+    case 'slots':       // Scene Slots, always your own (never a hub's): a token in, a scene unlocked; and its sounds, for the reels
+      if (c.op === 'spin') slotsSpin(e.sender, c.n);
+      else if (c.op === 'sfx' && /^sl[A-Z]\w*$/.test(String(c.name || ''))) sfxPlay([String(c.name)]);
+      break;
     case 'vid-ptr': {       // where this PC's mouse is over the shared video, while it's paused (-1: off it, or cursor sharing is off)
       const at = c.x >= 0 && state.share.cursor ? { x: +c.x, y: +c.y } : null;
       if (p2p.role() === 'host') vptrSet('host', shareName(), at);
@@ -5907,17 +5988,59 @@ async function runShots() {
       log.push('gamepics crane machine: ' + await until(() => gm.crane.at === 'local' && !!gm.crane.local, 15000));
       localWallet.set(BJ_ME, { chips: 50000, outUntil: 0 });
       const cr = gm.crane.local, crBox = cr._items().find((q) => q.kind);
-      cr._rules.boxGrip = 1;
-      const crAt = Date.now(), CB = require('./renderer/crane-board.js');
+      cr._rules.boxGrip = 1e6; cr._rules.boxWithin = 1e6;       // (sure, anywhere on the box)
+      const CB = require('./renderer/crane-board.js');
       move('crane', { do: 'play' });
-      await until(() => cr._claw().x >= crBox.x - 2, 10000);
-      move('crane', { do: 'drop', amount: crAt + (crBox.x - CB.RAIL.home) / CB.SWEEP.speed * 1000 });       // (timed to the moment it was over the box)
+      // pressed as the carriage, braking from there, would stop over the box (the swing takes it a little off: still on the box)
+      await until(() => { const c = cr._claw(); return c.cx + c.cv * Math.abs(c.cv) / (2 * CB.SWING.brake) >= crBox.x; }, 10000);
+      move('crane', { do: 'drop' });
       log.push('gamepics crane lifted: ' + await until(() => cr._step() === 'up' && cr._claw().y < 330, 15000));
       clearInterval(gm.crane.timer);
       await pic('crane', gm.crane.screens);
       if (process.env.DRIFT_GAMEPICS_EXTRA) {       // (to look at by eye: the machine full size)
         const w = visWins.find((x) => gm.crane.screens.has(x.key)), img = w && await Promise.race([w.win.webContents.capturePage(), wait(5000)]);
         if (img && !img.isEmpty()) fs.writeFileSync(path.join(dir, 'crane-full.png'), img.toPNG());
+      }
+      // Scene Slots: a scene just won, the reels stopped on it and its card up (the screen's told what it won, as main.js's
+      // slotsSpin would: here every scene is open, so there's nothing to win for real)
+      patch({ scene: 'slots' });
+      const slWin = async () => { for (const x of visWins) if (!x.win.isDestroyed() && await pageRun(x.win.webContents, () => document.querySelector('#slTable').classList.contains('on')).catch(() => false)) return x; return null; };
+      let slw = null;
+      log.push('gamepics scene slots: ' + await until(async () => !!(slw = await slWin()), 10000));
+      if (slw) {
+        await pageRun(slw.win.webContents, () => window.driftThumbs()).catch(() => {});
+        await until(() => pageRun(slw.win.webContents, () => [...document.querySelectorAll('#tiles .tile:not(.game)')].every((t) => !!t.style.backgroundImage)).catch(() => false), 30000);       // (the scenes' pictures drawn)
+        // kept as Scene Slots' reel pictures (renderer/scenes/<id>.jpg), drawn in Aurora's colours (a new settings folder's
+        // palette): app.js turns them round the colour wheel to whatever palette's on
+        const pics = await pageRun(slw.win.webContents, () => Object.fromEntries([...document.querySelectorAll('#tiles .tile:not(.game)')].map((t) => [t.dataset.id, (t.style.backgroundImage.match(/data:image\/jpeg;base64,([^")]+)/) || [])[1] || ''])));
+        const scenesDir = path.join(__dirname, 'renderer', 'scenes'); fs.mkdirSync(scenesDir, { recursive: true });
+        let kept = 0; for (const [id, b64] of Object.entries(pics || {})) if (b64 && /^[a-z]+$/.test(id)) { fs.writeFileSync(path.join(scenesDir, id + '.jpg'), Buffer.from(b64, 'base64')); kept++; }
+        log.push(`gamepics scene pictures kept: ${kept} (palette ${state.palette})`);
+        const shoot = async (name) => { const img = await Promise.race([slw.win.webContents.capturePage(), wait(5000)]); if (img && !img.isEmpty()) fs.writeFileSync(path.join(dir, name), img.toPNG()); };
+        if (process.env.DRIFT_GAMEPICS_EXTRA) { await wait(1500); await shoot('slots-idle.png'); await wait(800); await shoot('slots-idle.png'); }       // (the machine at rest; twice: a hidden window's first picture can be old)
+        slw.win.webContents.send('cmd', { type: 'slots', won: ['apollonian'], left: 20 });
+        const slIs = (cls) => pageRun(slw.win.webContents, (c) => !!document.querySelector('#slTable .slStage.' + c), cls).catch(() => false);
+        if (process.env.DRIFT_GAMEPICS_EXTRA && await until(() => slIs('clear'), 10000)) { await wait(300); await shoot('slots-pull.png'); }       // (the pull: the machine hopping, the drums turning)
+        if (process.env.DRIFT_GAMEPICS_EXTRA && await until(() => slIs('stop'), 20000)) { await wait(400); await shoot('slots-win.png'); await wait(500); await shoot('slots-win.png'); }       // (the result: the winning cards glowing)
+        if (process.env.DRIFT_GAMEPICS_EXTRA && await until(() => slIs('show'), 30000)) {       // (a hidden window's timers run late: wait for it, don't guess)
+          await wait(600); await shoot('slots-showcase.png');
+          log.push('gamepics slots showcase: ' + JSON.stringify(await pageRun(slw.win.webContents, () => {       // (its pictures can be stale: what the page says it shows)
+            const q = (s) => document.querySelector('#slTable ' + s), o = (s) => getComputedStyle(q(s)).opacity;
+            return { prize: o('.slPrize'), machine: o('.slRig'), banner: o('.slBanner'), text: q('.slBanner').innerText.replace(/\n+/g, ' | '), bg: getComputedStyle(q('.slStage')).backgroundImage.slice(0, 60) };
+          })));
+        }
+        await until(() => slIs('end'), 30000);       // (it sits on the scene won; a click shows the cards, the tile's picture)
+        await pageRun(slw.win.webContents, () => document.querySelector('#slTable .slStage').click()).catch(() => {});
+        await until(() => slIs('done'), 5000); await wait(800);
+        await pic('slots', new Set([slw.key]));
+        if (process.env.DRIFT_GAMEPICS_EXTRA) {       // (to look at by eye: the single pull full size, then a pull of ten)
+          let img = await Promise.race([slw.win.webContents.capturePage(), wait(5000)]);
+          if (img && !img.isEmpty()) fs.writeFileSync(path.join(dir, 'slots-full.png'), img.toPNG());
+          slw.win.webContents.send('cmd', { type: 'slots', won: ['nebula', 'julia', 'stars', 'lava', 'pines', 'maze', 'globe', 'rose', 'meadow', 'silk'], left: 10 });
+          await wait(9000);
+          img = await Promise.race([slw.win.webContents.capturePage(), wait(5000)]);
+          if (img && !img.isEmpty()) fs.writeFileSync(path.join(dir, 'slots-ten.png'), img.toPNG());
+        }
       }
     } catch (e) { log.push('gamepics error: ' + String(e && e.stack || e)); }
     fs.writeFileSync(path.join(SHOT_DIR, 'log.txt'), log.join('\n')); quitting = true; app.quit(); return;
@@ -6023,7 +6146,7 @@ async function runShots() {
       tl('no bet while out', !mine().bet);
       scene('aurora'); await until(() => bjAt === '', 5000); scene('blackjack');
       tl('standing up and sitting down doesn\'t skip it', await until(() => bjAt === 'local' && !!mine(), 5000) && mine().outMs > 0);
-      tl('back in with 1,000 after the wait', await until(() => mine() && !mine().outMs && mine().chips === 1000, 8000));
+      tl('back in with 500 after the wait', await until(() => mine() && !mine().outMs && mine().chips === 500, 8000));
       need('Stand up', await until(() => V().phase === 'betting', 8000) && await press('Stand up'));
       tl('standing: no seat, watching, with Sit down', await until(async () => { p = await page(); return V().you === -1 && !p.seats.some(Boolean) && p.btns.includes('Sit down') && /standing/.test(p.bar); }, 5000));
       await press('Sit down');
@@ -6144,6 +6267,99 @@ async function runShots() {
     }
     fs.writeFileSync(path.join(outDir, role + '.json'), JSON.stringify(res, null, 1));
     await step('end', 20000);
+  }
+  if (process.env.DRIFT_TESTSLOTS) {     // locked scenes, scene tokens and Scene Slots (docs/plans/scene-slots.md), one copy of Drift (scripts/test-slots.js), locks on (DRIFT_LOCKS)
+    // Only the first scene in each section is open: the tiles show the locks, and no way of picking one gets you there (the
+    // picker, Next, a screen's patch). A screen can't give itself tokens. Tokens come from the tables' views (a grand prize of
+    // yours, rolling in late too; a Pachinko fever round filled while you're at the machine), once each. At Scene Slots with none it says so; with one, Insert token
+    // spends it on a scene that was locked, the reels stop on it, its tile opens, and it's all saved; the scene won is only to look at, a click back to the machine.
+    const outDir = process.env.DRIFT_TESTSLOTS, role = 'solo', wc = visWins[0].win.webContents;
+    const abortFile = path.join(outDir, 'abort'), aborted = () => fs.existsSync(abortFile);
+    const abort = (why) => { try { fs.writeFileSync(abortFile, `${role}: ${why}`); } catch { /* fine */ } };
+    const until = async (f, ms = 15000) => { for (let t = 0; t < ms && !aborted(); t += 250) { if (await f()) return true; await wait(250); } return !!(await f()); };
+    const res = { role }, tl = (k, v) => { res[k] = v; log.push(`slots: ${k} ${JSON.stringify(v)}`); };
+    const need = (k, v) => { tl(k, v); if (!v) { abort(k); throw new Error('stopped early: ' + k); } };
+    const tiles = () => pageRun(wc, () => [...document.querySelectorAll('#tiles .tile')].map((t) => [t.dataset.id, t.classList.contains('locked')]));
+    const saved = () => { try { return JSON.parse(fs.readFileSync(settingsFile, 'utf8')); } catch { return {}; } };
+    try {
+      need('the locks are on in this test', !LOCKS_OFF);
+      tl(`a new wallet: 500 chips and a scene token (${state.wallet.chips}, ${state.tokens})`, state.wallet.chips === 500 && state.tokens === 1);
+      state.tokens = 0;       // (the rest starts from none)
+      const plain = SCENES.filter((id) => !GAMES.includes(id)), locked0 = lockedScenes();
+      tl(`only the first in each section is open (${plain.length - locked0.length} of ${plain.length})`, locked0.length === plain.length - FREE_SCENES.length && FREE_SCENES.every(sceneOpen) && GAMES.every(sceneOpen));
+      need('the tiles show the locks', await until(async () => (await tiles()).filter((x) => x[1]).length === locked0.length, 10000));
+      tl('and only on the locked ones', (await tiles()).every(([id, lk]) => lk === locked0.includes(id)));
+      patch({ scene: 'aurora' }); patch({ scene: 'nebula' });
+      tl('picking a locked scene leaves you where you were', state.scene === 'aurora');
+      await pageRun(wc, () => document.querySelector('#tiles .tile[data-id="nebula"]').click()); await wait(500);
+      tl('so does clicking its tile', state.scene === 'aurora');
+      const went = []; for (let k = 0; k < 7; k++) { stepScene(1, false); went.push(state.scene); }
+      tl(`Next goes through the open ones only (${went.join(' ')})`, went.every((id) => FREE_SCENES.includes(id)) && new Set(went).size === FREE_SCENES.length);
+      await pageRun(wc, () => window.drift.patch({ tokens: 50, unlocked: ['nebula'] })); await wait(500);
+      tl('a screen can\'t give itself tokens or scenes', state.tokens === 0 && state.unlocked.length === 0);
+      // tokens, from what changed between two views of a table
+      const C = GM_TOKENS.crane, Pa = GM_TOKENS.pachinko, tr = (n, kinds, mine = true) => ({ n, mine, kinds });
+      tl('a grand prize on your try: a token', C({ play: tr(3, []), last: [] }, { play: tr(3, [1]), last: [] }) === 1);
+      tl('a plush, big or small: none', C({ play: tr(3, []), last: [] }, { play: tr(3, [0, 2]), last: [] }) === 0);
+      tl('someone else\'s grand prize: none', C({ play: tr(3, [], false), last: [] }, { play: tr(3, [1], false), last: [] }) === 0);
+      tl('one rolling in after your try ended: a token', C({ play: null, last: [tr(3, [0])] }, { play: null, last: [tr(3, [0, 1])] }) === 1);
+      tl('and only once (the try moving on into the list, the next starting)', C({ play: tr(3, [1]), last: [] }, { play: tr(4, []), last: [tr(3, [1])] }) === 0);
+      const seat = (left = false) => [{ id: 'a', left }];
+      tl('a fever round filled while you\'re at the machine: a token, whoever\'s spin it was', Pa({ filled: 2, you: 0, seats: seat() }, { filled: 3, you: 0, seats: seat() }) === 1);
+      tl('a fever set off, or a round not filled: none', Pa({ filled: 2, you: 0, seats: seat(), fever: null }, { filled: 2, you: 0, seats: seat(), fever: { mine: true } }) === 0);
+      tl('watching, or stood up: none', Pa({ filled: 2, you: -1, seats: seat() }, { filled: 3, you: -1, seats: seat() }) === 0 && Pa({ filled: 2, you: 0, seats: seat(true) }, { filled: 3, you: 0, seats: seat(true) }) === 0);
+      const Sk = GM_TOKENS.sketch, sk = (phase, scores, you = 0) => ({ phase, you, players: scores.map((s, i) => ({ id: 'p' + i })), standings: phase === 'over' ? scores.map((s, i) => ({ id: 'p' + i, score: s })).sort((x, y) => y.score - x.score) : null });
+      tl('Sketch & Guess won at a hub: a token, once', Sk(sk('reveal', [300, 200]), sk('over', [300, 200]), 'hub') === 1 && Sk(sk('over', [300, 200]), sk('over', [300, 200]), 'hub') === 0);
+      tl('a tie at the top: a token each', Sk(sk('reveal', [300, 300], 1), sk('over', [300, 300], 1), 'hub') === 1);
+      tl('second place, a game nobody scored in, or not at a hub: none', Sk(sk('reveal', [300, 200], 1), sk('over', [300, 200], 1), 'hub') === 0 && Sk(sk('reveal', [0, 0]), sk('over', [0, 0]), 'hub') === 0 && Sk(sk('reveal', [300, 200]), sk('over', [300, 200]), 'local') === 0);
+      tl('a machine without the count (an older hub), or started over: none', Pa({ you: 0, seats: seat() }, { filled: 3, you: 0, seats: seat() }) === 0 && Pa({ filled: 5, you: 0, seats: seat() }, { filled: 0, you: 0, seats: seat() }) === 0);
+      // Scene Slots
+      patch({ scene: 'slots' });
+      let sw = null;       // (the window it's up on: in Span, only the middle screen's, not always the first)
+      const slUp = async () => { for (const x of visWins) if (!x.win.isDestroyed() && await pageRun(x.win.webContents, () => document.querySelector('#slTable').classList.contains('on')).catch(() => false)) { sw = x.win.webContents; return true; } return false; };
+      need('Scene Slots comes up', await until(slUp, 8000));
+      const bar = () => pageRun(sw, () => document.querySelector('#slTable .bjBar').innerText.replace(/\n+/g, ' | '));
+      tl('with no token it says how to get one', await until(async () => /No scene tokens/.test(await bar()), 3000));
+      tokenWon('crane', 1);
+      tl('a token won is kept, and saved', state.tokens === 1 && saved().tokens === 1);
+      need('Insert token is up', await until(() => pageRun(sw, () => !!document.querySelector('#slTable .slPull')), 3000));
+      const before = lockedScenes();
+      await pageRun(sw, () => document.querySelector('#slTable .slPull').click());
+      need('a scene is unlocked', await until(() => state.unlocked.length === 1, 4000));
+      tl('the machine, seen in 3D from its one angle, hops as the drums turn', await until(() => pageRun(sw, () => {
+        const rig = document.querySelector('#slTable .slRig'), drum = document.querySelector('#slTable .slDrum');
+        return rig.classList.contains('cam-idle') && /^matrix3d/.test(getComputedStyle(rig).transform) && document.querySelector('#slTable .slShake.hop') && /rotateX\(-\d/.test(drum.style.transform);
+      }), 3000));
+      tl('the three winning cards glow in its rarity\'s colour while the drums are still rolling', await until(() => pageRun(sw, () => !document.querySelector('#slTable .slStage.stop') && document.querySelectorAll('#slTable .slFace.win').length === 3 && [...document.querySelectorAll('#slTable .slFace.win')].every((f) => !!f.style.getPropertyValue('--rc'))), 3000));
+      tl('then the camera zooms into the reels and it goes white', await until(() => pageRun(sw, () => !!document.querySelector('#slTable .slRig.cam-zoom') || !!document.querySelector('#slTable .slStage.white')), 15000));
+      const won = state.unlocked[0], name = (await pageRun(wc, (id) => (document.querySelector(`#tiles .tile[data-id="${id}"] span`) || {}).textContent || '', won));
+      tl(`the token's spent on a scene that was locked (${won})`, state.tokens === 0 && before.includes(won) && lockedScenes().length === before.length - 1);
+      tl('out of the white, the scene itself, its banner naming it', await until(() => pageRun(sw, () => { const b = document.querySelector('#slTable .slStage.show .slBanner.on'); return b ? b.textContent : ''; }).then((t) => !!name && t.includes(name)), 20000));
+      tl('its tile opens', await until(async () => { const t = (await tiles()).find((x) => x[0] === won); return !!t && !t[1]; }, 3000));
+      tl('the summon plays through and sits on the scene won, the banner fading', await until(() => pageRun(sw, () => !!document.querySelector('#slTable .slStage.end.show .slBanner.fade')), 40000));       // (a hidden window's timers run late)
+      tl('nothing on the scene won: no bar, no Pull, no Go to it', await pageRun(sw, () => !document.querySelector('#slTable .bjBar').children.length && getComputedStyle(document.querySelector('#slTable .bjBar')).display === 'none'));
+      await pageRun(sw, () => document.querySelector('#slTable .slStage').click());
+      tl('the reels\' pictures are the ones drawn ahead, turned to the palette', await pageRun(sw, () => /scenes\/\w+\.jpg/.test((document.querySelector('#slTable .slFace .slPic') || {}).style.backgroundImage || '') && /hue-rotate/.test(getComputedStyle(document.querySelector('#slTable .slFace .slPic')).filter)));
+      tl('a click there puts it away: the machine again', await until(() => pageRun(sw, () => !document.querySelector('#slTable .slStage.on')), 3000));
+      tl('it\'s saved', (saved().unlocked || []).includes(won) && saved().tokens === 0);
+      tl('out of tokens: it says so again', await until(async () => /No scene tokens/.test(await bar()), 3000));
+      tl('back at the machine, still no way to jump to the scene (it\'s in the Scenes tab)', await pageRun(sw, () => !document.querySelector('#slTable .slGo')) && state.scene === 'slots');
+      const heard = (n) => sfxSent.includes(n) || gmHeard.includes(n);
+      tl('its sounds: the token, the coin, the lever, the reels, the hop\'s thuds, the stops, the win\'s bells, the zoom and the white', ['slToken', 'slCoin', 'slLever', 'slPower', 'slReels', 'slThud', 'slReelStop', 'slTense', 'slWhoosh', 'slShine'].every(heard)
+        && ['slR', 'slSR', 'slSSR'].some(heard), sfxSent.filter((n) => /^sl/.test(n)));
+      // one pull at a time: one Pull on the deck, none of ten; and a screen asking for ten still gets one
+      state.tokens = 10; pushState();
+      patch({ scene: 'slots' });
+      need('back at Scene Slots', await until(slUp, 8000));
+      tl('with ten tokens, still just one Pull (on the deck and the bar)', await until(() => pageRun(sw, () => [...document.querySelectorAll('#slTable .slBtn, #slTable .slPull')].map((b) => b.textContent)).then((t) => t.length === 2 && t.every((x) => x === 'Pull')), 3000));
+      const had = state.unlocked.length;
+      slotsSpin(sw, 10);
+      tl('asked for ten, it unlocks one, for one token', state.unlocked.length === had + 1 && state.tokens === 9);
+    } catch (e) {
+      if (!/^stopped early/.test(e && e.message)) { tl('failed: ' + (e && e.stack || e), false); abort('crashed'); }
+      if (aborted()) res.stopped = fs.readFileSync(abortFile, 'utf8');
+    }
+    fs.writeFileSync(path.join(outDir, role + '.json'), JSON.stringify(res, null, 1));
   }
   if (process.env.DRIFT_TESTGAMES) {     // Roulette and Hold'em (docs/plans/games-room.md), two copies of Drift (scripts/test-games.js): =host or =guest.
     // Alone first: a bet clicked onto the roulette layout, the spin, the payout kept in the settings; a few hands of Hold'em
@@ -6301,36 +6517,37 @@ async function runShots() {
         return true;
       }, sel, how);
       const B_CRANE = require('./renderer/crane-board.js');
-      localWallet.set(BJ_ME, { chips: 3000, outUntil: 0 });
+      localWallet.set(BJ_ME, { chips: 600, outUntil: 0 });
       scene('crane');
       need('the crane machine comes up, played here', await until(() => gm.crane.at === 'local' && !!mine('crane'), 15000));
       let cp = await crPage();
       tl('it shows: the box drawn, just you, at the claw', await until(async () => { cp = await crPage(); return cp.on && cp.mode === 'Just you' && cp.canvas > 300 && cp.names.join() === 'You'; }, 5000), cp);
-      tl('3,000 chips: no try, and it says why', await until(async () => { cp = await crPage(); return cp.play === false && /A try is 5,000 chips/.test(cp.bar); }, 3000), cp);
+      tl('600 chips: no try, and it says why', await until(async () => { cp = await crPage(); return cp.play === false && /A try is 1,000 chips/.test(cp.bar); }, 3000), cp);
       log.push('cr: layout ' + JSON.stringify(cp.layout));
       tl('the cabinet fits, the bar under it', cp.layout.cab[1] >= 0 && cp.layout.cab[1] + cp.layout.cab[3] <= cp.layout.barTop && cp.layout.cab[0] >= 0 && cp.layout.cab[0] + cp.layout.cab[2] <= cp.layout.w, cp.layout);
       localWallet.set(BJ_ME, { chips: 20000, outUntil: 0 });
       need('with 20,000 the button is there', await until(async () => (await crPage()).play === true, 3000));
-      need('Play: a try, 5,000 out of the wallet', await crPress('.crPlay', 'click') && await until(() => V('crane').step === 'move' && mine('crane').chips === 15000, 3000));
+      need('Play: a try, 1,000 out of the wallet', await crPress('.crPlay', 'click') && await until(() => V('crane').step === 'move' && mine('crane').chips === 19000, 3000));
       need('the Drop! button is up', await until(async () => (await crPage()).drops === 1, 2000));
-      const crX0 = gm.crane.local._claw().x;
+      const crX0 = gm.crane.local._claw().cx;
       await wait(1200);
-      const crX1 = gm.crane.local._claw().x;
+      const crX1 = gm.crane.local._claw().cx;
       tl(`the claw sweeps by itself (${Math.round(crX0)} -> ${Math.round(crX1)} in 1.2 s, nothing pressed)`, crX1 > crX0 + 150);
-      need('frames come, with the claw and the prizes in them', gm.crane.ink.list.some((f) => f.c.length === 3 && f.i.length >= 21 * 4));
+      need('frames come, with the claw (its head and carriage) and the prizes in them', gm.crane.ink.list.some((f) => f.c.length === 4 && f.i.length === B_CRANE.PILE.length * 5));       // (id, kind, x, y, angle)
       await shot('crane', 'cr-sweep');
-      const crPressX = gm.crane.local._claw().x;
+      const crPressX = gm.crane.local._claw().cx;
       need('Drop! (on the press, not the click)', await crPress('.crDrop', 'pointerdown') && await until(() => V('crane').step !== 'move', 2000));
-      const crDropX = gm.crane.local._claw().x;
-      log.push(`cr: pressed with the claw at ${Math.round(crPressX)} on the table, came down at ${Math.round(crDropX)}`);
-      tl('it comes down where the screen showed it (a moment behind the table)', Math.abs(crDropX - crPressX) < 70 &&crDropX >= B_CRANE.SWEEP.x1 - 1 && crDropX <= B_CRANE.SWEEP.x2 + 1);
-      await wait(300);
-      tl('and stays there on the way down', Math.abs(gm.crane.local._claw().x - crDropX) < 0.01);
+      const crDropX = gm.crane.local._claw().pressX;
+      log.push(`cr: pressed with the carriage at ${Math.round(crPressX)} on the table, braked from ${Math.round(crDropX)}`);
+      tl('it brakes from where the screen showed it (a moment behind the table)', Math.abs(crDropX - crPressX) < 70 && crDropX >= B_CRANE.SWEEP.x1 - 1 && crDropX <= B_CRANE.SWEEP.x2 + 1);
+      await wait(600);
+      const crC = gm.crane.local._claw();
+      tl(`and stops a little on, the head swinging under it (stopped at ${Math.round(crC.cx)}, head at ${Math.round(crC.x)})`, crC.cv === 0 && Math.abs(crC.cx - crDropX) < 40);
       need('the try goes round and finishes', await until(() => V('crane').step === 'ready' && !V('crane').play && V('crane').last.length === 1, 30000));
       await wait(300);
       const crLast = V('crane').last[0];
       log.push('cr: try ' + JSON.stringify(crLast));
-      tl(`its prizes paid (${crLast.won}), kept in the wallet and the settings`, mine('crane').chips === 15000 + crLast.won && state.wallet.chips === mine('crane').chips);
+      tl(`its prizes paid (${crLast.won}), kept in the wallet and the settings`, mine('crane').chips === 19000 + crLast.won && state.wallet.chips === mine('crane').chips);
       tl('its sounds: the coin, the claw going down and closing', ['crCoin', 'crDrop', 'crGrab'].every((n) => gmHeard.includes(n)), gmHeard.filter((n) => /^cr/.test(n)));
       // ---- Sketch & Guess, alone: there's no game without people, and it says so ----
       scene('sketch');
@@ -6338,6 +6555,7 @@ async function runShots() {
       scene('poker');       // (back to Hold'em: the hub's table is the first one tried together)
 
       // ---- at the hub ----
+      const aloneChips = state.wallet.chips;       // (the hub plays these: one wallet, alone and at every hub)
       if (role === 'host') {
         wc.send('cmd', { type: 'show-panel', tab: 'hub' }); await wait(800);
         await js("document.querySelector('#chHost').click()");
@@ -6351,6 +6569,7 @@ async function runShots() {
       }
       // Hold'em first (it's up): the hub's table, a computer player till the other sits, then the two of us
       need('at the hub\'s Hold\'em table now', await until(() => hubNow() && gm.poker.at === hubNow().id && !!V('poker') && V('poker').you >= 0, 15000));
+      tl(`the hub plays the chips you had alone, and your PC keeps its count (${aloneChips} → ${state.wallet.chips})`, await until(() => state.wallet.chips === aloneChips && !!(V('poker').wallet), 5000));
       tl('the hub bar says the other is at the Hold\'em table', await until(() => { const h = hubNow(), m = h && h.members.find((x) => x.name === theirName); return !!m && m.at === 'poker'; }, 20000));
       await step('poker-seated');
       need('the two of us, and the computer player gone', await until(async () => { const v = V('poker'); await pokerPlay('fold'); return v.seats.filter((s) => s && !s.bot).length === 2 && !v.seats.some((s) => s && s.bot) && ['preflop', 'flop', 'turn', 'river'].includes(v.phase) && v.seats.filter((s) => s && s.inHand).length === 2; }, 60000));
@@ -6380,7 +6599,8 @@ async function runShots() {
       scene('roulette');
       need('at the hub\'s roulette table', await until(() => hubNow() && gm.roulette.at === hubNow().id && !!V('roulette') && V('roulette').you >= 0, 15000));
       need('both of us at it', await until(() => V('roulette').seats.filter(Boolean).length === 2, 30000));
-      tl(`the hub's one wallet: the chips from its Hold'em table come to the wheel (${pkStack} → ${mine('roulette').chips})`, mine('roulette').chips >= pkStack && mine('roulette').chips <= 2000);
+      tl(`the hub's one wallet: the chips from its Hold'em table come to the wheel (${pkStack} → ${mine('roulette').chips})`, mine('roulette').chips >= pkStack && mine('roulette').chips <= aloneChips * 2);
+      tl(`...and your PC keeps the hub's count (${state.wallet.chips})`, await until(() => state.wallet.chips === mine('roulette').chips, 3000));
       await step('rl-seated');
       need('a betting round', await until(() => V('roulette').phase === 'betting', 15000));
       gmMove({ g: 'roulette', op: 'move', m: { do: 'bet', key: role === 'host' ? 'red' : 'black', amount: 100 } });

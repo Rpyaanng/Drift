@@ -351,6 +351,42 @@
       crash(a, d, t + 0.4, 0.32, 1.8); celebrate(a, d, t + 0.45, 2.4, 0.6); applause(a, d, t + 0.5, 2.6, 0.45); },
     // nothing: the sag
     crMiss: (a, d, t) => deflate(a, d, t, 0.8, 0.38),
+    // ---- Scene Slots (renderer/slots.js; a token from the crane or Pachinko: main.js tokenWon). A real slot machine's sounds,
+    // made here: the lever's ratchet, the reels' motor and clicks, each reel's chunk, the machine landing, the bells and the coins ----
+    // a scene token won: a bright coin ringing out
+    slToken: (a, d, t) => { [N.G5, N.C6, E5 * 2, N.G6].forEach((f, i) => bell(a, d, t + i * 0.06, f, 0.25, 0.7)); },
+    // the token in: a chunk, and the machine lighting up
+    slCoin: (a, d, t) => { chips(a, d, t, 1, 0.8); [N.C5, N.G5, N.C6].forEach((f, i) => mallet(a, d, t + 0.1 + i * 0.06, f, 0.3, 0.35, 5000)); },
+    // the lever pulled: a ratchet run down its teeth, then the clunk at the bottom
+    slLever: (a, d, t) => { for (let i = 0; i < 8; i++) noise(a, d, t + i * (0.03 - i * 0.002), { f: 2200 + i * 120, q: 9, dur: 0.012, level: 0.22 });
+      voice(a, d, t + 0.2, { f: 130, f2: 70, glide: 0.05, dur: 0.16, level: 0.42, atk: 0.002 }); noise(a, d, t + 0.2, { f: 420, q: 1.2, dur: 0.08, level: 0.38 }); },
+    // the reels going round (4.4 s): a motor's whir under three trains of clicks, each thinning out as its reel slows to its
+    // stop (at 2.1, 3.0 and 4.4 s, as renderer/slots.js stops them: the last one crawling)
+    slReels: (a, d, t) => {
+      voice(a, d, t, { f: 82, f2: 52, glide: 4.4, dur: 4.5, level: 0.07, atk: 0.12, type: 'sawtooth', cut: 520, partials: [[2, 0.5, 0.8]] });
+      noise(a, d, t, { f: 900, q: 0.6, dur: 4.4, level: 0.05, atk: 0.2 });
+      [2.1, 3.0, 4.4].forEach((end, r) => { let at = t + 0.02 * r; while (at < t + end - 0.05) { const u = (at - t) / end; noise(a, d, at, { f: 1500 + r * 350, q: 10, dur: 0.01, level: 0.12 + u * 0.08 }); at += 0.03 + u * u * (r === 2 ? 0.26 : 0.14); } });
+    },
+    // two reels down, one to go (1.25 s, till the last stops): a heartbeat quickening under a tone rising, the room holding its breath
+    slTense: (a, d, t) => {
+      let at = t; for (let i = 0; i < 6; i++) { const gap = 0.3 - i * 0.03; voice(a, d, at, { f: 58, f2: 44, glide: 0.08, dur: 0.16, level: 0.34, atk: 0.004 }); voice(a, d, at + gap * 0.32, { f: 54, f2: 42, glide: 0.08, dur: 0.14, level: 0.22, atk: 0.004 }); at += gap; }
+      voice(a, d, t, { f: 220, f2: 440, glide: 1.2, dur: 1.25, level: 0.07, atk: 0.9, vib: 0.01, cut: 1800, partials: [[1.5, 0.3, 0.5]] }); noise(a, d, t, { f: 2600, q: 1, dur: 1.2, level: 0.05, atk: 1 });
+    },
+    // a reel stopping: the mechanical chunk of it locking, and the little ding of the stop
+    slReelStop: (a, d, t) => { voice(a, d, t, { f: 150, f2: 85, glide: 0.04, dur: 0.14, level: 0.42, atk: 0.002 }); noise(a, d, t, { f: 1100, q: 1.6, dur: 0.05, level: 0.34 }); bell(a, d, t + 0.01, N.C7, 0.07, 0.3); },
+    // the machine landing from its hop: a heavy thud through the floor, the coins in its tray jumping
+    slThud: (a, d, t) => { voice(a, d, t, { f: 64, f2: 36, glide: 0.12, dur: 0.32, level: 0.6, atk: 0.003 }); noise(a, d, t, { f: 220, q: 0.8, dur: 0.14, level: 0.42 }); chips(a, d, t + 0.03, 3, 0.45); },
+    // the win: the slot machine's bells ringing (two of them trilling), coins pouring into the tray; longer and bigger for SR,
+    // and for SSR the whole jackpot, with the horns
+    slR: (a, d, t) => { for (let i = 0; i < 14; i++) bell(a, d, t + i * 0.055, i % 2 ? N.G6 : E5 * 2, 0.14, 0.25); chips(a, d, t + 0.1, 6, 0.6); [N.C5, E5, N.G5, N.C6].forEach((f, i) => mallet(a, d, t + 0.05 + i * 0.07, f, 0.26, 0.4, 5000)); },
+    slSR: (a, d, t) => { for (let i = 0; i < 24; i++) bell(a, d, t + i * 0.05, i % 2 ? N.G6 : E5 * 2, 0.15, 0.25); for (let k = 0; k < 4; k++) chips(a, d, t + 0.1 + k * 0.22, 4, 0.6); chord(a, d, t + 0.1, [N.C4, N.G4, N.C5, E5], 1, 0.045, { vib: 0.006 }); },
+    slSSR: (a, d, t) => { for (let i = 0; i < 44; i++) bell(a, d, t + i * 0.048, i % 2 ? N.G6 : E5 * 2, 0.16, 0.25); for (let k = 0; k < 10; k++) chips(a, d, t + 0.1 + k * 0.2, 5, 0.65);
+      horn(a, d, t, 0.8, 0.12); chord(a, d, t + 0.35, [N.C4, N.G4, N.C5, E5, N.G5], 1.8, 0.05, { vib: 0.007 }); crash(a, d, t + 0.35, 0.3, 2); celebrate(a, d, t + 0.4, 2.4, 0.5); },
+    // the camera zooming into the reels: air rushing past, rising
+    slWhoosh: (a, d, t) => { noise(a, d, t, { f: 500, q: 0.7, dur: 1.0, level: 0.14, atk: 0.8 }); noise(a, d, t + 0.25, { f: 1600, q: 0.9, dur: 0.75, level: 0.12, atk: 0.55 }); noise(a, d, t + 0.5, { f: 4200, q: 1.2, dur: 0.5, level: 0.1, atk: 0.35 });
+      voice(a, d, t, { f: 180, f2: 720, glide: 0.95, dur: 1.0, level: 0.08, atk: 0.7, cut: 2000 }); },
+    // the white: a high shimmer opening out
+    slShine: (a, d, t) => { [N.C7, E5 * 4, N.G6 * 2, N.C7 * 2].forEach((f, i) => bell(a, d, t + i * 0.04, f, 0.12, 1.4)); noise(a, d, t, { f: 7000, q: 2, dur: 0.9, level: 0.1, atk: 0.05 }); chord(a, d, t + 0.05, [N.C5, N.G5, E5 * 2], 1.2, 0.03); },
   };
   // How loud each is against the others (measured, then by ear): your own actions peak around -7 dBFS at full volume, other
   // people's news a few dB under, the clinks lowest because they sit where the ear is keenest, and a dropped connection a
@@ -375,7 +411,23 @@
     paLaunch: 0.9, paPin: 0.8, paBounce: 1.1, paStart: 1.5, paTulip: 1.1, paCatch: 1.3, paSpin: 1.6, paReach: 1.5, paMiss: 1.9, paFever: 1.4, paGate: 1.5, paPay: 1.6,
     // the crane machine: the coin and the claw like your own actions, the slip like a near miss, a plush like a win and the
     // grand prize like the tables' big ones (set beside their neighbours, not yet measured)
-    crCoin: 1.3, crDrop: 1.4, crGrab: 1.2, crSlip: 1.6, crWin: 1.4, crGrand: 1.4, crMiss: 1.9 };
+    crCoin: 1.3, crDrop: 1.4, crGrab: 1.2, crSlip: 1.6, crWin: 1.4, crGrand: 1.4, crMiss: 1.9,
+    // Scene Slots: the token won like a win, the coin like your own action, the reels a texture, the unlock like a big one
+    slToken: 1.3, slCoin: 1.3, slLever: 1.3, slReels: 1.2, slTense: 1.3, slReelStop: 1.3, slThud: 1.3, slR: 1.3, slSR: 1.4, slSSR: 1.5, slWhoosh: 1.3, slShine: 1.2, slPower: 1.2 };
+
+  // ---- recordings: the one sound that isn't made here (asked for: a power-up for Scene Slots' lever, the file given). Played
+  // through an <audio> of its own (the page is a file, so it loads beside it), into the same chain as the rest, at its level ----
+  const SAMPLES = { slPower: 'sounds/sl-power-up.mp3' };
+  const media = {};
+  function sample(a, dst, t, name) {
+    if (typeof AudioContext === 'undefined' || !(a instanceof AudioContext)) return;       // (a check with an OfflineAudioContext: no files)
+    let m = media[name];
+    if (!m) { const el = new Audio(SAMPLES[name]); el.preload = 'auto'; const g = a.createGain(); a.createMediaElementSource(el).connect(g); m = media[name] = { el, g }; }
+    m.g.disconnect(); m.g.connect(dst);
+    m.el.pause(); m.el.currentTime = 0;
+    setTimeout(() => m.el.play().catch(() => {}), Math.max(0, (t - a.currentTime) * 1000));
+  }
+  for (const name of Object.keys(SAMPLES)) SOUNDS[name] = (a, d, t) => sample(a, d, t, name);
 
   // The way out: a small dark room (1.4 s, low in the mix). No compressor: Chromium's blunts the first few milliseconds of
   // a short sound (it took 60% off the mute click's peak), and the levels here are set by hand to stay well under full scale.

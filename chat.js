@@ -129,6 +129,9 @@ function verifyFt(raw, f, sig) {
   } catch { return false; }
 }
 const nonce = () => crypto.randomBytes(16).toString('base64url');
+// sitting down at a hub's table: this PC's chips go along (opts.wallet, main.js state.wallet; hub.js walletTake), so every
+// hub plays the same wallet
+const walletUp = (t, w) => (/-sit$/.test(t) && w && Number.isFinite(+w.chips) ? { wallet: { chips: Math.max(0, Math.floor(+w.chips)), outUntil: Math.max(0, +w.outUntil || 0) } } : {});
 
 module.exports = function createChat(opts) {       // (module.exports.decodeInvite: is this a hub's invite?)
   const dir = opts.dir, log = opts.log || (() => {});
@@ -1296,7 +1299,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
   // Which screen this PC shows (Scenes, Media, Surf or Share; the panel says), so friends can jump to it from the hub bar.
   let myWhere = '';
   function setWhere(at) {
-    at = ['scenes', 'media', 'surf', 'broadcast', 'blackjack', 'roulette', 'poker', 'sketch', 'pachinko', 'crane'].includes(at) ? at : '';
+    at = ['scenes', 'media', 'surf', 'broadcast', 'blackjack', 'roulette', 'poker', 'sketch', 'pachinko', 'crane', 'slots'].includes(at) ? at : '';
     if (myWhere === at) return;
     myWhere = at;
     for (const c of conns.values()) if (c.status === 'connected' && c.wire) c.wire.send({ t: 'where', at });
@@ -1373,7 +1376,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
       const t = String((m && m.t) || '');
       if (t === 'bj-ptr') { const c = conns.get(id); if (c && c.wire && c.status === 'connected') c.wire.send({ t, x: +m.x, y: +m.y }); return Promise.resolve({}); }
       if (!['bj-sit', 'bj-watch', 'bj-stand', 'bj-leave', 'bj-bet', 'bj-insure', 'bj-act'].includes(t)) return Promise.resolve({ error: 'Not a table move' });
-      return ask(id, { t, amount: +m.amount || 0, yes: !!m.yes, do: String(m.do || '').slice(0, 12) }, 8000);
+      return ask(id, { t, amount: +m.amount || 0, yes: !!m.yes, do: String(m.do || '').slice(0, 12), ...walletUp(t, opts.wallet && opts.wallet()) }, 8000);
     },
     // the hub's other Games room tables (hub.js gameMessage), the same way: g names the game, a move goes as m
     game: (id, m) => {
@@ -1386,7 +1389,7 @@ module.exports = function createChat(opts) {       // (module.exports.decodeInvi
       }
       if (!['game-sit', 'game-watch', 'game-stand', 'game-leave', 'game-move'].includes(t)) return Promise.resolve({ error: 'Not a table move' });
       const mv = m.m && typeof m.m === 'object' ? m.m : {};
-      return ask(id, { t, g, m: { do: String(mv.do || '').slice(0, 12), key: String(mv.key || '').slice(0, 24), amount: +mv.amount || 0, text: String(mv.text || '').slice(0, 80) } }, 8000);
+      return ask(id, { t, g, m: { do: String(mv.do || '').slice(0, 12), key: String(mv.key || '').slice(0, 24), amount: +mv.amount || 0, text: String(mv.text || '').slice(0, 80) }, ...walletUp(t, opts.wallet && opts.wallet()) }, 8000);
     },
     channel: (id, name) => ask(id, { t: 'channel', name }),
     dropChannel: (id, ch) => ask(id, { t: 'channel-delete', ch }),

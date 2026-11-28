@@ -79,7 +79,7 @@
     // The look: the carnival of the Pachinko machine next door. Two pictures drawn once (the back wall behind; the chute's
     // acrylic, the chrome and the glass's shine in front), and each frame between and over them: sunburst rays turning behind
     // the pile, a spotlight from the claw down to where it'll land, the claw on its rail, the plushes (their eyes follow the
-    // claw; the one it's holding beams), the gift box glittering, confetti and "+5,000"s at the chute, chasing bulbs round the
+    // claw; the one it's holding beams), the gift box glittering, confetti and "+1,000"s at the chute, chasing bulbs round the
     // top, and "GRAND PRIZE!!" right across the glass.
     function paintStill() {
       const acc = look['--bjAccent'] || '#22c08a', hi = look['--bjHi'] || '#f6e7b0', dark = look['--bjDark'] || '#101018';
@@ -89,15 +89,16 @@
       const g = c.createLinearGradient(0, 0, 0, B.H);
       g.addColorStop(0, mix(mix(dark, '#5a2a8a', 0.55), '#ffffff', 0.06)); g.addColorStop(0.6, mix(dark, '#1a3a6a', 0.5)); g.addColorStop(1, mix(dark, '#000000', 0.3));
       c.fillStyle = g; c.fillRect(0, 0, B.W, B.H);
-      const glow = c.createRadialGradient(360, 560, 30, 360, 560, 420); glow.addColorStop(0, hexA(hi, 0.3)); glow.addColorStop(0.45, hexA(acc, 0.12)); glow.addColorStop(1, hexA(acc, 0));
+      const SX = B.W / 600, SY = B.H / 800;       // (the decorations were laid out on a 600 × 800 box)
+      const glow = c.createRadialGradient(B.VALLEY, B.FLOOR - 160, 30, B.VALLEY, B.FLOOR - 160, 420 * SX); glow.addColorStop(0, hexA(hi, 0.3)); glow.addColorStop(0.45, hexA(acc, 0.12)); glow.addColorStop(1, hexA(acc, 0));
       c.fillStyle = glow; c.fillRect(0, 0, B.W, B.H);
       for (let y = 20, r = 0; y < B.H; y += 30, r++) for (let x = r % 2 ? 15 : 30; x < B.W; x += 30) { c.fillStyle = hexA(r % 3 ? hi : acc, 0.06); c.beginPath(); c.arc(x, y, 3.2, 0, 7); c.fill(); }       // polka dots
       const star = (x, y, rr, col) => { c.fillStyle = col; c.beginPath(); for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, q = i % 2 ? rr * 0.45 : rr; c.lineTo(x + q * Math.cos(a), y + q * Math.sin(a)); } c.closePath(); c.fill(); };
-      for (const [x, y, rr, col] of [[90, 240, 14, '#ffd84a'], [520, 200, 11, '#ff6fb5'], [210, 380, 9, '#6fe8ff'], [470, 340, 13, '#b98cff'], [300, 150, 10, '#ff6fb5'], [80, 470, 12, '#ffd84a'], [560, 450, 9, '#6fe8ff']]) star(x, y, rr, hexA(col, 0.22));
+      for (const [x, y, rr, col] of [[90, 240, 14, '#ffd84a'], [520, 200, 11, '#ff6fb5'], [210, 380, 9, '#6fe8ff'], [470, 340, 13, '#b98cff'], [300, 150, 10, '#ff6fb5'], [80, 470, 12, '#ffd84a'], [560, 450, 9, '#6fe8ff']]) star(x * SX, y * SY, rr * SX, hexA(col, 0.22));
       // the floor under the pile: a glittery mat
       const fl = c.createLinearGradient(0, B.FLOOR - 20, 0, B.H); fl.addColorStop(0, mix(dark, '#ff4f8b', 0.25)); fl.addColorStop(1, mix(dark, '#000000', 0.4));
       c.fillStyle = fl; c.fillRect(B.CHUTE.x2, B.FLOOR, B.WALL.r - B.CHUTE.x2, B.H - B.FLOOR);
-      for (let i = 0; i < 90; i++) { const x = B.CHUTE.x2 + ((i * 97) % (B.WALL.r - B.CHUTE.x2)), y = B.FLOOR + 4 + ((i * 53) % (B.H - B.FLOOR - 8)); c.fillStyle = hexA(i % 2 ? hi : '#ffffff', 0.25); c.fillRect(x, y, 1.6, 1.6); }
+      for (let i = 0; i < 120; i++) { const x = B.CHUTE.x2 + ((i * 97) % (B.WALL.r - B.CHUTE.x2)), y = B.FLOOR + 4 + ((i * 53) % (B.H - B.FLOOR - 8)); c.fillStyle = hexA(i % 2 ? hi : '#ffffff', 0.25); c.fillRect(x, y, 1.6, 1.6); }
       // the chute's inside: a dark well going down to the door
       const cw = c.createLinearGradient(0, B.CHUTE.top, 0, B.H); cw.addColorStop(0, 'rgba(0,0,0,.15)'); cw.addColorStop(1, 'rgba(0,0,0,.75)');
       c.fillStyle = cw; c.fillRect(B.CHUTE.x1, B.CHUTE.top, B.CHUTE.x2 - B.CHUTE.x1, B.H - B.CHUTE.top);
@@ -121,16 +122,17 @@
       c.restore();
       // the glass: two long streaks of shine and a darker edge
       c.save(); c.globalCompositeOperation = 'lighter';
-      for (const [x, w, a] of [[120, 46, 0.06], [190, 14, 0.07], [430, 30, 0.035]]) { c.fillStyle = `rgba(255,255,255,${a})`; c.beginPath(); c.moveTo(x, 0); c.lineTo(x + w, 0); c.lineTo(x + w - 260, B.H); c.lineTo(x - 260, B.H); c.closePath(); c.fill(); }
+      for (const [x0, w, a] of [[120, 46, 0.06], [190, 14, 0.07], [430, 30, 0.035]]) { const x = x0 * SX; c.fillStyle = `rgba(255,255,255,${a})`; c.beginPath(); c.moveTo(x, 0); c.lineTo(x + w, 0); c.lineTo(x + w - 260, B.H); c.lineTo(x - 260, B.H); c.closePath(); c.fill(); }
       c.restore();
       const edge = c.createLinearGradient(0, 0, B.W, 0); edge.addColorStop(0, 'rgba(0,0,0,.35)'); edge.addColorStop(0.06, 'rgba(0,0,0,0)'); edge.addColorStop(0.94, 'rgba(0,0,0,0)'); edge.addColorStop(1, 'rgba(0,0,0,.35)');
       c.fillStyle = edge; c.fillRect(0, 0, B.W, B.H);
     }
-    // A plush in its colour, drawn once at this size (no face: the face goes on each frame, looking at the claw)
+    // A plush in its colour, drawn once at this size (no face: the face goes on each frame, looking at the claw); r: its
+    // radius (half the plushes are big ones: crane-board.js PLUSH.big)
     const sprites = new Map();
-    function plushSprite(k) {
-      let s = sprites.get(k); if (s) return s;
-      const [fur, deep] = FURS[k % FURS.length], sc = (B.PLUSH.r * 2.25 / CAT_W) * scale, w = Math.ceil(CAT_W * sc + 10), h = Math.ceil(800 * sc + 10);
+    function plushSprite(k, r) {
+      let s = sprites.get(k + ':' + r); if (s) return s;
+      const [fur, deep] = FURS[k % FURS.length], sc = (r * 2.25 / CAT_W) * scale, w = Math.ceil(CAT_W * sc + 10), h = Math.ceil(800 * sc + 10);
       s = document.createElement('canvas'); s.width = w; s.height = h;
       const c = s.getContext('2d');
       c.translate(w / 2, h / 2); c.scale(sc, sc); c.translate(-CAT_MID[0], -CAT_MID[1]);
@@ -142,7 +144,7 @@
       c.strokeStyle = hexA(deep, 0.6); c.lineWidth = 14; c.setLineDash([26, 22]); c.beginPath(); c.moveTo(742, 230); c.lineTo(742, 330); c.stroke(); c.setLineDash([]);       // a seam
       c.strokeStyle = INK; c.lineWidth = 34; c.stroke(CAT);
       c.fillStyle = '#ff4f8b'; c.beginPath(); c.moveTo(1150, 740); c.lineTo(1220, 760); c.lineTo(1190, 830); c.lineTo(1130, 815); c.closePath(); c.fill();       // the little tag
-      sprites.set(k, s);
+      sprites.set(k + ':' + r, s);
       return s;
     }
     // the face on top: eyes that follow the claw (happy arcs when it's got them), a nose, a mouth, whiskers, cheeks
@@ -191,23 +193,28 @@
         ctx.fillStyle = `rgba(255,255,255,${a})`; ctx.beginPath(); ctx.moveTo(px, py - r); ctx.lineTo(px + r * 0.25, py - r * 0.25); ctx.lineTo(px + r, py); ctx.lineTo(px + r * 0.25, py + r * 0.25); ctx.lineTo(px, py + r); ctx.lineTo(px - r * 0.25, py + r * 0.25); ctx.lineTo(px - r, py); ctx.lineTo(px - r * 0.25, py - r * 0.25); ctx.closePath(); ctx.fill();
       }
     }
-    // The claw at (x, y), its prongs open by `o` (0 shut, 1 wide): the carriage on the rail, the cable, the chrome head, and
-    // the arms (drawn in two goes: the one behind before the prizes, the two in front after, so it holds what it holds)
-    function clawBack(x, y, o) {
-      const C = B.CLAW;
-      ctx.strokeStyle = '#2a2633'; ctx.lineWidth = 2.4; ctx.beginPath(); ctx.moveTo(x - 2, B.RAIL.y + 12); ctx.lineTo(x - 2, y - 10); ctx.moveTo(x + 2, B.RAIL.y + 12); ctx.lineTo(x + 2, y - 10); ctx.stroke();       // the cable
+    // The claw's head at (x, y) hanging from the carriage at cx, its prongs open by `o` (0 shut, 1 wide): the carriage on the
+    // rail, the cable, the chrome head, and the arms, the head tilted with the swing (crane-board.js SWING). Drawn in two
+    // goes: the arm behind before the prizes, the two in front after, so it holds what it holds.
+    const tilt = (x, y, cx) => Math.asin(Math.max(-1, Math.min(1, (x - cx) / (y - B.RAIL.y + B.SWING.pivot))));
+    function tilted(x, y, cx, draw) { const a = tilt(x, y, cx); ctx.save(); ctx.translate(x, y); ctx.rotate(-a); ctx.translate(-x, -y); draw(); ctx.restore(); }
+    function clawBack(x, y, o, cx) {
+      const C = B.CLAW, a = tilt(x, y, cx), ux = Math.sin(a), uy = Math.cos(a), hx = x - ux * 10, hy = y - uy * 10;       // (the cable meets the head's top)
+      ctx.strokeStyle = '#2a2633'; ctx.lineWidth = 2.4; ctx.beginPath(); ctx.moveTo(cx - 2, B.RAIL.y + 12); ctx.lineTo(hx - 2 * uy, hy + 2 * ux); ctx.moveTo(cx + 2, B.RAIL.y + 12); ctx.lineTo(hx + 2 * uy, hy - 2 * ux); ctx.stroke();       // the cable
       const cg = ctx.createLinearGradient(0, B.RAIL.y - 12, 0, B.RAIL.y + 14); cg.addColorStop(0, '#ff6fa5'); cg.addColorStop(1, '#a8225e');
-      ctx.fillStyle = cg; ctx.strokeStyle = INK; ctx.lineWidth = 2; ctx.beginPath(); ctx.roundRect(x - 24, B.RAIL.y - 12, 48, 26, 6); ctx.fill(); ctx.stroke();       // the carriage
-      ctx.fillStyle = '#ffd84a'; for (const dx of [-14, 0, 14]) { ctx.beginPath(); ctx.arc(x + dx, B.RAIL.y + 1, 2.6, 0, 7); ctx.fill(); }
-      arm(x, y, o, 0, C.reach * 0.86);       // the middle arm, behind
+      ctx.fillStyle = cg; ctx.strokeStyle = INK; ctx.lineWidth = 2; ctx.beginPath(); ctx.roundRect(cx - 24, B.RAIL.y - 12, 48, 26, 6); ctx.fill(); ctx.stroke();       // the carriage
+      ctx.fillStyle = '#ffd84a'; for (const dx of [-14, 0, 14]) { ctx.beginPath(); ctx.arc(cx + dx, B.RAIL.y + 1, 2.6, 0, 7); ctx.fill(); }
+      tilted(x, y, cx, () => arm(x, y, o, 0, C.reach * 0.86));       // the middle arm, behind
     }
-    function clawFront(x, y, o) {
+    function clawFront(x, y, o, cx) {
       const C = B.CLAW;
-      arm(x, y, o, -1, C.reach); arm(x, y, o, 1, C.reach);
-      const hg = ctx.createRadialGradient(x - 6, y - 8, 2, x, y, 22); hg.addColorStop(0, '#ffffff'); hg.addColorStop(0.45, '#c4cad6'); hg.addColorStop(1, '#5a6070');
-      ctx.fillStyle = hg; ctx.strokeStyle = INK; ctx.lineWidth = 2.2;
-      ctx.beginPath(); ctx.moveTo(x - 18, y + 8); ctx.quadraticCurveTo(x - 20, y - 14, x, y - 15); ctx.quadraticCurveTo(x + 20, y - 14, x + 18, y + 8); ctx.closePath(); ctx.fill(); ctx.stroke();       // the head
-      ctx.fillStyle = '#ff4f8b'; ctx.beginPath(); ctx.arc(x, y - 2, 4, 0, 7); ctx.fill();       // its light
+      tilted(x, y, cx, () => {
+        arm(x, y, o, -1, C.reach); arm(x, y, o, 1, C.reach);
+        const hg = ctx.createRadialGradient(x - 6, y - 8, 2, x, y, 22); hg.addColorStop(0, '#ffffff'); hg.addColorStop(0.45, '#c4cad6'); hg.addColorStop(1, '#5a6070');
+        ctx.fillStyle = hg; ctx.strokeStyle = INK; ctx.lineWidth = 2.2;
+        ctx.beginPath(); ctx.moveTo(x - 18, y + 8); ctx.quadraticCurveTo(x - 20, y - 14, x, y - 15); ctx.quadraticCurveTo(x + 20, y - 14, x + 18, y + 8); ctx.closePath(); ctx.fill(); ctx.stroke();       // the head
+        ctx.fillStyle = '#ff4f8b'; ctx.beginPath(); ctx.arc(x, y - 2, 4, 0, 7); ctx.fill();       // its light
+      });
     }
     function arm(x, y, o, side, reach) {
       const spread = side ? 1 : 0.35;       // (open wide, the tips are a little wider than the box: crane.js holds it at 0.9)
@@ -219,7 +226,7 @@
       }
     }
 
-    // confetti, sparks and "+5,000"s, in board units
+    // confetti, sparks and "+1,000"s, in board units
     let bits = [], pops = [], fxT = 0, shoutAt = 0, shoutText = '', shoutBig = false;
     const PARTY = ['#ff4f8b', '#ffd84a', '#6fe8ff', '#b98cff', '#7dff9a', '#ff9a3c'];
     function burst(x, y, n, speed, kind) {
@@ -251,32 +258,37 @@
       lastTs = ts;
       const now = performance.now();
       // where everything is: between the two frames around (now - LAG)
-      let claw = { x: B.RAIL.home, y: B.CLAW.top, o: 0.55 }, prizes = [];
+      let claw = { x: B.RAIL.home, y: B.CLAW.top, o: 0.55, cx: B.RAIL.home }, prizes = [];
       if (frames.length) {
         const T = off === null ? Infinity : now + off - LAG;        let i = frames.length - 1;
         while (i > 0 && frames[i].t > T) i--;
         const a = frames[i], b = frames[Math.min(frames.length - 1, i + 1)], u = b.t > a.t ? Math.max(0, Math.min(1, (T - a.t) / (b.t - a.t))) : 0;
         const lerp = (p, q) => p + (q - p) * u;
         claw = { x: lerp(a.c[0], b.c[0]) / 2, y: lerp(a.c[1], b.c[1]) / 2, o: lerp(a.c[2], b.c[2]) / 100 };
-        const next = new Map(); for (let k = 0; k < b.i.length; k += 4) next.set(b.i[k], k);
-        for (let k = 0; k < a.i.length; k += 4) {
-          let x = a.i[k + 2] / 2, y = a.i[k + 3] / 2; const j = next.get(a.i[k]);
-          if (j !== undefined && u > 0) { x = lerp(x, b.i[j + 2] / 2); y = lerp(y, b.i[j + 3] / 2); }
-          prizes.push({ id: a.i[k], kind: a.i[k + 1] % 2, held: a.i[k + 1] >= 2, x, y });
+        claw.cx = a.c.length > 3 && b.c.length > 3 ? lerp(a.c[3], b.c[3]) / 2 : claw.x;       // (the carriage: an older machine has none apart from the head)
+        // each prize: id, kind (1 the box, + 2 held, + 4 a big plush), x and y in half units, its angle in hundredths of a radian
+        const S = 5, turn = (p, q) => p + (Math.atan2(Math.sin(q - p), Math.cos(q - p))) * u;       // (the short way round)
+        const next = new Map(); for (let k = 0; k < b.i.length; k += S) next.set(b.i[k], k);
+        for (let k = 0; k < a.i.length; k += S) {
+          let x = a.i[k + 2] / 2, y = a.i[k + 3] / 2, ang = a.i[k + 4] / 100; const j = next.get(a.i[k]);
+          if (j !== undefined && u > 0) { x = lerp(x, b.i[j + 2] / 2); y = lerp(y, b.i[j + 3] / 2); ang = turn(ang, b.i[j + 4] / 100); }
+          const f = a.i[k + 1];
+          prizes.push({ id: a.i[k], kind: f & 1, held: (f & 2) > 0, big: (f & 4) > 0, x, y, a: ang || 0 });
         }
         // what happened since the last frame drawn
         for (const f of frames) {
           if (f.t <= fxT || f.t > T) continue;
           for (const e of f.e || []) {
             if (e[0] === 'w') {
-              const big = e[1] === 1, who = v.play ? v.play : v.last[0];
-              burst((B.CHUTE.x1 + B.CHUTE.x2) / 2, B.CHUTE.top + 20, big ? 160 : 60, big ? 560 : 380, 'c');
-              pop((B.CHUTE.x1 + B.CHUTE.x2) / 2 + 20, B.CHUTE.top - 30, `+${fmt(big ? v.pays.grand : v.pays.plush)}`, who && who.mine ? selfColor : '#ffd84a');
-              shout(big ? 'GRAND PRIZE!!' : who && who.mine ? 'YOU GOT ONE!' : 'GOT ONE!', big);
+              const big = e[1] === 1, bigPlush = e[1] === 2, who = v.play ? v.play : v.last[0];       // (1 the box, 2 a big plush)
+              burst((B.CHUTE.x1 + B.CHUTE.x2) / 2, B.CHUTE.top + 20, big ? 160 : bigPlush ? 100 : 60, big ? 560 : bigPlush ? 460 : 380, 'c');
+              pop((B.CHUTE.x1 + B.CHUTE.x2) / 2 + 20, B.CHUTE.top - 30, `+${fmt(big ? v.pays.grand : bigPlush ? v.pays.big || v.pays.plush : v.pays.plush)}`, who && who.mine ? selfColor : '#ffd84a');
+              shout(big ? 'GRAND PRIZE!!' : bigPlush ? (who && who.mine ? 'A BIG ONE!' : 'BIG ONE!') : who && who.mine ? 'YOU GOT ONE!' : 'GOT ONE!', big);
               holder.classList.remove('fWin', 'shake'); void holder.offsetWidth; holder.classList.add('fWin'); if (big && !calm) holder.classList.add('shake');
               clearTimeout(fxTimer); fxTimer = setTimeout(() => holder.classList.remove('fWin', 'shake'), 2600);
             } else if (e[0] === 's') { burst(e[2], e[3], 10, 140, 's'); shout('SO CLOSE!', false); }
             else if (e[0] === 'c') burst(e[1], e[2], 6, 90, 's');
+            else if (e[0] === 'k') { burst(e[1], e[2], 18, 160, 's'); shout('HOOKED IT!', false); }       // (a prong caught on a tipped box's corner)
           }
         }
         fxT = Math.max(fxT, T);
@@ -287,21 +299,22 @@
       ctx.setTransform(scale, 0, 0, scale, 0, 0);
       rays(now);
       beam(claw);
-      clawBack(claw.x, claw.y, claw.o);
+      clawBack(claw.x, claw.y, claw.o, claw.cx);
       const tip = [claw.x, claw.y + B.CLAW.reach];
       prizes.sort((p, q) => (p.held - q.held) || (p.y - q.y));       // (the lower in front; the one in the claw over the rest)
       for (const p of prizes) {
-        if (p.kind) { giftBox(p.x, p.y, now, p.held); continue; }
-        const s = plushSprite(p.id);
+        if (p.kind) { ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.a); ctx.translate(-p.x, -p.y); giftBox(p.x, p.y, now, p.held); ctx.restore(); continue; }       // (at its angle: it tips)
+        const r = p.big ? B.PLUSH.big : B.PLUSH.r, s = plushSprite(p.id, r), f = r / B.PLUSH.r;
         ctx.setTransform(1, 0, 0, 1, 0, 0);
-        const wob = p.held && !calm ? Math.sin(now / 90 + p.id) * 0.06 : 0;
-        ctx.translate(p.x * scale, p.y * scale); ctx.rotate(wob); ctx.drawImage(s, -s.width / 2, -s.height / 2);
+        const rot = p.a + (p.held && !calm ? Math.sin(now / 90 + p.id) * 0.06 : 0);       // (it rolls; in the claw it wobbles a little too)
+        ctx.translate(p.x * scale, p.y * scale); ctx.rotate(rot); ctx.drawImage(s, -s.width / 2, -s.height / 2);
         ctx.setTransform(scale, 0, 0, scale, 0, 0);
-        if (wob) { ctx.translate(p.x, p.y); ctx.rotate(wob); ctx.translate(-p.x, -p.y); }
-        face(p.x, p.y, p.id, p.held, tip);
+        ctx.translate(p.x, p.y); ctx.rotate(rot); ctx.scale(f, f); ctx.translate(-p.x, -p.y);       // (the face drawn at a plush's size, grown for a big one, turned with it)
+        const c = Math.cos(-rot), sn = Math.sin(-rot), dx = (tip[0] - p.x) / f, dy = (tip[1] - p.y) / f;       // (the claw, as the turned face sees it)
+        face(p.x, p.y, p.id, p.held, [p.x + dx * c - dy * sn, p.y + dx * sn + dy * c]);
         ctx.setTransform(scale, 0, 0, scale, 0, 0);
       }
-      clawFront(claw.x, claw.y, claw.o);
+      clawFront(claw.x, claw.y, claw.o, claw.cx);
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.drawImage(front, 0, 0);
       ctx.setTransform(scale, 0, 0, scale, 0, 0);
@@ -318,7 +331,7 @@
       for (let i = 0; i < n; i++) {
         const a0 = turn + (i / n) * Math.PI * 2, a1 = a0 + Math.PI / n;
         ctx.fillStyle = party ? `hsla(${(i * 40 + now / 8) % 360}, 90%, 60%, .14)` : hexA(i % 2 ? acc : hi, 0.06);
-        ctx.beginPath(); ctx.moveTo(360, 600); ctx.arc(360, 600, 900, a0, a1); ctx.closePath(); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(B.VALLEY, B.FLOOR - 120); ctx.arc(B.VALLEY, B.FLOOR - 120, 1200, a0, a1); ctx.closePath(); ctx.fill();
       }
       ctx.restore();
     }
@@ -354,7 +367,7 @@
       const busy = v && v.play, step = Math.floor(now / (busy ? 110 : 260));
       const pts = [];
       for (let i = 0; i <= 22; i++) pts.push([10 + i * (B.W - 20) / 22, 10]);
-      for (let i = 1; i <= 14; i++) { pts.push([10, 10 + i * 48]); pts.push([B.W - 10, 10 + i * 48]); }
+      for (let i = 1; i <= Math.floor((B.FLOOR - 40) / 48); i++) { pts.push([10, 10 + i * 48]); pts.push([B.W - 10, 10 + i * 48]); }
       pts.forEach(([x, y], i) => {
         const on = (i + step) % 3 === 0, col = busy && v.step === 'move' ? `hsl(${(i * 25 + now / 5) % 360},100%,65%)` : i % 2 ? '#ffd84a' : '#ff6fb5';
         if (on) { ctx.globalAlpha = 0.35; ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y, 7, 0, 7); ctx.fill(); ctx.globalAlpha = 1; }
@@ -365,7 +378,7 @@
       const len = shoutBig ? 3000 : 1700, t = shoutAt && now - shoutAt < len ? (now - shoutAt) / len : -1;
       if (t < 0) return;
       const inn = Math.min(1, t * 5), bounce = 1 + Math.sin(inn * Math.PI) * 0.35, out = t > 0.8 ? (1 - t) / 0.2 : 1, size = shoutBig ? 70 : shoutText === 'SO CLOSE!' ? 48 : 58;
-      ctx.save(); ctx.translate(B.W / 2, 330); ctx.rotate(-0.1 + Math.sin(now / 120) * 0.03); ctx.scale(inn * bounce, inn * bounce); ctx.globalAlpha = out;
+      ctx.save(); ctx.translate(B.W / 2, B.H * 0.41); ctx.rotate(-0.1 + Math.sin(now / 120) * 0.03); ctx.scale(inn * bounce, inn * bounce); ctx.globalAlpha = out;
       ctx.font = `900 ${size}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.lineWidth = 11; ctx.strokeStyle = INK; ctx.strokeText(shoutText, 0, 0);
       const cols = shoutBig ? PARTY.map((c, i) => `hsl(${(i * 60 + now / 3) % 360},100%,62%)`) : shoutText === 'SO CLOSE!' ? ['#6fe8ff', '#b98cff', '#6fe8ff'] : ['#ffd84a', '#ff6fb5', '#ffd84a'];
@@ -382,8 +395,8 @@
       if (v.board && v.board !== B.rev) note('This machine is from a different Drift: its prizes may not sit where you see them. Update Drift to play it properly.');
       sign.firstChild.textContent = mode === 'hub' ? 'Hub machine' : 'Just you';
       sign.lastChild.textContent = `${fmt(v.cost)} chips a try · one seat`;
-      payList.replaceChildren(el('div', 'crHead', 'Prizes'), row('Cat plush', `+${fmt(v.pays.plush)}`), row('Grand prize box', `+${fmt(v.pays.grand)}`),
-        el('div', 'crSmall', 'The claw sweeps back and forth by itself: press Drop (or Space, or the glass) as it passes over what you want. Come down over the middle of a prize: the claw holds on best there. Whatever falls down the chute is yours.'));
+      payList.replaceChildren(el('div', 'crHead', 'Prizes'), row('Cat plush', `+${fmt(v.pays.plush)}`), ...(v.pays.big ? [row('Big cat plush', `+${fmt(v.pays.big)}`)] : []), row('Grand prize box', `+${fmt(v.pays.grand)} and a token`),
+        el('div', 'crSmall', 'The claw sweeps back and forth by itself: press Drop (or Space, or the glass) to stop it and bring it down. It hangs on a cable, so it slides on a little and swings as it goes down: learn the swing. Come down over the middle of a prize, and steady: the claw holds on best then (slow near the ends swings least). A gift box lying tipped is hard to hold, but its top corner is sticky: come down right on it and the claw hooks it. Whatever falls down the chute is yours.'));
       histDraw();
       playersDraw();
       board();
@@ -394,7 +407,7 @@
     }
     const row = (a, b) => { const r = el('div', 'crRow'); r.append(el('span', '', a), el('b', '', b)); return r; };
     function histDraw() {
-      const what = (r) => (r.kinds.includes(1) ? (r.kinds.length > 1 ? 'the grand prize and more' : 'the grand prize') : r.kinds.length > 1 ? `${r.kinds.length} plushes` : r.kinds.length ? 'a plush' : r.slipped ? 'it slipped' : r.missed ? 'nothing' : 'nothing');
+      const what = (r) => (r.kinds.includes(1) ? (r.kinds.length > 1 ? 'the grand prize and more' : 'the grand prize') : r.kinds.length > 1 ? `${r.kinds.length} plushes` : r.kinds.length ? (r.kinds[0] === 2 ? 'a big plush' : 'a plush') : r.slipped ? 'it slipped' : r.missed ? 'nothing' : 'nothing');
       const rows = v.last.slice(0, 5).map((r) => { const d = el('div', 'crRow' + (r.won ? ' won' : '')); d.append(el('span', '', `${r.mine ? 'You' : r.name}: ${what(r)}`), el('b', '', r.won ? `+${fmt(r.won)}` : '')); return d; });
       histEl.classList.toggle('on', rows.length > 0);
       histEl.replaceChildren(el('div', 'crHead', 'Last tries'), ...rows);
@@ -434,6 +447,10 @@
     }
 
     // ---------- what you can do ----------
+    // your scene tokens, beside your chips: kept on your own Drift, not the table's (app.js passes them in: tokens())
+    const tokEl = el('span', 'bjAmt bjTok ico-tok', '0 tokens');
+    tokEl.title = 'Your scene tokens: spend them at Scene Slots to unlock a scene';
+    function tokens(n) { const t = `${fmt(n)} token${n === 1 ? '' : 's'}`; if (tokEl.textContent !== t) tokEl.textContent = t; }
     function controls() {
       const m = me(), kids = [];
       const btn = (label, cls, fn, off) => { const b = el('button', 'bjBtn' + (cls ? ' ' + cls : ''), label); b.type = 'button'; b.onclick = fn; b.disabled = !!off; return b; };
@@ -447,13 +464,13 @@
         const d = btn('Drop!', 'primary crDrop', null);       // (on the press, not the click: a click comes when the button's let go, and timing is everything)
         d.onpointerdown = (e) => { if (e.button === 0) drop(); };
         d.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); drop(); } };
-        kids.push(el('span', 'bjLine', 'Wait for it…'), d, el('span', 'bjAmt', `${fmt(m.chips)} chips`));
-      } else if (myGo()) { line = v.step === 'down' || v.step === 'move' ? 'Down it goes…' : v.step === 'grab' ? 'Grab!' : v.step === 'settle' ? 'And…' : 'Bringing it home…'; key = 'go'; kids.push(el('span', 'bjAmt', `${fmt(m.chips)} chips`)); }
+        kids.push(el('span', 'bjLine', 'Wait for it…'), d, el('span', 'bjAmt ico-chip', `${fmt(m.chips)} chips`), tokEl);
+      } else if (myGo()) { line = v.step === 'down' || v.step === 'move' ? 'Down it goes…' : v.step === 'grab' ? 'Grab!' : v.step === 'settle' ? 'And…' : 'Bringing it home…'; key = 'go'; kids.push(el('span', 'bjAmt ico-chip', `${fmt(m.chips)} chips`), tokEl); }
       else {
         const short = m.chips < v.cost;
         key = 'ready' + (short ? 's' : '') + (v.idleMs ? 'i' : '');
         if (short) line = `A try is ${fmt(v.cost)} chips: win a few more at the other tables.`;
-        kids.push(btn(`Play · ${fmt(v.cost)}`, 'primary crPlay', () => send({ op: 'move', m: { do: 'play' } }), short || !!v.play || v.step !== 'ready'), el('span', 'bjAmt', `${fmt(m.chips)} chips`));
+        kids.push(btn(`Play · ${fmt(v.cost)}`, 'primary crPlay', () => send({ op: 'move', m: { do: 'play' } }), short || !!v.play || v.step !== 'ready'), el('span', 'bjAmt ico-chip', `${fmt(m.chips)} chips`), tokEl);
         if (v.idleMs) kids.push(el('span', 'bjLine crPass', `Your go passes on in ${Math.ceil(v.idleMs / 1000)}`));
         kids.push(btn('Stand up', 'ghost', () => send({ op: 'stand' })));
       }
@@ -492,7 +509,7 @@
         };
         if (!nv || !was) show(); else setTimeout(show, LAG);
       },
-      ink, note,
+      ink, note, tokens,
       colors(c) {
         colorOf = c.colorOf || colorOf; selfColor = c.self || selfColor;
         for (const [k, val] of Object.entries(c.vars || {})) { holder.style.setProperty(k, val); look[k] = val; }

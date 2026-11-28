@@ -18,7 +18,7 @@ const ROOT = path.resolve(__dirname, '..');
   delete env.ELECTRON_RUN_AS_NODE;
   const code = await new Promise((resolve) => {
     const p = spawn(electron, [ROOT], { env, stdio: 'ignore' });
-    const t = setTimeout(() => { try { p.kill(); } catch { /* gone */ } resolve('timed out'); }, 180000);
+    const t = setTimeout(() => { try { p.kill(); } catch { /* gone */ } resolve('timed out'); }, 300000);       // (Scene Slots' summon and its extra pictures take a while)
     p.on('exit', (c) => { clearTimeout(t); resolve(c); });
   });
   console.log(`Drift exited (${code}); pictures in ${out}`);

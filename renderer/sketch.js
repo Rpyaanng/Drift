@@ -22,6 +22,8 @@
   };
   const TOOLS = [['pen', 'Pen', 'P'], ['fill', 'Paint bucket', 'B'], ['eraser', 'Eraser', 'E']];
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+  // a winner's crown: gold, three points with a jewel on each, a band across the bottom
+  const CROWN = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8.5l4.2 3.6L12 5l4.8 7.1L21 8.5l-1.8 9.5H4.8z" fill="#f7c948" stroke="#a8690a" stroke-width="1.2" stroke-linejoin="round"/><rect x="4.6" y="17.2" width="14.8" height="2.6" rx=".8" fill="#e0a526" stroke="#a8690a" stroke-width="1"/><circle cx="12" cy="4.6" r="1.5" fill="#ff6fb5"/><circle cx="3" cy="8.2" r="1.3" fill="#6fd3ff"/><circle cx="21" cy="8.2" r="1.3" fill="#6fd3ff"/></svg>';
   const svg = (name, size = 20) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name]}</svg>`;
   const btn = (cls, title, html, fn) => { const b = el('button', cls); b.type = 'button'; b.title = title; b.innerHTML = html; b.onclick = fn; return b; };
 
@@ -335,12 +337,12 @@
     }
     function players() {
       const ranked = v.players.map((p, i) => ({ ...p, i })).sort((a, b) => b.score - a.score);
-      const rank = new Map(ranked.map((p, n) => [p.i, n + 1]));
+      const rank = new Map(ranked.map((p, n) => [p.i, n + 1])), won = winners().ids;
       list.replaceChildren(el('div', 'skHead', `Players · ${v.players.length}`), ...v.players.map((p, i) => {
         const row = el('div', 'skP' + (i === v.you ? ' me' : '') + (p.drawing ? ' drawing' : '') + (p.guessed ? ' got' : ''));
         row.style.setProperty('--c', i === v.you ? selfColor : colorOf(p.name));
-        const f = mode === 'hub' && !p.blocked && opts.face ? opts.face(p.id) : null;
-        row.append(el('b', 'rk', '#' + rank.get(i)), f || el('i', 'nf'), el('span', 'nm', i === v.you ? 'You' : p.name));
+        const f = (mode === 'hub' && !p.blocked && opts.face ? opts.face(p.id) : null) || el('i', 'nf');
+        row.append(el('b', 'rk', '#' + rank.get(i)), won.has(p.id) ? crowned(f) : f, el('span', 'nm', i === v.you ? 'You' : p.name));
         if (p.drawing) { const pen = el('span', 'pen'); pen.innerHTML = svg('pencil', 14); row.append(pen); }
         row.append(el('span', 'sc', String(p.score)), ...(p.gained ? [el('span', 'gain', '+' + p.gained)] : []));
         return row;
@@ -371,6 +373,22 @@
         return row;
       }) : [el('div', 'bjBNone', 'None yet. Finish a game to get on the board.')]));
     }
+    // The game's winners, crowned: the top score when it's over (ties all win), more than nothing. At a hub against someone
+    // else (not the practice bots) each winner gets a scene token, the same rule main.js GM_TOKENS.sketch gives it by.
+    function winners() {
+      if (!v || v.phase !== 'over' || !Array.isArray(v.standings)) return { ids: new Set(), token: false };
+      const top = Math.max(0, ...v.standings.map((s) => +s.score || 0));
+      const ids = new Set(top > 0 ? v.standings.filter((s) => (+s.score || 0) === top).map((s) => s.id) : []);
+      return { ids, token: ids.size > 0 && mode === 'hub' && v.standings.filter((s) => !/-bot$/.test(String(s.id))).length >= 2 };
+    }
+    const crown = () => { const c = el('i', 'skCrown'); c.innerHTML = CROWN; c.title = 'Winner'; return c; };
+    // a player's picture (at a hub; else their initial on their colour), and with the crown sitting on it for a winner
+    const faceOf = (p, mine) => (mode === 'hub' && p && !p.blocked && opts.face ? opts.face(p.id) : null) || (() => { const n = el('i', 'nf', String((p && p.name) || '?').trim().charAt(0).toUpperCase()); n.style.setProperty('--c', mine ? selfColor : colorOf((p && p.name) || '')); return n; })();
+    const crowned = (pic) => { const w = el('span', 'skCrowned'); w.append(pic, crown()); return w; };
+    // your scene tokens, in the bar: kept on your own Drift, not the game's (app.js passes them in: tokens())
+    const tokEl = el('span', 'bjAmt bjTok ico-tok', '0 tokens');
+    tokEl.title = 'Your scene tokens: spend them at Scene Slots to unlock a scene';
+    function tokens(n) { const t = `${Number(n).toLocaleString('en-US')} token${n === 1 ? '' : 's'}`; if (tokEl.textContent !== t) tokEl.textContent = t; }
     function cardFor() {       // over the sheet between turns: waiting, picking a word, the word shown, the final scores
       const kids = [];
       if (!v && mode === 'alone') kids.push(el('h3', '', 'Sketch & Guess is for friends'), el('p', '', 'Go online in a hub (the Hub tab), and everyone there who opens Sketch & Guess plays together: one draws, the others guess.'));
@@ -388,9 +406,25 @@
         const gains = v.players.filter((p) => p.gained).sort((a, b) => b.gained - a.gained);
         kids.push(gains.length ? (() => { const l = el('div', 'skGains'); for (const p of gains) l.append(el('span', '', `${p.id === (me() || {}).id ? 'You' : p.name} +${p.gained}`)); return l; })() : el('p', '', 'Nobody got it this time.'));
       } else if (v.phase === 'over' && v.standings) {
-        kids.push(el('h3', '', v.standings[0] && v.standings[0].id === (me() || {}).id ? 'You win!' : `${(v.standings[0] || {}).name || 'Someone'} wins!`));
+        const myId = (me() || {}).id, w = winners(), names = v.standings.filter((s) => w.ids.has(s.id)).map((s) => (s.id === myId ? 'You' : s.name || 'Someone'));
+        const both = names.length > 1 ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1] : names[0];
+        const mine = w.ids.has(myId);
+        if (w.ids.size) {       // the winners' pictures, crowned (up to four: a big tie just shows the first)
+          const row = el('div', 'skWinners');
+          for (const s of v.standings.filter((x) => w.ids.has(x.id)).slice(0, 4)) {
+            const p = v.players.find((x) => x.id === s.id) || s, pic = crowned(faceOf(p, s.id === myId));
+            pic.title = s.id === myId ? 'You' : s.name || ''; row.append(pic);
+          }
+          kids.push(row);
+        }
+        kids.push(el('h3', '', !w.ids.size ? 'Nobody scored' : mine && names.length === 1 ? 'You win!' : names.length > 1 ? `${both} tie for the win!` : `${both} wins!`));
+        if (w.token) {
+          const say = el('p', 'skTokWin');
+          say.append(el('i', 'coin'), document.createTextNode(names.length > 1 ? `${both} each win a scene token!` : mine ? 'You win a scene token!' : `${both} wins a scene token!`));
+          kids.push(say);
+        }
         const l = el('ol', 'skStand');
-        for (const s of v.standings.slice(0, 6)) { const li = el('li', s.id === (me() || {}).id ? 'me' : ''); li.append(el('span', '', s.id === (me() || {}).id ? 'You' : s.name), el('b', '', String(s.score))); l.append(li); }
+        for (const s of v.standings.slice(0, 6)) { const li = el('li', (s.id === myId ? 'me' : '') + (w.ids.has(s.id) ? ' won' : '')); li.append(el('span', '', s.id === myId ? 'You' : s.name), ...(w.ids.has(s.id) ? [crown()] : []), el('b', '', String(s.score))); l.append(li); }
         kids.push(l, el('p', '', 'A new game starts in a moment.'));
       }
       card.replaceChildren(...kids);
@@ -405,7 +439,7 @@
       else {
         if (drawing()) line = 'Your turn: draw it! Pen (P), paint bucket (B), eraser (E); 1 to 3 for the width.';
         else if (v.phase === 'drawing') line = me().guessed ? 'You got it! Watch the others guess.' : `${(v.players[v.drawer] || {}).name || 'Someone'} is drawing: type your guesses on the right.`;
-        kids.push(b('Stand up', 'ghost', () => send({ op: 'stand' })));
+        kids.push(tokEl, b('Stand up', 'ghost', () => send({ op: 'stand' })));
       }
       bar.replaceChildren(...(line ? [el('span', 'bjLine', line)] : []), ...kids);
       input.disabled = !v || v.you < 0 || drawing();
@@ -429,7 +463,7 @@
     setInterval(() => { if (v) tickClock(); }, 250);
     function flash() {
       const m = me(); if (!m || !v.standings) return;
-      const k2 = v.standings[0] && v.standings[0].id === m.id ? 'fBj' : 'fWin';
+      const k2 = winners().ids.has(m.id) ? 'fBj' : 'fWin';
       holder.classList.remove('fBj', 'fWin', 'fLose'); void holder.offsetWidth; holder.classList.add(k2);
       clearTimeout(flashTimer); flashTimer = setTimeout(() => holder.classList.remove(k2), 2600);
     }
@@ -441,7 +475,7 @@
         if (wasDrawing && !drawing()) { stroke = null; clearInterval(flushT); pending = []; drawLive(); }
         draw();
       },
-      ink,
+      ink, tokens,
       settings(s) {       // from main.js: what's saved, Drift's own words, and where they're used
         cfg = s && typeof s === 'object' ? { ...s, defaults: Array.isArray(s.defaults) ? s.defaults : [], words: Array.isArray(s.words) ? s.words : null } : null;
         setB.disabled = !cfg;

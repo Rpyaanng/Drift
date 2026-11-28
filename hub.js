@@ -315,8 +315,10 @@ module.exports = function createHub(opts) {
   // The biggest pots: whenever a round settles, each member's winnings for it (net, over all their hands) beat their record
   // or don't; the top five go out with the table (board), with how long ago each was set (ago, so a new one can light up).
   // The casino's one wallet at this hub (wallet.js): each member's chips at Blackjack, Roulette, Hold'em and Pachinko are the
-  // same chips, 1,000 the first time they sit at any of them, kept while the hub runs (not across a restart). A change shows at
-  // every table they're at (walletNews), a moment later and once however many balls went in.
+  // same chips. They're the member's own (main.js state.wallet, the same at every hub and alone): their PC sends its count when
+  // they sit down at a table here and aren't at any yet (walletTake), and every view sent them carries the count back
+  // (walletOf, bets still riding counted as theirs, as alone), for their PC to keep. A change shows at every table they're at
+  // (walletNews), a moment later and once however many balls went in. Trusted as sent: the stakes are low.
   const walletDirty = new Set();
   let walletTimer = null;
   const wallet = createWallet({ owns: (id) => !!S.member.get(id), onChange: (id) => { walletDirty.add(id); if (!walletTimer) walletTimer = setTimeout(walletNews, 60); } });
@@ -335,7 +337,21 @@ module.exports = function createHub(opts) {
     if (!force && bj.version === bjSent) return;
     bjSent = bj.version;
     const board = bjBoard();
-    for (const [id, s] of bjAt) s.wire.send({ t: 'bj-view', v: { ...bj.view(id), board } });
+    for (const [id, s] of bjAt) s.wire.send({ t: 'bj-view', v: { ...bj.view(id), board, wallet: walletOf(id) } });
+  }
+  // a member's chips as their PC should keep them: the wallet's, with what's still riding at any table here counted as theirs
+  function walletOf(id) {
+    if (!wallet.has(id)) return undefined;
+    const w = wallet.peek(id);
+    let riding = 0;
+    for (const t of [bj, ...[...games.values()].map((x) => x.t)]) { const k = t.mine(id); if (k) riding += Math.max(0, k.chips - w.chips); }
+    return { chips: w.chips + riding, outUntil: w.outUntil };
+  }
+  // sitting down here, at no table yet: the chips their PC sent are the ones they play (an older Drift sends none: the hub's)
+  function walletTake(id, q) {
+    if (!q || typeof q !== 'object' || bjAt.has(id) || [...games.values()].some((x) => x.at.has(id))) return;
+    if (!Number.isFinite(+q.chips)) return;
+    wallet.set(id, { chips: Math.min(1e12, +q.chips), outUntil: Math.min(Date.now() + 120000, +q.outUntil || 0) });
   }
   function bjRun() {
     if (bjTimer) return;
@@ -373,6 +389,7 @@ module.exports = function createHub(opts) {
     if (m.t === 'bj-sit' || m.t === 'bj-watch') {       // at the table: sitting down (or in line for a seat), or only looking on
       const was = bjAt.get(s.id);
       if (was && was !== s) was.wire.send({ t: 'bj-view', v: null });       // came to the table from another PC: this one takes it
+      if (m.t === 'bj-sit') walletTake(s.id, m.wallet);
       bjAt.set(s.id, s);
       if (m.t === 'bj-sit') r = bj.sit(s.id, nameOf(s.id));
       bjRun(); bj.tick(); bjNews(true);
@@ -422,7 +439,7 @@ module.exports = function createHub(opts) {
     if (!force && x.t.version === x.sent) return;
     x.sent = x.t.version;
     const records = gameBoard(x.g);       // (not "board": Hold'em's view has its own board, the cards in the middle)
-    for (const [id, s] of x.at) s.wire.send({ t: 'game-view', g: x.g, v: { ...x.t.view(id), records } });
+    for (const [id, s] of x.at) s.wire.send({ t: 'game-view', g: x.g, v: { ...x.t.view(id), records, wallet: walletOf(id) } });
   }
   function gameRun(x) {
     if (x.timer) return;
@@ -471,6 +488,7 @@ module.exports = function createHub(opts) {
     if (m.t === 'game-sit' || m.t === 'game-watch') {       // at the table: sitting down (or in line for a place), or only looking on
       const was = x.at.get(s.id);
       if (was && was !== s) was.wire.send({ t: 'game-view', g: x.g, v: null });       // came to the table from another PC: this one takes it
+      if (m.t === 'game-sit') walletTake(s.id, m.wallet);
       x.at.set(s.id, s);
       if (m.t === 'game-sit') r = x.t.sit(s.id, nameOf(s.id));
       gameRun(x); x.t.tick(); gameNews(x, true);
@@ -780,7 +798,7 @@ module.exports = function createHub(opts) {
         return;
       }
       case 'where': {       // which screen this member's Drift shows: the hub bar jumps there when someone clicks them
-        const at = ['scenes', 'media', 'surf', 'broadcast', 'blackjack', 'roulette', 'poker', 'sketch', 'pachinko', 'crane'].includes(m.at) ? m.at : '';
+        const at = ['scenes', 'media', 'surf', 'broadcast', 'blackjack', 'roulette', 'poker', 'sketch', 'pachinko', 'crane', 'slots'].includes(m.at) ? m.at : '';
         if ((wheres.get(s.id) || '') === at) return;
         wheres.set(s.id, at);
         membersNews();

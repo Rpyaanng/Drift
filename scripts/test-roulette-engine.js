@@ -79,7 +79,7 @@ ok('even money', pays('red') === 1 && pays('low') === 1 && !BETS.get('red').incl
   t.leave('a'); t.sit('a', 'Ann');
   ok('standing up doesn\'t skip the wait', t.me().outMs > 0);
   t.wait(20000);
-  ok('back with 1000', t.me().chips === 1000 && !t.me().outMs);
+  ok('back with 500', t.me().chips === 500 && !t.me().outMs);
 }
 { // leaving
   const t = table(); t.sit('a', 'Ann');

@@ -12,7 +12,7 @@
 //
 // Cards are two-letter strings, rank then suit ('As', 'Td'). Nobody's cards are in anyone else's view until the showdown.
 const RANKS = '23456789TJQKA', SUITS = 'shdc';
-const RULES = { start: 1000, small: 5, big: 10, seats: 6 };
+const RULES = { start: 1000, back: 500, small: 5, big: 10, seats: 6 };       // (start: a new player's chips; back: out of chips, what you're back in with)
 const TIMES = { turn: 20000, think: [900, 2400], street: 1100, show: 6500, fold: 2600, out: 20000, start: 2000 };       // ms: a turn, a computer player thinking, each card run out with everyone all in, the showdown, a hand won by folds, crapped out, a hand starting
 const HANDS = ['High card', 'Pair', 'Two pair', 'Three of a kind', 'Straight', 'Flush', 'Full house', 'Four of a kind', 'Straight flush'];
 const BOTS = ['Ada', 'Basil', 'Clover', 'Dot', 'Ember', 'Fig', 'Juniper', 'Moss', 'Pip', 'Wren'];
@@ -93,7 +93,7 @@ function createTable(opts = {}) {
     const out = bot ? 0 : Math.max(outs.get(id) || 0, keep && +keep.outUntil || 0);
     const s = fresh({ id, name, bot: !!bot, chips: keep && Number.isFinite(+keep.chips) ? Math.max(0, Math.floor(+keep.chips)) : R.start, outUntil: out > now() ? out : 0, left: false });
     if (s.outUntil) s.chips = 0;
-    else if (s.chips < R.big) s.chips = R.start;
+    else if (s.chips < R.big) s.chips = R.back;
     if (!bot && opts.wallet) opts.wallet.bind(s);
     seats[i] = s;
     return s;
@@ -301,7 +301,7 @@ function createTable(opts = {}) {
   // ------------------------------------------------------------------ time
   function tick() {
     const t = now(), v0 = version;
-    for (const s of seats) if (s && s.outUntil && t >= s.outUntil) { s.outUntil = 0; s.chips = R.start; outs.delete(s.id); changed(); }       // back in with fresh chips
+    for (const s of seats) if (s && s.outUntil && t >= s.outUntil) { s.outUntil = 0; s.chips = R.back; outs.delete(s.id); changed(); }       // back in with fresh chips
     for (const [id, until] of outs) if (t >= until) outs.delete(id);
     if (phase === 'waiting') {
       if (seats.filter(eligible).length >= 2) { if (!deadline) { deadline = t + T.start; changed(); } else if (t >= deadline) deal(); }
@@ -324,7 +324,7 @@ function createTable(opts = {}) {
       can = { fold: true, check: owe <= 0, call: owe > 0 ? Math.min(owe, s0.chips) : 0, raise: max > current ? { min: Math.min(current + minRaise, max), max } : null };
     }
     return {
-      phase, hand, small: R.small, big: R.big, start: R.start,
+      phase, hand, small: R.small, big: R.big, start: R.start, back: R.back,
       msLeft: deadline ? Math.max(0, deadline - t) : 0, turnMs: T.turn,
       you: me, watching: watchers.findIndex((w) => w.id === String(id)), watchers: watchers.length,
       button, turn, board: board.slice(), pot, current, can,

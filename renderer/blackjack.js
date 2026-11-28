@@ -110,7 +110,7 @@
       holder.classList.add('live');
       if (v.round !== lastRound) { lastRound = v.round; seen = new Set([...seen].filter((k) => k.startsWith(v.round + ':'))); }
       felt.querySelector('.bjMode').textContent = mode === 'hub' ? 'Hub table' : 'Just you';
-      limits.textContent = `Min ${fmt(v.min)} · No limit`;
+      limits.textContent = `Min ${fmt(v.min)} · ${v.max ? 'Max ' + fmt(v.max) : 'No limit'}`;       // (an older hub's table has no top limit)
       discard.firstChild.style.height = Math.round(100 * (1 - v.shoe.left / v.shoe.size)) + '%';
       cards(dCards, v.dealer.cards, `${v.round}:d`);
       dTotal.textContent = v.dealer.cards.length ? (v.dealer.cards.includes(null) ? `Showing ${v.dealer.total}` : (v.dealer.soft && v.dealer.total < 21 ? `Soft ${v.dealer.total}` : String(v.dealer.total))) : '';
@@ -183,22 +183,24 @@
       } else if (me.left) {       // stood up in the middle of a hand: the seat stays till it's settled
         line = 'You\'ve stood up. Your hand still settles.';
         kids.push(btn('Sit back down', 'primary', () => send({ op: 'sit' })));
-      } else if (me.outMs) { line = `Out of chips. Back in with ${fmt(v.start)} in `; kids.push(el('b', 'bjCount out', String(Math.ceil(me.outMs / 1000)))); }
+      } else if (me.outMs) { line = `Out of chips. Back in with ${fmt(v.back || v.start)} in `; kids.push(el('b', 'bjCount out', String(Math.ceil(me.outMs / 1000)))); }
       else if (v.phase === 'betting' && !me.bet) {
-        stake = Math.min(stake, me.chips);
+        const top = v.max ? Math.min(me.chips, v.max) : me.chips;       // (the most you can bet: your chips, up to the table's limit)
+        stake = Math.min(stake, top);
         for (const c of CHIPS) {
           const b = el('button', 'chip c' + c, String(c)); b.type = 'button'; b.title = `Add ${c}`;
-          b.disabled = stake + c > me.chips;
+          b.disabled = stake + c > top;
           b.onclick = () => { stake += c; send({ op: 'tap' }); controls(); };
           kids.push(b);
         }
-        const all = el('button', 'bjBtn ghost', 'All in'); all.type = 'button'; all.title = `Bet all ${fmt(me.chips)}`;       // (no top limit, so a big stack needn't be clicked in 500 at a time)
-        all.disabled = stake === me.chips || me.chips < v.min; all.onclick = () => { stake = me.chips; send({ op: 'tap' }); controls(); };
+        const capped = top < me.chips;       // (more chips than the limit: the button bets the limit, not everything)
+        const all = el('button', 'bjBtn ghost', capped ? 'Max' : 'All in'); all.type = 'button'; all.title = capped ? `Bet the most: ${fmt(top)}` : `Bet all ${fmt(me.chips)}`;       // (so a big stack needn't be clicked in 500 at a time)
+        all.disabled = stake === top || me.chips < v.min; all.onclick = () => { stake = top; send({ op: 'tap' }); controls(); };
         kids.push(all);
         const amt = el('span', 'bjAmt', stake ? fmt(stake) : 'Pick your bet');
         const clear = el('button', 'bjBtn ghost', 'Clear'); clear.type = 'button'; clear.disabled = !stake; clear.onclick = () => { stake = 0; controls(); };
-        const go = el('button', 'bjBtn primary', stake ? `Bet ${fmt(stake)}` : lastBet && lastBet <= me.chips ? `Bet ${fmt(lastBet)} again` : 'Bet'); go.type = 'button';
-        go.disabled = !(stake >= v.min) && !(lastBet && lastBet <= me.chips);
+        const go = el('button', 'bjBtn primary', stake ? `Bet ${fmt(stake)}` : lastBet && lastBet <= top ? `Bet ${fmt(lastBet)} again` : 'Bet'); go.type = 'button';
+        go.disabled = !(stake >= v.min) && !(lastBet && lastBet <= top);
         go.onclick = () => { const n = stake >= v.min ? stake : lastBet; lastBet = n; stake = 0; send({ op: 'bet', amount: n }); };
         kids.push(amt, clear, go);
         if (stake && stake < v.min) amt.textContent = `${fmt(stake)} (at least ${v.min})`;

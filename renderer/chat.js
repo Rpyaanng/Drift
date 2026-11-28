@@ -140,14 +140,21 @@
     box.replaceChildren();
     for (const x of info.hubs) {
       const open = x.id === sel.hub, n = x.channels.reduce((a, c) => a + (unread.get(keyOf(x.id, c.id)) || 0), 0);
-      box.append(h('div.chHubRow', {}, h('button.chHub' + (open ? '.on' : ''), { title: x.note || '', onclick: () => pick(x.id, open ? sel.ch : (x.channels[0] || {}).id || 0) },
+      const canWake = x.status === 'away' && !(x.mine && info.canHost), menu = open && hubMenuItems(x).length;       // (no ⋯ when it would open empty)
+      // Double-click an offline hub to go online in it. Each click redraws the side, so the two clicks are matched by time, not by element.
+      const click = () => {
+        const now = Date.now(), twice = lastHubClick.id === x.id && now - lastHubClick.at < 400;
+        lastHubClick = twice ? { id: '', at: 0 } : { id: x.id, at: now };
+        if (twice && canWake) call('reconnect', x.id);
+        pick(x.id, open ? sel.ch : (x.channels[0] || {}).id || 0);
+      };
+      box.append(h('div.chHubRow', {}, h('button.chHub' + (open ? '.on' : ''), { title: x.note || (canWake ? `Double-click to go online in ${x.name || 'this hub'}` : ''), onclick: click },
         h('span.dot.' + x.status), h('b', {}, x.name || 'Hub'), x.mine ? h('em', {}, 'yours') : null, (x.lives || []).length ? h('span.liveTag', { title: 'Someone here is sharing something to watch' }, '▶') : null,
         !open && n ? h('span.badge', {}, n > 99 ? '99+' : n) : null),
-        open ? h('button.chMenuBtn' + (menuHub === x.id ? '.on' : ''), { title: 'More for this hub', onclick: (e) => { e.stopPropagation(); menuHub = menuHub === x.id ? '' : x.id; drawSide(); } }, '⋯') : null));
+        menu ? h('button.chMenuBtn' + (menuHub === x.id ? '.on' : ''), { title: 'More for this hub', onclick: (e) => { e.stopPropagation(); menuHub = menuHub === x.id ? '' : x.id; drawSide(); } }, '⋯') : null));
       if (!open) continue;
-      if (menuHub === x.id) box.append(hubMenu(x));
-      if (x.status === 'away' && !(x.mine && info.canHost)) box.append(h('button.btn.join.chConnect', { title: `Go online in ${x.name || 'this hub'}`, onclick: () => call('reconnect', x.id) }, icon('plug'), 'Connect'));
-      else if (x.status === 'gone' || (x.status !== 'connected' && x.status !== 'away' && x.note)) box.append(h('p.note.chNote', {}, x.note));
+      if (menuHub === x.id && menu) box.append(hubMenu(x));
+      if (x.status === 'gone' || (x.status !== 'connected' && x.status !== 'away' && x.note)) box.append(h('p.note.chNote', {}, x.note));
       if (x.status === 'connected') {       // what the hub said about people that didn't check out
         for (const w of x.suspect || []) box.append(h('p.warn', {}, `⚠ The hub sent a key for ${w.name} that doesn't belong to them, so Drift is ignoring it. The hub may be interfering.`));
         for (const w of x.lookalikes || []) box.append(h('p.warn', {}, `⚠ This ${w.name} has a different key from the ${w.name} you met here before. It may be a new PC, or the hub pretending. Click their name in People and compare safety numbers.`));
@@ -183,17 +190,19 @@
   }
 
   // The ⋯ next to the open hub: everything you do to the hub itself, out of the way of the chat.
-  let menuHub = '';
-  function hubMenu(x) {
+  let menuHub = '', lastHubClick = { id: '', at: 0 };
+  function hubMenuItems(x) {
     const item = (label, title, fn, danger) => h('button.chMenuItem' + (danger ? '.danger' : ''), { title, onclick: () => { menuHub = ''; drawSide(); fn(); } }, label);
     const pinnedHere = voiceSet.pin === x.id, on = x.status === 'connected';
-    return h('div.chMenu', {},
+    return [
       on && x.host ? item('Withdraw invites', 'Every invite code made so far stops working. People already here stay.', () => withdraw(x)) : null,
       on && activeHubId() === x.id ? item(pinnedHere ? 'Let voice follow the open hub' : 'Keep voice in this hub', pinnedHere ? 'Voice follows whichever hub is open here again' : 'Stay in this hub\'s voice room when you open another hub', () => api.patch({ voice: { pin: pinnedHere ? '' : x.id } })) : null,
-      on ? item('Disconnect', 'Go offline from this hub without leaving it. Press Connect to come back.', () => call('disconnect', x.id)) : null,
+      on ? item('Disconnect', 'Go offline from this hub without leaving it. Double-click the hub to come back.', () => call('disconnect', x.id)) : null,
       x.mine ? null       // (Host / Stop hosting is the button at the bottom)
-        : item('Leave hub', 'You\'ll need a new invite to come back.', async () => { if (await ask({ title: `Leave ${x.name}?`, note: 'You\'ll need a new invite to come back.', yes: 'Leave hub' })) call('leave', x.id).then(() => { sel = { hub: '', ch: 0 }; keep(); }); }, true));
+        : item('Leave hub', 'You\'ll need a new invite to come back.', async () => { if (await ask({ title: `Leave ${x.name}?`, note: 'You\'ll need a new invite to come back.', yes: 'Leave hub' })) call('leave', x.id).then(() => { sel = { hub: '', ch: 0 }; keep(); }); }, true),
+    ].filter(Boolean);
   }
+  const hubMenu = (x) => h('div.chMenu', {}, ...hubMenuItems(x));
   document.addEventListener('click', (e) => { if (menuHub && !e.target.closest('.chMenu, .chMenuBtn')) { menuHub = ''; drawSide(); } });
   document.addEventListener('keydown', (e) => { if (menuHub && e.key === 'Escape') { menuHub = ''; drawSide(); } });
 
@@ -558,7 +567,7 @@
     const item = (ico, title, text) => h('div.chIntroItem', {}, icon(ico), h('div', {}, h('b', {}, title), h('span', {}, text)));
     const next = !x ? 'Paste a friend\'s invite code on the left and press Join, or host a hub of your own.'
       : x.mine && info.canHost ? 'Press Host to open your hub, then Copy an invite and send the code to your friends. It works for 7 days.'
-      : x.status === 'away' ? `Press Connect to go online in ${x.name || 'this hub'}.`
+      : x.status === 'away' ? `Double-click ${x.name || 'the hub'} on the left to go online in it.`
       : x.status === 'gone' ? (x.note || 'This hub is gone. Ask a friend for a new invite.')
       : x.status === 'offline' ? (x.note || `Can't reach ${x.name || 'the hub'} right now. The host may be offline.`)
       : `Drift is reaching ${x.name || 'the hub'}. If it takes a while, the host may be offline.`;
@@ -691,7 +700,7 @@
   // ---- who's online in a hub, for the hub bar: in voice or not, what they share, and what they're looking at ----
   // share: their broadcast, or their watch-together. sees: someone's broadcast or watch-together they're watching, else the
   // screen their Drift shows (hub.js 'where': Scenes, Media, Surf, which in a hub is its shared browser, or Share).
-  const SCREEN_NAMES = { scenes: 'Scenes', media: 'Media', surf: 'Surf', broadcast: 'Share', blackjack: 'the Blackjack table', roulette: 'the Roulette table', poker: 'the Hold\'em table', sketch: 'Sketch & Guess', pachinko: 'the Pachinko machine', crane: 'the crane machine' };
+  const SCREEN_NAMES = { scenes: 'Scenes', media: 'Media', surf: 'Surf', broadcast: 'Share', blackjack: 'the Blackjack table', roulette: 'the Roulette table', poker: 'the Hold\'em table', sketch: 'Sketch & Guess', pachinko: 'the Pachinko machine', crane: 'the crane machine', slots: 'Scene Slots' };
   const AT_TABLE = new Set(['blackjack', 'roulette', 'poker', 'sketch', 'pachinko', 'crane']);       // the Games room's tables ("At", and a click sits you down there)
   function presence(x) {
     const bcs = x.bcs || [], lives = x.lives || [];
@@ -725,7 +734,7 @@
       p.muted ? h('b.cbMuted', {}, icon('micOff')) : p.sees && SEES_ICON(p.sees) ? h('b.cbWhere', {}, icon(SEES_ICON(p.sees))) : null);
   }
   // the little icon in the corner the mute badge takes (muted wins): the tab they're on, or what they're watching
-  const TAB_ICONS = { scenes: 'sparkle', media: 'film', surf: 'globe', broadcast: 'screen', blackjack: 'cards', roulette: 'cards', poker: 'cards', sketch: 'pencil', pachinko: 'cards', crane: 'cards' };
+  const TAB_ICONS = { scenes: 'sparkle', media: 'film', surf: 'globe', broadcast: 'screen', blackjack: 'cards', roulette: 'cards', poker: 'cards', sketch: 'pencil', pachinko: 'cards', crane: 'cards', slots: 'cards' };
   const SEES_ICON = (s) => (s.kind === 'bc' ? 'screen' : s.kind === 'live' ? 'film' : TAB_ICONS[s.at]);
   async function jumpTo(x, p) {
     if (p.isMe) return;
@@ -740,6 +749,7 @@
       if (p2p.role === 'guest' && joined === t.l.code) { if (ui) ui.setTab('media'); return; }       // (already watching it with them)
       joinLive(x, t.l);
     } else if (AT_TABLE.has(t.at)) { if (ui) ui.toTable(t.at); }       // a seat next to them (the hub's table)
+    else if (t.at === 'slots') { if (ui) ui.setTab('scenes'); }       // (Scene Slots is their own machine: nothing to join, the scenes are yours)
     else if (ui) ui.setTab(t.at);       // Scenes, Media, Share, or Surf (the hub's shared browser)
   }
   // ---- the hub bar over the scenes, on every screen while you're online in a hub's voice room or watching together ----
@@ -776,7 +786,7 @@
       acts.push(joinButton('cbBtn', x),
         voiceSet.deaf ? null : talkButton('cbBtn'),
         cursorBtn,
-        h('button.cbBtn.leave', { title: `Go offline from ${x.name}: stop hearing it and stop showing as online. Press Connect to come back.`, onclick: () => call('disconnect', x.id) }, icon('door'), 'Leave hub'));
+        h('button.cbBtn.leave', { title: `Go offline from ${x.name}: stop hearing it and stop showing as online. Double-click the hub to come back.`, onclick: () => call('disconnect', x.id) }, icon('door'), 'Leave hub'));
     } else head = h('span.cbHead.cbHeadIco', { title: 'Watching together' }, icon('film'));
     if (inRoom) {       // broadcasts (docs/plans/broadcast.md §5, §12): yours always shows, with Stop one click away
       const mine = info.bc && info.bc.mine && info.bc.mine.hub === x.id ? info.bc.mine : null, others = (x.bcs || []).filter((b) => b.from !== info.me.id);

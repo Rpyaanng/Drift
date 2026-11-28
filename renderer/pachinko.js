@@ -446,7 +446,7 @@
       [...lights.children].forEach((d, i) => d.classList.toggle('on', i < v.spins));
       lights.title = v.spins ? `${v.spins} spin${v.spins === 1 ? '' : 's'} waiting` : '';
       payList.replaceChildren(el('div', 'paHead', 'Pays'), row('Start pocket', `+${v.pays.start} and a spin`), row('Tulip', `+${v.pays.tulip}`), row('Gate (in a fever)', `+${v.pays.gate}`),
-        el('div', 'paSmall', 'Three of a kind is a fever for everyone at the machine. Sevens or the cat: the next spins hit more often.'));
+        el('div', 'paSmall', 'Three of a kind is a fever for everyone at the machine. Fill a round of it before time\'s up (6 balls in the gate alone, 10 for two, 12 for three, 15 for four or more) and everyone at the machine gets a scene token. Sevens or the cat: the next spins hit more often.'));
       hotEl.classList.toggle('on', v.hot > 0); hotEl.textContent = v.hot > 0 ? `Hot! ${v.hot} lucky spin${v.hot === 1 ? '' : 's'} left` : '';
       feverDraw();
       playersDraw();
@@ -508,6 +508,10 @@
     }
 
     // ---------- what you can do ----------
+    // your scene tokens, beside your chips: kept on your own Drift, not the table's (app.js passes them in: tokens())
+    const tokEl = el('span', 'bjAmt bjTok ico-tok', '0 tokens');
+    tokEl.title = 'Your scene tokens: spend them at Scene Slots to unlock a scene';
+    function tokens(n) { const t = `${fmt(n)} token${n === 1 ? '' : 's'}`; if (tokEl.textContent !== t) tokEl.textContent = t; }
     function controls() {
       const m = me(), kids = [];
       const btn = (label, cls, fn, off) => { const b = el('button', 'bjBtn' + (cls ? ' ' + cls : ''), label); b.type = 'button'; b.onclick = fn; b.disabled = !!off; return b; };
@@ -515,7 +519,7 @@
       if (!m && v.watching >= 0) { line = `The machine is full. You're next for a place${v.watching ? ` (${v.watching + 1} in line)` : ''}.`; kids.push(btn('Leave the line', 'ghost', () => send({ op: 'stand' }))); }
       else if (!m) { const full = v.seats.every(Boolean); line = full ? 'You\'re watching. The machine is full.' : 'You\'re watching the machine.'; kids.push(btn(full ? 'Get in line' : 'Sit down', 'primary', () => send({ op: 'sit' }))); }
       else if (m.left) { line = 'You\'ve stood up. Your balls still in the air still pay.'; kids.push(btn('Sit back down', 'primary', () => send({ op: 'sit' }))); }
-      else if (m.outMs) { line = `Out of chips. Back in with ${fmt(v.start)} in `; kids.push(el('b', 'bjCount out', String(Math.ceil(m.outMs / 1000)))); }
+      else if (m.outMs) { line = `Out of chips. Back in with ${fmt(v.back || v.start)} in `; kids.push(el('b', 'bjCount out', String(Math.ceil(m.outMs / 1000)))); }
       else {
         const dial = el('label', 'paDial'), input = el('input'), lab = el('b', '', String(power));
         input.type = 'range'; input.min = '0'; input.max = '100'; input.value = String(power); input.title = 'How hard: softer drops on the right, harder carries round to the left (or the mouse wheel over the machine)';
@@ -526,7 +530,7 @@
         h.onpointerdown = (e) => { if (e.button === 0) { capture(h, e); hold(true); } };
         h.onpointerup = up; h.onpointercancel = up; h.onlostpointercapture = up;
         h.title = `Hold to send balls (${fmt(v.cost || 1)} chips each), or hold the mouse down on the machine`;
-        kids.push(dial, h, el('span', 'bjAmt', `${fmt(m.chips)} chips`));
+        kids.push(dial, h, el('span', 'bjAmt ico-chip', `${fmt(m.chips)} chips`), tokEl);
         kids.push(btn('Stand up', 'ghost', () => { hold(false); send({ op: 'stand' }); }));
       }
       // The views come many times a second: rebuilding the bar each time would drop the dial you're dragging or the button
@@ -576,7 +580,7 @@
         };
         if (!nv || !was) show(); else setTimeout(show, LAG);
       },
-      ink, note,
+      ink, note, tokens,
       colors(c) {
         colorOf = c.colorOf || colorOf; selfColor = c.self || selfColor;
         for (const [k, val] of Object.entries(c.vars || {})) { holder.style.setProperty(k, val); look[k] = val; }

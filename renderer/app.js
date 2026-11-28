@@ -70,6 +70,7 @@
     let lastSim = null, lastVer = -1;
     return {
       gl,
+      warm: (id) => { if (SCENE_SRC[id]) get(id); },       // (start building a scene now, in the background, to draw it later without a stall: Scene Slots' reveal)
       // returns false when it couldn't draw this scene yet (still building); `exact` = draw nothing rather than the last scene
       draw(id, o, exact) {
         let pr = get(id);
@@ -118,6 +119,7 @@
 
   const sceneFor = (st) => (st.mode === 'mix' ? (st.perDisplay[me.key] || st.scene) : st.scene);
   let shown = sceneFor(S), fading = false;
+  let scenePreview = '';       // (Scene Slots' showcase: a scene just won drawn behind the machine for a moment, without switching to it)
   let webUp = false;       // a Surf page covers this screen (syncWeb): the scene under it isn't drawn
   let bjOn = false;        // the Blackjack table is up on this screen (bjSync)
   let gmOn = '';           // Roulette's or Hold'em's table is up on this screen: which (gmSync)
@@ -239,10 +241,11 @@
     tickPeaks(now);
     tickMediaBack();
     if (R && shown !== 'video' && !mbOn && !webUp) {       // (under Media's own screen the scene rests, and under a Surf page, which covers it all)
-      const vp = viewParams(), t = sceneTime(), sm = simFor(shown, vp.aspect);
+      const drawId = scenePreview && shown === 'slots' ? scenePreview : shown;
+      const vp = viewParams(), t = sceneTime(), sm = simFor(drawId, vp.aspect);
       if (sm) sm.update(t);
       const now = Date.now(), age = beats.map((b) => (b ? (now - b) / 1000 : 99));
-      R.draw(shown, { ...vp, time: t, audio, bright: S.brightness, colors: currentColors(), sim: sm, spec: specNow, peak: peakNow, react: S.reactivity * 1.6,
+      R.draw(drawId, { ...vp, time: t, audio, bright: S.brightness, colors: currentColors(), sim: sm, spec: specNow, peak: peakNow, react: S.reactivity * 1.6,
         beat: Math.exp(-age[0] * 4), beatAge: age, atime: aTime, overlay: { none: 0, bars: 1, wave: 2, halo: 3 }[S.overlay] || 0 });
       algoCaption(t, sm);
     } else algoCaption(0, null);
@@ -282,8 +285,9 @@
   const videoOn = () => sceneFor(S) === 'video' && !!S.videoUrl;
   // The toolbar's play / previous / next / volume act on whichever tab is selected: Scenes, Media or Surf.
   let lastCtx = 'scene';
-  // In Media they act on whichever is playing, the video or the music. While Spotify plays and Drift has no video or music of its own on
-  // (main works that out: spotify.lead), they are Spotify's, in Scenes and Media alike.
+  // In Media they act on whichever is up, the video or the music. Spotify gets them only when all of Drift's own media is ejected
+  // (main works that out: spotify.lead) and nothing else has the focus: in Media, or in Hub / Settings coming from Media. On Scenes
+  // they stay the scene's.
   const filesOn = () => S.music.source === 'files' && S.music.playlist.length > 0;      // music from the library is up (playing or paused)
   const musicOn = () => !!theirMusic() || filesOn();
   const musicPlaying = () => (theirMusic() ? !!theirMusic().on : filesOn() && S.music.playing);
@@ -296,7 +300,7 @@
       if (lastCtx === 'surf') { /* the page stays */ }
       else if (videoOn() || musicOn()) { if (tab === 'hub' || lastCtx === 'scene') lastCtx = mediaCtx(); }
       else if (lastCtx === 'video' || lastCtx === 'music') lastCtx = spLead() ? 'spotify' : 'scene';
-    } else lastCtx = tab === 'media' ? mediaCtx() : tab === 'surf' ? 'surf' : spLead() ? 'spotify' : 'scene';
+    } else lastCtx = tab === 'media' ? mediaCtx() : tab === 'surf' ? 'surf' : 'scene';
     return lastCtx;
   };
   // watching with a friend who has music on: theirs plays here in place of ours, and the Music controls are for theirs
@@ -651,6 +655,7 @@
   // ---------- thumbnails ----------
   const tcan = document.createElement('canvas'); tcan.width = 256; tcan.height = 144;
   let TR = null, thumbPalette = null, thumbJob = 0;
+  window.driftThumbs = () => makeThumbs();       // (scripts/game-pics.js: the pictures drawn, to keep as Scene Slots' reels: renderer/scenes)
   function makeThumbs() {
     const palKey = S.palette + (S.palette === 'custom' ? (S.customColors || []).join('') : S.palette === 'content' ? (contentHex || []).join('') : '');
     if (thumbPalette === palKey) return;
@@ -728,14 +733,18 @@
   const TAB_IDS = ['scenes', 'media', 'surf', 'hub', 'broadcast', 'settings'];
   const webHere = () => { const w = S.web || {}; return !!w.open && w.key === me.key; };
   let tab = webHere() ? 'surf' : TAB_IDS.includes(init.tab) && init.tab !== 'surf' ? init.tab : 'scenes';
-  // (a game has no rotation tick: the automatic changes never pick one, main.js GAMES)
-  const tileHtml = (s) => { const i = SCENES.indexOf(s); return `<button class="tile${s.game ? ' game' : ''}" data-id="${s.id}"${s.game ? ` style="background-image:url(games/${s.id}.jpg)"` : ''}>${s.game ? '' : '<i class="rot" role="checkbox" aria-checked="true" title="Include in automatic scene changes"></i>'}<kbd>${i < 9 ? i + 1 : ''}</kbd><span>${s.name}</span></button>`; };
+  // (a game has no rotation tick: the automatic changes never pick one, main.js GAMES. A scene can be locked, S.locked: it shows
+  // dimmed under a padlock until a scene token unlocks it at Scene Slots, docs/plans/scene-slots.md)
+  const tileHtml = (s) => { const i = SCENES.indexOf(s); return `<button class="tile${s.game ? ' game' : ''}" data-id="${s.id}"${s.game ? ` style="background-image:url(games/${s.id}.jpg)"` : ''}>${s.game ? '' : '<i class="rot" role="checkbox" aria-checked="true" title="Include in automatic scene changes"></i><i class="lock" aria-hidden="true"></i>'}<kbd>${i < 9 ? i + 1 : ''}</kbd><span>${s.name}</span></button>`; };
+  const isLocked = (id) => (S.locked || []).includes(id);
+  const lockedSay = () => toast('Locked. Win a scene token (the crane\'s grand prize, a Pachinko fever round filled, or a Sketch & Guess game won) and spend it at Scene Slots.', 4200);
   $('#tiles').innerHTML = `<div class="tilegrid">${SCENES.filter((s) => !s.group).map(tileHtml).join('')}</div>`
     + `<h3 class="sub">Landscapes</h3><div class="tilegrid">${SCENES.filter((s) => s.group === 'land').map(tileHtml).join('')}</div>`
     + `<h3 class="sub">Algorithms</h3><div class="tilegrid">${SCENES.filter((s) => s.group === 'algo').map(tileHtml).join('')}</div>`
     + `<h3 class="sub">3D geometry</h3><div class="tilegrid">${SCENES.filter((s) => s.group === '3d').map(tileHtml).join('')}</div>`
     + `<h3 class="sub">Mathematical geometry</h3><div class="tilegrid">${SCENES.filter((s) => s.group === 'geo').map(tileHtml).join('')}</div>`
-    + `<h3 class="sub">Games room</h3><div class="tilegrid">${SCENES.filter((s) => s.group === 'games').map(tileHtml).join('')}</div>`;
+    + `<h3 class="sub">Games room</h3><div class="tilegrid">${SCENES.filter((s) => s.group === 'games').map(tileHtml).join('')}</div>`
+    + `<h3 class="sub">Multiplayer only</h3><div class="tilegrid">${SCENES.filter((s) => s.group === 'multi').map(tileHtml).join('')}</div>`;
   const CYCLED = SCENES.filter((s) => !s.game);       // the scenes the automatic changes, and Next / Previous, go through
   $('#palettes').innerHTML = Object.entries(PALETTES).map(([id, p]) => `<button class="sw" data-id="${id}" title="${p.name}" style="background:linear-gradient(90deg,${p.c.join(',')})"></button>`).join('')
     + `<button class="sw cyc" data-id="cycle" title="Cycle through every colour" style="background:linear-gradient(90deg,${Object.values(PALETTES).map((p) => p.c[2]).join(',')})">↻</button>`
@@ -756,7 +765,7 @@
   // a game), and the two or three controls that matter there, which are the panel toolbar's own (ctx, ctxToggle, ctxStep).
   // Settings and the Hub, open over the screen, name themselves while they're open.
   const winBar = $('#winBar');
-  const WB_GAMES = ['blackjack', 'roulette', 'poker', 'sketch', 'pachinko', 'crane'];
+  const WB_GAMES = ['blackjack', 'roulette', 'poker', 'sketch', 'pachinko', 'crane', 'slots'];
   const wbHost = (u) => { try { const x = new URL(u); return /^https?:$/.test(x.protocol) ? { host: x.hostname.replace(/^www\./, ''), safe: x.protocol === 'https:' } : null; } catch { return null; } };
   let wbLast = null, wbOnAir = null;       // (null: not heard yet, so S.bcOnAir from the last state)
   api.on('chat', (c) => { if (c && c.type === 'bclive') { wbOnAir = !!c.live; if (S.windowed) syncWinBar(); } });
@@ -1154,7 +1163,8 @@
     const surfUp = document.body.classList.contains('web');
     if (surfUp) screenTab = 'surf'; else if (bcHere()) screenTab = 'broadcast';       // (put up some other way: a link, a friend's broadcast)
     else if (screenTab === 'surf' || screenTab === 'broadcast') screenTab = tab === 'media' ? 'media' : 'scenes';       // (put away: back to what's under it)
-    const whereNow = screenTab === 'scenes' && (bjOn || gmOn) ? (bjOn ? 'blackjack' : gmOn) : screenTab;       // (at a table: friends who click you sit down next to you)
+    const slUp = !!document.querySelector('#slTable.on');       // (Scene Slots: friends see you're there, but it's yours, so there's no sitting down next to you)
+    const whereNow = screenTab === 'scenes' && (bjOn || gmOn || slUp) ? (bjOn ? 'blackjack' : gmOn || 'slots') : screenTab;       // (at a table: friends who click you sit down next to you)
     if (whereNow !== whereSent) { whereSent = whereNow; api.chat('where', whereNow).catch(() => {}); }       // friends' hub bars jump here when they click you (chat.js drawCall)
     const on = screenTab === 'media' && !videoOn() && !surfUp && !bcHere();
     if (on !== mbOn) { mbOn = on; mbEl.classList.toggle('on', on); }
@@ -1330,8 +1340,9 @@
     $$('.tile').forEach((x) => x.classList.toggle('active', x.dataset.id === cur));
     const skip = S.cycleSkip || [];                  // ticks for which scenes the automatic changes may pick
     $('#tiles').classList.toggle('rotating', S.autoCycle > 0);
-    $$('.tile[data-id]').forEach((x) => { const on = !skip.includes(x.dataset.id); x.classList.toggle('skip', !on); const r = x.querySelector('.rot'); if (r) r.setAttribute('aria-checked', String(on)); });
-    $('#rotNote').textContent = S.autoCycle > 0 ? (skip.length >= CYCLED.length - 1 ? 'Tick at least two scenes to rotate between.' : `Rotating through ${CYCLED.length - skip.length} of ${CYCLED.length} scenes. Untick a scene to leave it out. Games are never picked.`) : '';
+    $$('.tile[data-id]').forEach((x) => { const on = !skip.includes(x.dataset.id), lk = isLocked(x.dataset.id); x.classList.toggle('skip', !on); x.classList.toggle('locked', lk); x.title = lk ? 'Locked: unlock it with a scene token at Scene Slots' : ''; const r = x.querySelector('.rot'); if (r) r.setAttribute('aria-checked', String(on)); });
+    const open = CYCLED.filter((s) => !isLocked(s.id)), ticked = open.filter((s) => !skip.includes(s.id)).length;       // (the rotation goes through the open ones only)
+    $('#rotNote').textContent = S.autoCycle > 0 ? (ticked < 2 ? 'Tick at least two scenes to rotate between.' : `Rotating through ${ticked} of ${open.length} scenes. Untick a scene to leave it out. Games and locked scenes are never picked.`) : '';
     $$('.sw').forEach((x) => x.classList.toggle('active', x.dataset.id === S.palette));
     const cc = customNow();
     $('.sw.cus').style.background = `linear-gradient(90deg,${cc.join(',')})`;
@@ -1686,6 +1697,7 @@
       vars: { '--bjAccent': a, '--bjFelt': hslToHex(fh, fs, 0.2), '--bjFeltDeep': hslToHex(fh, fs, 0.075), '--bjHi': toHex(pc[3]), '--bjDark': toHex(pc[0]), '--bjLamp': lamp } };
     bjT.colors(look);
     for (const x of Object.values(GM)) x.t.colors(look);       // (Roulette's and Hold'em's tables: the same room)
+    slT.colors(look);       // (and Scene Slots)
   }
   addEventListener('resize', () => { if (bjPtrEls.size) drawPtrs(bjPtrBox, bjPtrEls, bjOn ? bjT.box() : null, bjPtrList); });
   // (your pointer isn't sent from this table: each player sees it turned so their own seat is in the middle, so it wouldn't
@@ -1708,6 +1720,7 @@
   function gmPtrOff() { if (gmPtrOut) { const g = gmPtrOut; gmPtrOut = false; api.cmd({ type: 'game', g, op: 'ptr', x: -1, y: -1 }); } }
   function gmSync() {
     for (const [g, x] of Object.entries(GM)) {
+      if (x.t.tokens) x.t.tokens(S.tokens || 0);       // (the crane's and Pachinko's bars show your scene tokens: yours, not the table's)
       const on = gmHere(g);
       if (on === x.on) continue;
       x.on = on; x.el.classList.toggle('on', on);
@@ -1737,6 +1750,33 @@
     api.cmd({ type: 'game', g: gmOn, op: 'ptr', x: +x.toFixed(4), y: +y.toFixed(4) });
   });
   setInterval(() => { for (const q of gmPtrEls.values()) q.el.classList.toggle('idle', Date.now() - q.at > 6000); }, 1000);
+
+  // ---------- Scene Slots (renderer/slots.js; docs/plans/scene-slots.md): always your own machine, never a hub's ----------
+  // Up on this screen while it shows the scene, like the tables. It's given your tokens and the scenes still locked (S.tokens,
+  // S.locked: main.js), asks main.js for a scene when you pull (slotsSpin), and spins round to the one it's told.
+  const slEl = $('#slTable'), SCENE_NAMES = Object.fromEntries(SCENES.filter((s) => !s.game).map((s) => [s.id, s.name]));
+  // (its reels' pictures are drawn once, ahead, in Aurora's colours: renderer/scenes, scripts/game-pics.js; here they're turned
+  // round the colour wheel to the palette that's on: --slHue, the turn from Aurora's hue to its. Instant, where drawing each
+  // scene live took a while, and close: a palette is mostly a hue)
+  const paletteHue = (cols) => {       // the palette's hue, its colours' (bar the darkest) averaged round the wheel, the more saturated counting more
+    let x = 0, y = 0; for (const c of cols.slice(1)) { const [h, s] = rgbToHsl(c); x += Math.cos(h * 2 * Math.PI) * s; y += Math.sin(h * 2 * Math.PI) * s; }
+    return Math.atan2(y, x) / (2 * Math.PI) * 360;
+  };
+  const AURORA_HUE = paletteHue(rgb('aurora'));
+  let slHue = null;
+  const slT = window.driftSlots(slEl, (m) => api.cmd({ type: 'slots', ...m }), {
+    names: SCENE_NAMES, preview: (id) => { scenePreview = id && SCENE_NAMES[id] ? id : ''; }, warm: (id) => { if (R && SCENE_NAMES[id]) R.warm(id); },
+    thumb: (id) => (SCENE_NAMES[id] ? `url(scenes/${id}.jpg)` : ''),
+    go: (id) => P(S.mode === 'mix' ? { perDisplay: { [me.key]: id } } : { scene: id }) });
+  let slOn = false;
+  const slHere = () => shown === 'slots' && sceneFor(S) === 'slots' && (S.mode !== 'span' || isCenter) && !webUp && !mbOn && !bcHere();
+  function slSync() {
+    const on = slHere();
+    if (on !== slOn) { slOn = on; slEl.classList.toggle('on', on); if (!on) slT.view(null); syncMediaBack(); }
+    if (on) { const h = Math.round(((paletteHue(currentColors()) - AURORA_HUE) % 360 + 540) % 360 - 180); if (h !== slHue) { slHue = h; slEl.style.setProperty('--slHue', h + 'deg'); } }
+    if (on) slT.view({ tokens: S.tokens || 0, locked: (S.locked || []).filter((id) => SCENE_NAMES[id]), unlocked: S.unlocked || [], total: Object.keys(SCENE_NAMES).length });
+  }
+  setInterval(slSync, 250);
 
   // ---------- the browser's bar: tabs, back and forward, home and the address. It floats at the top and keeps out of the way ----------
   const surf = (what, more) => api.cmd({ type: 'surf', do: what, ...more });
@@ -2822,7 +2862,7 @@
       P({ cycleSkip: skip.includes(id) ? skip.filter((x) => x !== id) : [...skip, id] });
       return;
     }
-    const t = e.target.closest('.tile'); if (!t) return; if (t.dataset.id === 'video' && !S.video.files.length) { api.cmd({ type: 'pick-video', key: me.key }); return; } P(S.mode === 'mix' ? { perDisplay: { [me.key]: t.dataset.id } } : { scene: t.dataset.id }); });
+    const t = e.target.closest('.tile'); if (!t) return; if (isLocked(t.dataset.id)) { lockedSay(); return; } if (t.dataset.id === 'video' && !S.video.files.length) { api.cmd({ type: 'pick-video', key: me.key }); return; } P(S.mode === 'mix' ? { perDisplay: { [me.key]: t.dataset.id } } : { scene: t.dataset.id }); });
   $('#palettes').addEventListener('click', (e) => {
     const t = e.target.closest('.sw'); if (!t) return;
     // the first time, Custom starts from the colours on screen right now
@@ -3058,11 +3098,11 @@
   confirmEl.addEventListener('mousedown', (e) => { if (e.target === confirmEl) closeAsk(); });      // a click outside the box means "stay"
 
   function stepScene(dir) {
-    if (S.mode === 'mix') {       // (from a game: on from where it sits in the list)
-      const cur = sceneFor(S), at = SCENES.findIndex((x) => x.id === cur);
-      let i = CYCLED.findIndex((x) => x.id === cur);
-      if (i < 0) i = dir > 0 ? CYCLED.filter((x) => SCENES.indexOf(x) < at).length - 1 : CYCLED.filter((x) => SCENES.indexOf(x) < at).length;
-      P({ perDisplay: { [me.key]: CYCLED[(i + dir + CYCLED.length * 2) % CYCLED.length].id } });
+    if (S.mode === 'mix') {       // (from a game: on from where it sits in the list; never onto a locked scene)
+      const cur = sceneFor(S), at = SCENES.findIndex((x) => x.id === cur), open = CYCLED.filter((x) => !isLocked(x.id));
+      let i = open.findIndex((x) => x.id === cur);
+      if (i < 0) i = dir > 0 ? open.filter((x) => SCENES.indexOf(x) < at).length - 1 : open.filter((x) => SCENES.indexOf(x) < at).length;
+      if (open.length) P({ perDisplay: { [me.key]: open[(i + dir + open.length * 2) % open.length].id } });
     }
     else api.cmd({ type: 'step-scene', dir });
   }
@@ -3151,6 +3191,7 @@
     else if ((k === 'x' || k === 'X') && videoOn()) subNudge(0.1);
     else if (k === 'c' || k === 'C') P({ clock: !S.clock });
     else if (k === 'b' || k === 'B') P({ breathing: !S.breathing });
+    else if (/^[1-9]$/.test(k) && SCENES[+k - 1] && (ctx() === 'scene' || tab === 'scenes') && isLocked(SCENES[+k - 1].id)) lockedSay();
     else if (/^[1-9]$/.test(k) && SCENES[+k - 1] && (ctx() === 'scene' || tab === 'scenes')) P(S.mode === 'mix' ? { perDisplay: { [me.key]: SCENES[+k - 1].id } } : { scene: SCENES[+k - 1].id });
   });
 
@@ -3207,6 +3248,7 @@
     else if (c.type === 'vptrs') showVptrs(Array.isArray(c.list) ? c.list : []);
     else if (c.type === 'bj') bjCmd(c);
     else if (c.type === 'game') gmCmd(c);
+    else if (c.type === 'slots') slT.result(c);       // (Scene Slots: the scene won, or why not)
     else if (c.type === 'web-url') toBar();       // Ctrl+L in the web page
     else if (c.type === 'chat-quick') { if (webEl) webEl.blur(); quickOverSurf(); }       // Enter in a Surf page that wasn't for the page (web.js "Enter")
     else if (c.type === 'web-esc') { if (webEl) webEl.blur(); window.focus(); tab = 'surf'; showPanel(true); syncUI(); }       // Esc in the web page: our controls, and the keys come back to us

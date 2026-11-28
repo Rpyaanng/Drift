@@ -11,7 +11,7 @@
 // covers) - 1 to 1, the book's odds. The number is picked when the ball is spun and kept here until it lands.
 const WHEEL = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26];
 const REDS = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]);
-const RULES = { start: 1000, min: 5, spot: 1000, seats: 8 };       // min: the smallest bet; spot: the most on any one bet
+const RULES = { start: 1000, back: 500, min: 5, spot: 1000, seats: 8 };       // start: a new player's chips; back: out of chips, what you're back in with; min: the smallest bet; spot: the most on any one bet
 const TIMES = { bet: 25000, spin: 6000, done: 6000, out: 20000 };       // ms: betting once someone has bet, the ball going round, looking at the result, crapped out
 
 const BETS = (() => {
@@ -64,7 +64,7 @@ function createTable(opts = {}) {
     const s = { id, name, chips: keep && Number.isFinite(+keep.chips) ? Math.max(0, Math.floor(+keep.chips)) : R.start, bets: new Map(), order: [], last: [], ready: false,
       net: 0, won: 0, played: false, outUntil: out > now() ? out : 0, left: false };
     if (s.outUntil) s.chips = 0;
-    else if (s.chips < R.min) s.chips = R.start;
+    else if (s.chips < R.min) s.chips = R.back;
     if (opts.wallet) opts.wallet.bind(s);
     seats[free] = s;
     if (phase === 'idle') { phase = 'betting'; deadline = 0; }
@@ -160,7 +160,7 @@ function createTable(opts = {}) {
   // ------------------------------------------------------------------ time
   function tick() {
     const t = now(), v0 = version;
-    for (const s of seats) if (s && s.outUntil && t >= s.outUntil) { s.outUntil = 0; s.chips = R.start; outs.delete(s.id); changed(); }       // back in with fresh chips
+    for (const s of seats) if (s && s.outUntil && t >= s.outUntil) { s.outUntil = 0; s.chips = R.back; outs.delete(s.id); changed(); }       // back in with fresh chips
     for (const [id, until] of outs) if (t >= until) outs.delete(id);
     if (phase === 'betting') {
       const bets = seats.some((s) => s && s.bets.size), everyone = seats.filter(able).every((s) => s.ready);
@@ -176,7 +176,7 @@ function createTable(opts = {}) {
   function view(id) {
     const t = now(), me = seatOf(String(id));
     return {
-      phase, round, min: R.min, spot: R.spot, start: R.start, spinMs: T.spin,
+      phase, round, min: R.min, spot: R.spot, start: R.start, back: R.back, spinMs: T.spin,
       msLeft: deadline ? Math.max(0, deadline - t) : 0,
       number: phase === 'done' ? number : null,       // (never before the ball lands)
       history: history.slice(),

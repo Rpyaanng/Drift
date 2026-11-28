@@ -162,7 +162,7 @@ ok('full house: trips first', beats('3s 3d 3h 2c 2s', '2h 2d Ah Ac Kd 2c'.split(
   t.wait(7000);
   ok('out of chips for a while', t.s('a').outMs === 20000 && t.phase === 'waiting', [t.s('a'), t.phase]);
   t.wait(20000); t.wait(3000);
-  ok('back in with 1000, and dealt', t.s('a').chips + t.s('a').bet === 1000 && t.phase === 'preflop', [t.s('a').chips, t.phase]);
+  ok('back in with 500, and dealt', t.s('a').chips + t.s('a').bet === 500 && t.phase === 'preflop', [t.s('a').chips, t.phase]);
 }
 
 // ---- computer players ----

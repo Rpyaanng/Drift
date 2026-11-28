@@ -572,6 +572,15 @@ label output, label .o { float: right; color: var(--ink); font-variant-numeric: 
 .tile .rot[aria-checked="true"]::after { content: ""; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
 #tiles.rotating .tile .rot { display: block; }
 #tiles.rotating .tile.skip:not(.active) { filter: grayscale(.7) brightness(.6); }
+/* a locked scene (docs/plans/scene-slots.md): dimmed under a padlock, no rotation tick; a scene token at Scene Slots unlocks it */
+.tile .lock { display: none; }
+.tile.locked { cursor: not-allowed; }
+.tile.locked::after { content: ""; position: absolute; inset: 0; border-radius: inherit; background: rgba(8,8,14,.62); backdrop-filter: grayscale(1); pointer-events: none; }
+.tile.locked .lock { display: block; position: absolute; left: 50%; top: 42%; width: 18px; height: 13px; margin-left: -9px; border-radius: 3px; background: rgba(255,255,255,.88); z-index: 2; }
+.tile.locked .lock::before { content: ""; position: absolute; left: 3px; top: -9px; width: 7px; height: 9px; border: 2.5px solid rgba(255,255,255,.88); border-bottom: 0; border-radius: 6px 6px 0 0; }
+.tile.locked .lock::after { content: ""; position: absolute; left: 7.5px; top: 4px; width: 3px; height: 5px; border-radius: 2px; background: rgba(8,8,14,.7); }
+.tile.locked span, .tile.locked kbd { z-index: 2; opacity: .7; }
+#tiles.rotating .tile.locked .rot { display: none; }
 .rotnote { margin: 8px 0 0; font-size: 12px; color: var(--dim); }
 .rotnote:empty { display: none; }
 
@@ -1106,9 +1115,6 @@ input.num { width: 46px; text-align: center; padding: 6px 4px; }
 .hostBtn.start:hover { background: rgba(46,204,113,.48); }
 .hostBtn.stop { background: rgba(255,90,90,.18); color: #ffc2c2; }
 .hostBtn.stop:hover { background: rgba(255,90,90,.36); }
-.chConnect { margin: 2px 8px 8px; }
-.chConnect { display: inline-flex; align-items: center; gap: 6px; background: rgba(46,204,113,.28); color: #a6f5c4; }
-.chConnect:hover { background: rgba(46,204,113,.45); }
 #chat.opts #shOptsBtn { color: var(--ink); border-color: var(--accent); }
 @media (max-width: 760px) { .optRow { flex-wrap: wrap; } .optRow:has(> select, > .seg) .optText { flex-basis: 100%; } #content [data-tab] .optRow select { width: 100%; } }
 #chat.carded #shHost .row, #chat.carded #shGuest .row, #chat.carded #shPeople { display: none; }
@@ -1474,18 +1480,18 @@ body.bcfull:not(.surfing):not(:has(#bcBar.show, #bcBar:hover, #bcBar:focus-withi
    Over the room the shader draws: a lamp's pool of light in the accent, a felt from the palette's second colour, a rail lit
    by a thin line of the accent, and a small spot of each player's colour at their seat. app.js sets the colours (--bjAccent,
    --bjFelt, --bjFeltDeep, --bjHi, --bjDark, --bjLamp) from the palette, again on every change. */
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) { position: fixed; inset: 0; z-index: 2; display: none; pointer-events: none; color: #f4f1ea;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) { position: fixed; inset: 0; z-index: 2; display: none; pointer-events: none; color: #f4f1ea;
   --bjAccent: #22c08a; --bjFelt: #0f4a3a; --bjFeltDeep: #06241c; --bjHi: #b58cff; --bjDark: #040816; --bjLamp: #a8f0d2;
   font: 500 14px/1.3 "Segoe UI Variable Text", "Segoe UI", system-ui; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable).on { display: block; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable).on.live .bjFelt, :is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable).on .bjBar { pointer-events: auto; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjLamp { position: absolute; left: 50%; top: 46%; width: min(120vw, 190vh); height: min(80vw, 120vh); transform: translate(-50%, -50%); border-radius: 50%;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable).on { display: block; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable).on.live .bjFelt, :is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable).on .bjBar { pointer-events: auto; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjLamp { position: absolute; left: 50%; top: 46%; width: min(120vw, 190vh); height: min(80vw, 120vh); transform: translate(-50%, -50%); border-radius: 50%;
   background: radial-gradient(closest-side, color-mix(in srgb, var(--bjLamp) 26%, transparent), color-mix(in srgb, var(--bjLamp) 8%, transparent) 55%, transparent);
   mix-blend-mode: screen; transition: opacity .6s, filter .6s; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable).fWin .bjLamp { animation: bjWarm 2.4s ease-out; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable).fLose .bjLamp { animation: bjDim 2.4s ease-out; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable).fBj .bjLamp { animation: bjWarm 2.4s ease-out; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable).fBj .bjRail { animation: bjShimmer 2.4s ease-out; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable).fWin .bjLamp { animation: bjWarm 2.4s ease-out; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable).fLose .bjLamp { animation: bjDim 2.4s ease-out; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable).fBj .bjLamp { animation: bjWarm 2.4s ease-out; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable).fBj .bjRail { animation: bjShimmer 2.4s ease-out; }
 @keyframes bjWarm { 0% { filter: none; } 20% { filter: brightness(1.7) saturate(1.2); } 100% { filter: none; } }
 @keyframes bjDim { 0% { opacity: 1; } 25% { opacity: .45; } 100% { opacity: 1; } }
 @keyframes bjShimmer { 0%, 100% { filter: none; } 30% { filter: brightness(2) drop-shadow(0 0 18px var(--bjAccent)); } }
@@ -1529,13 +1535,13 @@ body.bcfull:not(.surfing):not(:has(#bcBar.show, #bcBar:hover, #bcBar:focus-withi
 #bjTable .bjTray .t25 { --chip: color-mix(in srgb, var(--bjAccent) 85%, #000); }
 #bjTable .bjTray .t100 { --chip: color-mix(in srgb, var(--bjDark) 50%, #2a2a33); }
 #bjTable .bjTray .t500 { --chip: color-mix(in srgb, var(--bjHi) 75%, #000); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjSign { position: absolute; left: 59cqw; top: 2.2cqh; width: 13cqw; padding: .55cqw .7cqw; border-radius: .45cqw; text-align: center;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjSign { position: absolute; left: 59cqw; top: 2.2cqh; width: 13cqw; padding: .55cqw .7cqw; border-radius: .45cqw; text-align: center;
   background: linear-gradient(160deg, rgba(255,255,255,.14), rgba(255,255,255,.04)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bjAccent) 40%, rgba(255,255,255,.2)), 0 .6cqh 1.4cqh rgba(0,0,0,.35); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjMode { font: 700 .85cqw/1.2 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: .22em; text-transform: uppercase; color: color-mix(in srgb, var(--bjAccent) 60%, #fff); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjLimits { margin-top: .25cqw; font: 600 .78cqw/1.2 "Segoe UI Variable Text", "Segoe UI", system-ui; letter-spacing: .08em; color: rgba(255,255,255,.7); font-variant-numeric: tabular-nums; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjStatus { position: absolute; left: 50%; top: 26.5cqh; transform: translateX(-50%); display: flex; align-items: center; gap: 1cqw; white-space: nowrap;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjMode { font: 700 .85cqw/1.2 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: .22em; text-transform: uppercase; color: color-mix(in srgb, var(--bjAccent) 60%, #fff); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjLimits { margin-top: .25cqw; font: 600 .78cqw/1.2 "Segoe UI Variable Text", "Segoe UI", system-ui; letter-spacing: .08em; color: rgba(255,255,255,.7); font-variant-numeric: tabular-nums; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjStatus { position: absolute; left: 50%; top: 26.5cqh; transform: translateX(-50%); display: flex; align-items: center; gap: 1cqw; white-space: nowrap;
   font: 600 1.7cqw/1 "Segoe UI Variable Display", "Segoe UI", system-ui; color: #fff; text-shadow: 0 1px 10px rgba(0,0,0,.5); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjCount { display: inline-grid; place-items: center; min-width: 2.6cqw; height: 2.6cqw; padding: 0 .6cqw; border-radius: 999px; font: 700 1.3cqw/1 "Segoe UI Variable Display", "Segoe UI", system-ui;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjCount { display: inline-grid; place-items: center; min-width: 2.6cqw; height: 2.6cqw; padding: 0 .6cqw; border-radius: 999px; font: 700 1.3cqw/1 "Segoe UI Variable Display", "Segoe UI", system-ui;
   background: color-mix(in srgb, var(--bjAccent) 30%, rgba(0,0,0,.4)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--bjAccent) 70%, transparent); font-variant-numeric: tabular-nums; }
 
 /* the dealer and the shoe */
@@ -1546,28 +1552,28 @@ body.bcfull:not(.surfing):not(:has(#bcBar.show, #bcBar:hover, #bcBar:focus-withi
   background: repeating-linear-gradient(0deg, color-mix(in srgb, var(--bjAccent) 55%, #222) 0 2px, color-mix(in srgb, var(--bjAccent) 25%, #111) 2px 4px); }
 
 /* cards (drawn here: plain corners and a big suit) */
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjCards { display: flex; min-height: 7.4cqw; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjCard { position: relative; width: 5.2cqw; height: 7.4cqw; border-radius: .55cqw; flex: none; background: linear-gradient(170deg, #fffdf8, #ece6da); color: #1d1b26;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjCards { display: flex; min-height: 7.4cqw; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjCard { position: relative; width: 5.2cqw; height: 7.4cqw; border-radius: .55cqw; flex: none; background: linear-gradient(170deg, #fffdf8, #ece6da); color: #1d1b26;
   box-shadow: 0 .5cqh 1.4cqh rgba(0,0,0,.45), inset 0 0 0 1px rgba(0,0,0,.08); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjCard + .bjCard { margin-left: -3cqw; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjCard.red { color: #c3313f; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjCard span { position: absolute; display: flex; flex-direction: column; align-items: center; line-height: .95; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjCard .cTl { left: .45cqw; top: .45cqw; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjCard .cBr { right: .45cqw; bottom: .45cqw; transform: rotate(180deg); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjCard b { font: 700 1.35cqw/1 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: -.04em; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjCard i { font-style: normal; font-size: 1.05cqw; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjCard .cMid { inset: 0; justify-content: center; font-size: 3cqw; opacity: .9; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjCard + .bjCard { margin-left: -3cqw; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjCard.red { color: #c3313f; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjCard span { position: absolute; display: flex; flex-direction: column; align-items: center; line-height: .95; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjCard .cTl { left: .45cqw; top: .45cqw; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjCard .cBr { right: .45cqw; bottom: .45cqw; transform: rotate(180deg); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjCard b { font: 700 1.35cqw/1 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: -.04em; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjCard i { font-style: normal; font-size: 1.05cqw; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjCard .cMid { inset: 0; justify-content: center; font-size: 3cqw; opacity: .9; }
 /* the back: a white border, a fine accent line inside it, and Drift's mark on a deep ground */
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjCard.back { display: grid; place-items: center;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjCard.back { display: grid; place-items: center;
   background: radial-gradient(ellipse at 50% 40%, color-mix(in srgb, var(--bjAccent) 22%, var(--bjDark)), color-mix(in srgb, var(--bjDark) 85%, #000));
   box-shadow: 0 .5cqh 1.4cqh rgba(0,0,0,.45), inset 0 0 0 .32cqw #f4efe6, inset 0 0 0 .45cqw color-mix(in srgb, var(--bjAccent) 65%, transparent); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjCard.back .bjMark { width: 78%; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjCard.deal { animation: bjDeal .38s cubic-bezier(.2,.8,.3,1) both; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjCard.back .bjMark { width: 78%; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjCard.deal { animation: bjDeal .38s cubic-bezier(.2,.8,.3,1) both; }
 @keyframes bjDeal { from { transform: translate(24cqw, -18cqh) rotate(-14deg); opacity: 0; } to { transform: none; opacity: 1; } }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjTotal { min-width: 2.4cqw; padding: .25cqw .7cqw; border-radius: 999px; text-align: center; font: 700 1.1cqw/1.2 "Segoe UI Variable Display", "Segoe UI", system-ui;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjTotal { min-width: 2.4cqw; padding: .25cqw .7cqw; border-radius: 999px; text-align: center; font: 700 1.1cqw/1.2 "Segoe UI Variable Display", "Segoe UI", system-ui;
   background: rgba(0,0,0,.45); font-variant-numeric: tabular-nums; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjTotal:empty { display: none; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjTotal.bust { background: rgba(190,40,52,.75); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjTotal:empty { display: none; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjTotal.bust { background: rgba(190,40,52,.75); }
 
 /* the seats along the curve: a spot of the player's colour, their hands, their bet, their name and chips */
 #bjTable .bjSeat { position: absolute; width: 15cqw; transform: translate(-50%, -100%);       /* (left / top: where its name tag sits) */ display: flex; flex-direction: column; align-items: center; gap: .8cqh; --c: rgba(255,255,255,.4); }
@@ -1597,67 +1603,77 @@ body.bcfull:not(.surfing):not(:has(#bcBar.show, #bcBar:hover, #bcBar:focus-withi
 #bjTable .bjChips i { position: absolute; left: 0; bottom: calc(var(--k) * .32cqw); width: 3cqw; height: 3cqw; }
 #bjTable .bjChips b { position: absolute; left: 3.6cqw; top: 50%; transform: translateY(-50%); font: 700 1.05cqw/1 "Segoe UI Variable Display", "Segoe UI", system-ui; white-space: nowrap; text-shadow: 0 1px 6px rgba(0,0,0,.6); }
 #bjTable .bjIns { font-size: .85cqw; color: rgba(255,255,255,.7); margin-left: 4cqw; white-space: nowrap; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjTag { position: relative; display: flex; align-items: center; gap: .6cqw; padding: .35cqw .9cqw .35cqw .4cqw; border-radius: 999px; white-space: nowrap; max-width: 15cqw;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjTag { position: relative; display: flex; align-items: center; gap: .6cqw; padding: .35cqw .9cqw .35cqw .4cqw; border-radius: 999px; white-space: nowrap; max-width: 15cqw;
   background: rgba(8,10,16,.55); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 45%, transparent); font-size: 1cqw; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjSeat.empty .bjTag { background: none; box-shadow: none; color: rgba(255,255,255,.35); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjTag .nm { overflow: hidden; text-overflow: ellipsis; font-weight: 700; color: color-mix(in srgb, var(--c) 70%, #fff); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjTag .ch { color: rgba(255,255,255,.7); font-variant-numeric: tabular-nums; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjSeat.empty .bjRing, :is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjSeat.empty .ch { display: none; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjRing { width: 1.5cqw; height: 1.5cqw; border-radius: 50%; flex: none; background: var(--c); --f: 0; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjRing.on { background: conic-gradient(var(--c) calc(var(--f) * 360deg), rgba(255,255,255,.12) 0); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjRing.av { display: grid; place-items: center; width: 2.4cqw; height: 2.4cqw; padding: .18cqw; margin-left: -.15cqw; }       /* a hub member's picture, the ring round it */
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjRing.av .face { width: 100%; height: 100%; font-size: 1cqw; box-shadow: 0 0 0 .1cqw rgba(8,10,16,.8); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjSeat.me .bjTag { background: color-mix(in srgb, var(--c) 26%, rgba(8,10,16,.7)); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjSeat.empty .bjTag { background: none; box-shadow: none; color: rgba(255,255,255,.35); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjTag .nm { overflow: hidden; text-overflow: ellipsis; font-weight: 700; color: color-mix(in srgb, var(--c) 70%, #fff); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjTag .ch { color: rgba(255,255,255,.7); font-variant-numeric: tabular-nums; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjSeat.empty .bjRing, :is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjSeat.empty .ch { display: none; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjRing { width: 1.5cqw; height: 1.5cqw; border-radius: 50%; flex: none; background: var(--c); --f: 0; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjRing.on { background: conic-gradient(var(--c) calc(var(--f) * 360deg), rgba(255,255,255,.12) 0); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjRing.av { display: grid; place-items: center; width: 2.4cqw; height: 2.4cqw; padding: .18cqw; margin-left: -.15cqw; }       /* a hub member's picture, the ring round it */
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjRing.av .face { width: 100%; height: 100%; font-size: 1cqw; box-shadow: 0 0 0 .1cqw rgba(8,10,16,.8); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjSeat.me .bjTag { background: color-mix(in srgb, var(--c) 26%, rgba(8,10,16,.7)); }
 
 /* chips, on the table and as buttons */
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .chip { border-radius: 50%; --chip: #e9e5db; --edge: #fff;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .chip { border-radius: 50%; --chip: #e9e5db; --edge: #fff;
   background: radial-gradient(circle, var(--chip) 0 46%, transparent 47%), repeating-conic-gradient(var(--edge) 0 15deg, var(--chip) 15deg 45deg);
   box-shadow: 0 .2cqh .6cqh rgba(0,0,0,.5), inset 0 0 0 .18cqw rgba(0,0,0,.18); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .chip.c10 { --chip: #ece8de; --edge: color-mix(in srgb, var(--bjAccent) 70%, #222); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .chip.c25 { --chip: color-mix(in srgb, var(--bjAccent) 85%, #000); --edge: #f4f1ea; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .chip.c100 { --chip: color-mix(in srgb, var(--bjDark) 60%, #1b1b22); --edge: color-mix(in srgb, var(--bjAccent) 80%, #fff); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .chip.c500 { --chip: color-mix(in srgb, var(--bjHi) 75%, #000); --edge: #f6e7b0; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .chip.c10 { --chip: #ece8de; --edge: color-mix(in srgb, var(--bjAccent) 70%, #222); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .chip.c25 { --chip: color-mix(in srgb, var(--bjAccent) 85%, #000); --edge: #f4f1ea; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .chip.c100 { --chip: color-mix(in srgb, var(--bjDark) 60%, #1b1b22); --edge: color-mix(in srgb, var(--bjAccent) 80%, #fff); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .chip.c500 { --chip: color-mix(in srgb, var(--bjHi) 75%, #000); --edge: #f6e7b0; }
 
 /* your controls, under the table */
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBar { position: absolute; left: 50%; top: calc(9vh + min(44vw, 75vh)); transform: translateX(-50%);       /* under the table, clear of Drift's own bar */ display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 999px;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjBar { position: absolute; left: 50%; top: calc(9vh + min(44vw, 75vh)); transform: translateX(-50%);       /* under the table, clear of Drift's own bar */ display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 999px;
   background: rgba(8,10,16,.62); backdrop-filter: blur(16px); box-shadow: 0 10px 34px rgba(0,0,0,.45), inset 0 0 0 1px color-mix(in srgb, var(--bjAccent) 28%, rgba(255,255,255,.06)); white-space: nowrap; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBar:empty { display: none; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjLine { padding: 0 8px; font-weight: 600; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBar .bjCount { min-width: 30px; height: 30px; font-size: 15px; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBar .chip { width: 48px; height: 48px; border: 0; padding: 0; cursor: pointer; font: 800 13px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; color: #16161c; transition: transform .12s, filter .12s; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBar .chip.c25, :is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBar .chip.c100, :is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBar .chip.c500 { color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.6); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBar .chip:hover:not(:disabled) { transform: translateY(-3px); filter: brightness(1.12); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBar .chip:disabled { opacity: .3; cursor: default; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjAmt { min-width: 110px; text-align: center; font: 700 17px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; font-variant-numeric: tabular-nums; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBtn { height: 40px; padding: 0 20px; border: 0; border-radius: 999px; cursor: pointer; font: 700 14px/1 "Segoe UI Variable Text", "Segoe UI", system-ui; color: #fff;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjBar:empty { display: none; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjLine { padding: 0 8px; font-weight: 600; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjBar .bjCount { min-width: 30px; height: 30px; font-size: 15px; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjBar .chip { width: 48px; height: 48px; border: 0; padding: 0; cursor: pointer; font: 800 13px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; color: #16161c; transition: transform .12s, filter .12s; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjBar .chip.c25, :is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjBar .chip.c100, :is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjBar .chip.c500 { color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.6); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjBar .chip:hover:not(:disabled) { transform: translateY(-3px); filter: brightness(1.12); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjBar .chip:disabled { opacity: .3; cursor: default; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjAmt { min-width: 110px; text-align: center; font: 700 17px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; font-variant-numeric: tabular-nums; }
+/* a balance with what it's in beside it: a little chip (the table's white one) or a gold coin for scene tokens */
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjAmt:is(.ico-chip, .ico-tok) { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjAmt.bjTok { min-width: 0; padding-right: 4px; }       /* (your scene tokens, after your chips: as wide as it needs) */
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjAmt:is(.ico-chip, .ico-tok)::before { content: ""; flex: none; width: 20px; height: 20px; border-radius: 50%; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjAmt.ico-chip::before { --chip: #ece8de; --edge: color-mix(in srgb, var(--bjAccent) 70%, #222);
+  background: radial-gradient(circle, var(--chip) 0 44%, var(--edge) 45% 50%, transparent 51%), repeating-conic-gradient(var(--edge) 0 15deg, var(--chip) 15deg 45deg);
+  box-shadow: 0 1px 3px rgba(0,0,0,.5), inset 0 0 0 1px rgba(0,0,0,.2); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjAmt.ico-tok::before {
+  background: radial-gradient(circle at 50% 50%, transparent 0 52%, rgba(120,70,0,.55) 54% 58%, transparent 60%), radial-gradient(circle at 35% 30%, #fff6c8 0 8%, #f7cf4a 30%, #d99a14 72%, #a8690a 100%);
+  box-shadow: 0 1px 3px rgba(0,0,0,.5), inset 0 0 0 1px rgba(110,60,0,.6); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjBtn { height: 40px; padding: 0 20px; border: 0; border-radius: 999px; cursor: pointer; font: 700 14px/1 "Segoe UI Variable Text", "Segoe UI", system-ui; color: #fff;
   background: rgba(255,255,255,.1); box-shadow: inset 0 0 0 1px rgba(255,255,255,.14); transition: background .12s, transform .12s; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBtn:hover:not(:disabled) { background: rgba(255,255,255,.18); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBtn.primary { background: color-mix(in srgb, var(--bjAccent) 80%, #000); box-shadow: 0 0 18px color-mix(in srgb, var(--bjAccent) 40%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--bjAccent) 80%, #fff); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBtn.primary:hover:not(:disabled) { background: var(--bjAccent); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBtn.ghost { background: none; box-shadow: none; color: rgba(255,255,255,.7); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBtn:disabled { opacity: .35; cursor: default; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBtn:focus-visible, :is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBar .chip:focus-visible { outline: 2px solid var(--bjAccent); outline-offset: 2px; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjNote { position: absolute; left: 50%; top: 1.6vh; transform: translate(-50%, 6px); padding: 7px 16px; border-radius: 999px; background: rgba(20,10,14,.75);
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjBtn:hover:not(:disabled) { background: rgba(255,255,255,.18); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjBtn.primary { background: color-mix(in srgb, var(--bjAccent) 80%, #000); box-shadow: 0 0 18px color-mix(in srgb, var(--bjAccent) 40%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--bjAccent) 80%, #fff); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjBtn.primary:hover:not(:disabled) { background: var(--bjAccent); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjBtn.ghost { background: none; box-shadow: none; color: rgba(255,255,255,.7); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjBtn:disabled { opacity: .35; cursor: default; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjBtn:focus-visible, :is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjBar .chip:focus-visible { outline: 2px solid var(--bjAccent); outline-offset: 2px; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjNote { position: absolute; left: 50%; top: 1.6vh; transform: translate(-50%, 6px); padding: 7px 16px; border-radius: 999px; background: rgba(20,10,14,.75);
   box-shadow: inset 0 0 0 1px rgba(255,120,130,.35); opacity: 0; transition: opacity .25s, transform .25s; pointer-events: none; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjNote.on { opacity: 1; transform: translate(-50%, 0); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjNote.on { opacity: 1; transform: translate(-50%, 0); }
 #bjPtrs { position: fixed; inset: 0; pointer-events: none; z-index: 9998; overflow: hidden; }       /* (with the other pointer layers: see #ptrs) */
 /* the hub's biggest pots: under the table at its left edge, level with the bar */
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBoard { position: absolute; left: max(16px, calc(50% - min(44vw, 75vh))); top: calc(9vh + min(44vw, 75vh)); width: 260px; display: none;
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjBoard { position: absolute; left: max(16px, calc(50% - min(44vw, 75vh))); top: calc(9vh + min(44vw, 75vh)); width: 260px; display: none;
   padding: 10px 12px 8px; border-radius: 14px; background: rgba(8,10,16,.62); backdrop-filter: blur(16px);
   box-shadow: 0 10px 34px rgba(0,0,0,.45), inset 0 0 0 1px color-mix(in srgb, var(--bjAccent) 28%, rgba(255,255,255,.06)); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBoard.on { display: block; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBHead { margin-bottom: 6px; font: 700 10.5px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: .22em; text-transform: uppercase; color: color-mix(in srgb, var(--bjAccent) 60%, #fff); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBNone { font-size: 12px; color: rgba(255,255,255,.6); padding: 2px 0 4px; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBRow { display: flex; align-items: center; gap: 8px; height: 26px; padding: 0 6px; margin: 0 -6px; border-radius: 8px; font-size: 13px; transition: background 1s; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBRow .rk { width: 12px; text-align: right; font-weight: 700; color: rgba(255,255,255,.5); font-variant-numeric: tabular-nums; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBRow:first-of-type .rk { color: color-mix(in srgb, var(--bjHi) 70%, #fff); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBRow .face { width: 20px; height: 20px; font-size: 10px; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBRow .nf { width: 20px; height: 20px; flex: none; border-radius: 50%; background: rgba(255,255,255,.12); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBRow .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBRow.me .nm { font-weight: 700; color: color-mix(in srgb, var(--bjAccent) 55%, #fff); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBRow .bjB { font: 800 9px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; font-style: normal; padding: 3px 5px; border-radius: 5px; letter-spacing: .06em; background: linear-gradient(90deg, var(--bjAccent), var(--bjHi)); color: #fff; }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBRow .amt { font-weight: 700; font-variant-numeric: tabular-nums; color: color-mix(in srgb, var(--bjAccent) 45%, #fff); }
-:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable) .bjBRow.fresh { background: color-mix(in srgb, var(--bjAccent) 26%, transparent); }       /* a record just set */
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjBoard.on { display: block; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjBHead { margin-bottom: 6px; font: 700 10.5px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: .22em; text-transform: uppercase; color: color-mix(in srgb, var(--bjAccent) 60%, #fff); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjBNone { font-size: 12px; color: rgba(255,255,255,.6); padding: 2px 0 4px; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjBRow { display: flex; align-items: center; gap: 8px; height: 26px; padding: 0 6px; margin: 0 -6px; border-radius: 8px; font-size: 13px; transition: background 1s; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjBRow .rk { width: 12px; text-align: right; font-weight: 700; color: rgba(255,255,255,.5); font-variant-numeric: tabular-nums; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjBRow:first-of-type .rk { color: color-mix(in srgb, var(--bjHi) 70%, #fff); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjBRow .face { width: 20px; height: 20px; font-size: 10px; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjBRow .nf { width: 20px; height: 20px; flex: none; border-radius: 50%; background: rgba(255,255,255,.12); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjBRow .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjBRow.me .nm { font-weight: 700; color: color-mix(in srgb, var(--bjAccent) 55%, #fff); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjBRow .bjB { font: 800 9px/1 "Segoe UI Variable Display", "Segoe UI", system-ui; font-style: normal; padding: 3px 5px; border-radius: 5px; letter-spacing: .06em; background: linear-gradient(90deg, var(--bjAccent), var(--bjHi)); color: #fff; }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjBRow .amt { font-weight: 700; font-variant-numeric: tabular-nums; color: color-mix(in srgb, var(--bjAccent) 45%, #fff); }
+:is(#bjTable, #rlTable, #pkTable, #skTable, #paTable, #crTable, #slTable) .bjBRow.fresh { background: color-mix(in srgb, var(--bjAccent) 26%, transparent); }       /* a record just set */
 
 /* ---------- the Games room's other tables: Roulette and Texas Hold'em (renderer/roulette.js, renderer/poker.js) ----------
    The same room as the Blackjack table's (its lamp, cards, chips, bar, board and colours above, shared), and the same place on
@@ -1765,10 +1781,11 @@ body.bcfull:not(.surfing):not(:has(#bcBar.show, #bcBar:hover, #bcBar:focus-withi
 
 /* The crane machine (renderer/crane.js): the Pachinko machine's carnival, as a tall glass box. The cabinet in the middle (its
    marquee, the glass with the canvas in it, the base with the prize door under the chute), the prizes and the last tries on
-   its left, who's at the claw and who's in line on its right, the bar under it where the tables' is. The cabinet is 640 × 1000,
-   78vh tall (64cqh wide), the glass 600 × 800 inside it (76cqh tall, 57cqh wide, so 3.5cqh in from each side). */
+   its left, who's at the claw and who's in line on its right, the bar under it where the tables' is. The cabinet is 782 × 1000,
+   78vh tall (78.2cqh wide), the glass 900 × 960 inside it (crane-board.js W × H: 76cqh tall, 71.2cqh wide, so 3.5cqh in from
+   each side). */
 #crTable.on.live .crCab, #crTable.on .bjBar { pointer-events: auto; }
-#crTable .crCab { position: absolute; left: 50%; top: 4vh; height: 78vh; aspect-ratio: 640 / 1000; transform: translateX(-50%); container-type: size;
+#crTable .crCab { position: absolute; left: 50%; top: 4vh; height: 78vh; aspect-ratio: 782 / 1000; transform: translateX(-50%); container-type: size;
   border-radius: 4cqh 4cqh 2cqh 2cqh;
   background: linear-gradient(170deg, color-mix(in srgb, var(--bjDark) 70%, #3a3346), color-mix(in srgb, var(--bjDark) 85%, #000));
   box-shadow: 0 3cqh 8cqh rgba(0,0,0,.6), inset 0 0 0 .5cqh color-mix(in srgb, var(--bjAccent) 35%, #1a1622); }
@@ -1787,7 +1804,7 @@ body.bcfull:not(.surfing):not(:has(#bcBar.show, #bcBar:hover, #bcBar:focus-withi
 #crTable .crMarquee svg { position: relative; height: 4.2cqh; width: auto; }
 #crTable .crMarquee span { position: relative; }
 #crTable.busy .crMarquee span { animation: paFlicker .5s steps(2) infinite; }
-#crTable .crGlass { position: absolute; left: 50%; top: 11.2cqh; height: 76cqh; aspect-ratio: 600 / 800; transform: translateX(-50%); border-radius: 1.2cqh; overflow: hidden;
+#crTable .crGlass { position: absolute; left: 50%; top: 11.2cqh; height: 76cqh; aspect-ratio: 900 / 960; transform: translateX(-50%); border-radius: 1.2cqh; overflow: hidden;
   box-shadow: inset 0 0 3cqh rgba(0,0,0,.6), 0 0 0 .4cqh #c9d0dc, 0 0 0 .7cqh color-mix(in srgb, var(--bjDark) 60%, #000); }
 #crTable .crCanvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 #crTable .crClock { position: absolute; right: 4%; top: 9%; display: none; min-width: 7cqh; padding: .4cqh 1cqh; border-radius: 1cqh; text-align: center; pointer-events: none;
@@ -1806,8 +1823,8 @@ body.bcfull:not(.surfing):not(:has(#bcBar.show, #bcBar:hover, #bcBar:focus-withi
 @media (prefers-reduced-motion: reduce) { #crTable :is(.crCab, .crTrim, .crMarquee span, .crClock) { animation: none !important; } }
 /* beside the cabinet: the prizes and the last tries; who's at the claw and in line */
 #crTable .crSide, #crTable .crPlayers { position: absolute; top: 8vh; width: 270px; display: flex; flex-direction: column; gap: 10px; pointer-events: none; }
-#crTable .crSide { right: calc(50% + 25vh + 28px); }
-#crTable .crPlayers { left: calc(50% + 25vh + 28px); width: 250px; padding: 10px 12px; border-radius: 14px; background: rgba(8,10,16,.5); backdrop-filter: blur(16px); gap: 6px; }
+#crTable .crSide { right: calc(50% + 30.5vh + 28px); }
+#crTable .crPlayers { left: calc(50% + 30.5vh + 28px); width: 250px; padding: 10px 12px; border-radius: 14px; background: rgba(8,10,16,.5); backdrop-filter: blur(16px); gap: 6px; }
 #crTable .crSide .bjSign { position: static; width: auto; }
 #crTable .crSide .bjSign :is(.bjMode, .bjLimits) { font-size: 12px; }
 #crTable .crPays, #crTable .crHist { padding: 10px 12px; border-radius: 14px; background: rgba(8,10,16,.62); backdrop-filter: blur(16px);
@@ -1831,6 +1848,286 @@ body.bcfull:not(.surfing):not(:has(#bcBar.show, #bcBar:hover, #bcBar:focus-withi
 #crTable.dropping .crGlass { box-shadow: inset 0 0 3cqh rgba(0,0,0,.6), 0 0 0 .4cqh #ffd84a, 0 0 0 .7cqh color-mix(in srgb, var(--bjDark) 60%, #000); }
 @media (prefers-reduced-motion: reduce) { #crTable .crDrop { animation: none; } }
 #crTable .crPass { color: rgba(255,255,255,.65); font-weight: 500; }
+
+/* Scene Slots (renderer/slots.js; docs/plans/scene-slots.md): the carnival of the Pachinko machine and the crane, as a slot machine.
+   The cabinet in the middle (its marquee, bulbs, the window with three reels of scene cards and the line across them, the
+   coin slot), your scenes and tokens on its left, the bar under it where the tables' is. The cabinet is 700 × 900, 74vh tall. */
+#slTable.on .slCab, #slTable.on .bjBar { pointer-events: auto; }
+/* In 3D: the room has a perspective, the camera rig (.slRig) holds the machine and moves from beat to beat (.cam-…: a CSS
+   transition each, so it's the graphics card's work), a shaker inside it rumbles and jolts, and the machine is a box: the
+   cabinet its front, then its sides, top and back, 10vh deep, and the lever out to its right. */
+#slTable { perspective: 100vh; perspective-origin: 50% 38%; }
+/* (at rest it's seen three-quarters on and a little from above, never flat on: that's where the depth shows) */
+#slTable .slRig { position: absolute; left: 50%; top: 5vh; height: 74vh; aspect-ratio: 700 / 900; transform-style: preserve-3d; transform-origin: 50% 40%; transform: translateX(-50%) rotateY(-24deg) rotateX(6deg); --deep: 22vh; }
+#slTable .slFloor { position: absolute; left: 50%; top: 74vh; width: 66vh; height: 12vh; margin-left: -37vh; border-radius: 50%; pointer-events: none;       /* (thrown a little left, away from the light) */
+  background: radial-gradient(ellipse at 50% 50%, rgba(0,0,0,.6), rgba(0,0,0,.25) 45%, transparent 70%); }
+/* the face's depth: blocks standing out from the cabinet (a top lit from above, sides and underside in shade), the window's well */
+#slTable .slCab { transform-style: preserve-3d; }
+#slTable .slBlock { transform-style: preserve-3d; transform: translateZ(var(--d)); }
+#slTable .slB { position: absolute; pointer-events: none; background: var(--bs, #2a0a1a); }
+#slTable .slB.t { left: 0; right: 0; top: 0; height: var(--d); transform-origin: top; transform: rotateX(-90deg); filter: brightness(1.35); }
+#slTable .slB.b { left: 0; right: 0; bottom: 0; height: var(--d); transform-origin: bottom; transform: rotateX(90deg); filter: brightness(.45); }
+#slTable .slB.l { top: 0; bottom: 0; left: 0; width: var(--d); transform-origin: left; transform: rotateY(90deg); filter: brightness(.5); }
+#slTable .slB.r { top: 0; bottom: 0; right: 0; width: var(--d); transform-origin: right; transform: rotateY(-90deg); filter: brightness(1.05); }
+#slTable .slCrown > .slB.t { display: none; }       /* (its top is the arch: only its lower sides show) */
+#slTable .slCrown > :is(.slB.l, .slB.r) { top: 48%; }
+#slTable .slW { position: absolute; pointer-events: none; background: linear-gradient(180deg, #2a2633, #0a0810); }
+#slTable .slW.t { left: 1.6cqh; right: 1.6cqh; top: 1.6cqh; height: 2.6vh; transform-origin: top; transform: rotateX(-90deg); filter: brightness(.55); }
+#slTable .slW.b { left: 1.6cqh; right: 1.6cqh; bottom: 1.6cqh; height: 2.6vh; transform-origin: bottom; transform: rotateX(90deg); filter: brightness(1.3); }
+#slTable .slW.l { top: 1.6cqh; bottom: 1.6cqh; left: 1.6cqh; width: 2.6vh; transform-origin: left; transform: rotateY(90deg); filter: brightness(.9); }
+#slTable .slW.r { top: 1.6cqh; bottom: 1.6cqh; right: 1.6cqh; width: 2.6vh; transform-origin: right; transform: rotateY(-90deg); filter: brightness(.7); }
+#slTable .slShake { position: absolute; inset: 0; transform-style: preserve-3d; --a: 0; }
+#slTable .slFace3 { position: absolute; box-shadow: inset 0 0 0 .5vh #c9a24a;       /* (the side panels, top and back: the app's accent colour, lacquered and gold-trimmed) */
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bjAccent, #22c08a) 75%, #fff), var(--bjAccent, #22c08a) 30%, color-mix(in srgb, var(--bjAccent, #22c08a) 60%, #000) 75%, color-mix(in srgb, var(--bjAccent, #22c08a) 30%, #000)); }
+#slTable .slFace3::after { content: ''; position: absolute; inset: 0; pointer-events: none;       /* (the light on it: a gloss near the front edge, a shine sliding down, shade going back) */
+  background: linear-gradient(90deg, rgba(255,255,255,.3), rgba(255,255,255,.06) 18%, transparent 45%, rgba(0,0,0,.4)), linear-gradient(170deg, transparent 30%, rgba(255,255,255,.16) 42%, transparent 54%); }
+#slTable .slSideL { left: 0; top: 3%; bottom: 3%; width: var(--deep); transform-origin: left center; transform: rotateY(90deg); filter: brightness(.45) saturate(.9); }       /* (away from the light) */
+#slTable .slSideR { right: 0; top: 3%; bottom: 3%; width: var(--deep); transform-origin: right center; transform: rotateY(-90deg); filter: brightness(1.05); }       /* (the side the light and the camera are on) */
+#slTable .slBack { inset: 3% 0; transform: translateZ(calc(var(--deep) * -1)); filter: brightness(.4); }
+/* (smooth edges on every turned panel: without it Chromium draws their slanting edges as stairs) */
+#slTable :is(.slCab, .slFace3, .slB, .slW, .slBez, .slFace, .slLeverArm) { outline: 1px solid transparent; }
+#slTable .slLever { position: absolute; left: 100%; top: 34%; width: 4vh; height: 16vh; transform: translateZ(calc(var(--deep) * -.45)); transform-style: preserve-3d; pointer-events: none; }
+#slTable .slLeverArm { position: absolute; left: 50%; bottom: 0; width: 1.1vh; height: 100%; margin-left: -.55vh; border-radius: .6vh; transform-origin: 50% 100%;
+  background: linear-gradient(90deg, #8e95a5, #f2f4f8 40%, #8e95a5); box-shadow: 0 0 0 .15vh rgba(0,0,0,.4); }
+#slTable .slLeverKnob { position: absolute; left: 50%; top: -2.6vh; width: 4.4vh; height: 4.4vh; margin-left: -2.2vh; border-radius: 50%; transform-origin: 50% calc(100% + 16vh - 2vh);
+  background: radial-gradient(circle at 35% 30%, #fff, #ff4f8b 45%, #8a1846); box-shadow: 0 .6vh 1.2vh rgba(0,0,0,.5), 0 0 2vh rgba(255,79,139,.5); }
+#slTable .slLever::after { content: ''; position: absolute; left: 50%; bottom: -1.6vh; width: 4vh; height: 3.2vh; margin-left: -2vh; border-radius: 1vh; background: linear-gradient(180deg, #c9d0dc, #5a6070); }       /* (its hub on the cabinet's side) */
+#slTable .slLever.pull :is(.slLeverArm, .slLeverKnob) { animation: slPullLever .7s cubic-bezier(.3,1.4,.5,1); }
+@keyframes slPullLever { 0% { transform: rotateX(0); } 30% { transform: rotateX(-75deg); } 100% { transform: rotateX(0); } }
+/* where the camera goes, beat by beat */
+/* (asked for: one angle for it all) the camera stays put, three-quarters on and a little from above; the one move is the zoom
+   into the middle of the reels at the end, the screen going white as it gets there */
+#slTable .slRig.cam-idle { transform: translateX(-50%) rotateY(-24deg) rotateX(6deg); transition: transform .6s ease; }
+#slTable .slRig.cam-zoom { transform: translateX(-50%) translateZ(88vh) rotateY(-24deg) rotateX(6deg) rotateZ(4deg); transition: transform 1s cubic-bezier(.6,0,.9,.45); }       /* (rolling a little as it goes in) */
+/* the hop: the machine jumps after the pull, rocking as it goes (it leaves the floor tipping one way and leaning back, lands on
+   the other side with a squash, rocks back), smaller each time, and settles with a wobble on its base (its shadow shrinking
+   while it's up). Tipped about the middle of its base, so it rocks on its feet. */
+#slTable .slShake.hop { transform-origin: 50% 100%; animation: slHop 1.9s cubic-bezier(.3,.6,.4,1); }
+@keyframes slHop {
+  0% { transform: none; }
+  7% { transform: translate3d(0, .6vh, 0) rotateZ(1deg) scale(1.03, .94); }
+  19% { transform: translate3d(-.6vh, -7vh, 0) rotateZ(-4deg) rotateX(5deg) scale(.97, 1.05); }
+  30% { transform: translate3d(.4vh, 0, 0) rotateZ(2.4deg) rotateX(-3deg) scale(1.05, .9); }
+  40% { transform: translate3d(.5vh, -4vh, 0) rotateZ(3deg) rotateX(-3deg) scale(.98, 1.03); }
+  51% { transform: translate3d(-.2vh, 0, 0) rotateZ(-1.6deg) rotateX(2deg) scale(1.03, .94); }
+  60% { transform: translate3d(-.3vh, -1.8vh, 0) rotateZ(-1.8deg) rotateX(1.5deg); }
+  69% { transform: translate3d(0, 0, 0) rotateZ(1deg) rotateX(-1deg) scale(1.015, .97); }
+  77% { transform: translate3d(0, -.5vh, 0) rotateZ(.6deg); }
+  85% { transform: rotateZ(-.45deg); }
+  92% { transform: rotateZ(.2deg); }
+  100% { transform: none; } }
+#slTable.hopping .slFloor { animation: slHopShadow 1.9s cubic-bezier(.3,.6,.4,1); }
+@keyframes slHopShadow { 19% { transform: scale(.7); opacity: .55; } 30% { transform: scale(1.06); } 40% { transform: scale(.82); opacity: .75; } 51% { transform: none; } 60% { transform: scale(.92); } 69%, 100% { transform: none; opacity: 1; } }
+#slTable .slRig.cam-lever { transform: translateX(-50%) translateZ(6vh) rotateY(-18deg) rotateX(2deg); transition: transform .45s ease-out; }
+#slTable .slRig.cam-charge { transform: translateX(-50%) translateY(3vh) translateZ(24vh) rotateX(14deg) rotateY(12deg); transition: transform 1.6s cubic-bezier(.5,0,.25,1); }
+#slTable .slRig.cam-slam { transform: translateX(-50%) translateY(6vh) translateZ(34vh) rotateX(4deg); transition: transform .16s ease-out; }
+#slTable .slRig.cam-close { transform: translateX(-50%) translateY(6vh) translateZ(46vh) rotateX(2deg); transition: transform .3s ease-out; }
+#slTable .slRig.cam-kick { transform: translateX(-50%) translateZ(-18vh) rotateZ(-3deg) rotateX(8deg) rotateY(-6deg); transition: transform .8s cubic-bezier(.1,1.15,.3,1); }
+/* the shaker: a rumble while it charges (harder when an SSR's coming), a jolt as each drum slams and at the burst */
+#slTable .slShake.rumble1 { --a: .22vh; animation: slRumble .09s linear infinite; }
+#slTable .slShake.rumble2 { --a: .65vh; }
+@keyframes slRumble { 25% { transform: translate3d(var(--a), calc(var(--a) * -1), 0); } 75% { transform: translate3d(calc(var(--a) * -1), var(--a), 0); } }
+#slTable .slShake.jolt { animation: slJolt .36s cubic-bezier(.2,1.6,.4,1); }
+@keyframes slJolt { 20% { transform: translate3d(0, 1.6vh, -2vh) rotateZ(.6deg); } }
+/* the cabinet's face (renderer/slots.js), lacquer and chrome, top to bottom: the crown, the reels, the readouts, the paytable, the
+   deck, the tray. (Its own units: cqh, a hundredth of its height; it's 77.8cqh wide.) */
+#slTable .slCab { position: absolute; inset: 0; container-type: size; border-radius: 3cqh;       /* (rounded no more than the sides and top can meet it) */
+  background:
+    linear-gradient(180deg, transparent 20.8cqh, rgba(0,0,0,.45) 21.2cqh, transparent 25cqh),       /* (the crown's shadow) */
+    linear-gradient(180deg, transparent 60.4cqh, rgba(0,0,0,.5) 60.8cqh, transparent 63.5cqh),       /* (the bezel's) */
+    linear-gradient(180deg, transparent 89cqh, rgba(0,0,0,.55) 89.4cqh, transparent 92.5cqh),       /* (the deck's, over the tray) */
+    radial-gradient(ellipse 70% 45% at 72% 8%, rgba(255,236,200,.22), transparent 70%),       /* (the key light, up to the right) */
+    linear-gradient(115deg, rgba(0,0,0,.35), transparent 35%, transparent 65%, rgba(255,255,255,.05)),       /* (falling off to the left) */
+    linear-gradient(180deg, color-mix(in srgb, var(--bjAccent, #22c08a) 78%, #000), color-mix(in srgb, var(--bjAccent, #22c08a) 48%, #000) 45%, color-mix(in srgb, var(--bjAccent, #22c08a) 20%, #000));       /* (the app's accent, lacquered) */
+  box-shadow: 0 3cqh 8cqh rgba(0,0,0,.6), inset 0 0 0 .7cqh #c9a24a, inset 0 0 0 1.1cqh color-mix(in srgb, var(--bjAccent, #22c08a) 30%, #000), inset 0 0 0 1.4cqh #e8c15a, inset -1.6cqh 0 2cqh -1cqh rgba(255,236,200,.18), inset 1.6cqh 0 2cqh -1cqh rgba(0,0,0,.35); }
+/* each standing part lit the same way: light from the upper right, shade to the lower left (not the bezel: its middle is the window) */
+#slTable .slBlock:not(.slFrame)::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: linear-gradient(200deg, rgba(255,255,255,.16), transparent 40%, rgba(0,0,0,.26)); }
+#slTable .slCab::before { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: linear-gradient(100deg, transparent 30%, rgba(255,255,255,.08) 42%, transparent 52%); }       /* a sheen down the lacquer */
+#slTable .slTrim { position: absolute; inset: -.6cqh; border-radius: 3.6cqh; pointer-events: none;
+  box-shadow: 0 0 0 .35cqh color-mix(in srgb, var(--bjAccent) 85%, #fff), 0 0 3cqh color-mix(in srgb, var(--bjAccent) 45%, transparent); }
+#slTable.fWin .slTrim { animation: paChase .5s steps(2) 5; }
+/* chasing light strips down both edges (running while it summons, and on a win) */
+#slTable .slStrip { position: absolute; top: 22cqh; bottom: 14cqh; width: 1.2cqh; border-radius: .6cqh; opacity: .8; box-shadow: 0 0 1.4cqh rgba(255,216,74,.4); overflow: hidden; }
+#slTable .slStrip::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: calc(100% + 3.6cqh); will-change: transform;
+  background: repeating-linear-gradient(180deg, #ffd84a 0 1cqh, #ff4f8b 1cqh 2cqh, #6fe8ff 2cqh 3cqh, transparent 3cqh 3.6cqh); }
+#slTable .slStrip.l { left: 2.4cqh; } #slTable .slStrip.r { right: 2.4cqh; }
+#slTable.busy .slStrip::before, #slTable.fWin .slStrip::before { animation: slChase .4s linear infinite; }
+@keyframes slChase { from { transform: translateY(-3.6cqh); } to { transform: translateY(0); } }
+/* the crown: an arch of chasing bulbs, the neon sign, the LED ticker */
+#slTable .slCrown { position: absolute; left: 3cqh; right: 3cqh; top: 1.6cqh; height: 19cqh; border-radius: 50% 50% 2cqh 2cqh / 70% 70% 2cqh 2cqh;
+  background: radial-gradient(ellipse at 50% 100%, color-mix(in srgb, var(--bjAccent, #22c08a) 70%, #000), color-mix(in srgb, var(--bjAccent, #22c08a) 28%, #000) 70%); box-shadow: inset 0 0 0 .5cqh #e8c15a, inset 0 -1.6cqh 3cqh rgba(0,0,0,.5), 0 1cqh 2cqh rgba(0,0,0,.4); }
+#slTable .slArch { position: absolute; left: 2%; right: 2%; top: 5%; height: 60%; pointer-events: none; }
+#slTable .slArch i { will-change: opacity; position: absolute; width: 1.8cqh; height: 1.8cqh; margin: -.9cqh; border-radius: 50%; background: #fff3c4; box-shadow: 0 0 1.2cqh #ffd84a, 0 0 2.4cqh #ffb03a; animation: slBulbChase .48s steps(1) infinite; }
+@keyframes slBulbChase { 0%, 66% { opacity: 1; } 67%, 100% { opacity: .25; } }
+#slTable .slSign { position: absolute; left: 10%; right: 10%; top: 5.4cqh; height: 7.4cqh; border-radius: 1.4cqh; display: flex; align-items: center; justify-content: center; gap: 1.2cqh;
+  background: linear-gradient(180deg, #ffe48a, #f0a21a 60%, #a85a06); box-shadow: inset 0 0 0 .3cqh #fff3d6, inset 0 -.8cqh 1.4cqh rgba(0,0,0,.3), 0 0 3cqh rgba(255,176,58,.5);
+  font: 900 4.2cqh/1 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: .2em; color: #fffaf0; white-space: nowrap; text-shadow: 0 0 .6cqh #fff, 0 0 1.6cqh #ff4f8b, 0 .3cqh 0 #8a4a06; }
+#slTable .slSign svg { height: 4.4cqh; width: auto; }
+#slTable .slSign span { will-change: opacity; }
+#slTable.busy .slSign span { animation: paFlicker .5s steps(2) infinite; }
+#slTable .slTicker { position: absolute; left: 14%; right: 14%; top: 13.6cqh; height: 3.6cqh; border-radius: .6cqh; overflow: hidden; background: #0a0204; box-shadow: inset 0 0 0 .25cqh #5a1020, inset 0 0 1.4cqh #000; }
+#slTable .slTicker span { will-change: transform; position: absolute; top: 50%; left: 0; transform: translateY(-50%); white-space: nowrap; font: 700 2.2cqh/1 "Cascadia Mono", "Consolas", monospace; letter-spacing: .12em; color: #ff3b3b; text-shadow: 0 0 .8cqh #ff3b3b; animation: slTick 18s linear infinite; }
+@keyframes slTick { from { transform: translate(0, -50%); } to { transform: translate(-50%, -50%); } }
+/* the reel window in its chrome frame: three drums of pictures (three rows showing), the middle row framed, the payline's arrows, glass */
+#slTable .slFrame { position: absolute; left: 5cqh; right: 5cqh; top: 22.5cqh; height: 38cqh; padding: 1.6cqh; box-sizing: border-box; }       /* (no face of its own: the bezel's four bars, so the well inside shows) */
+#slTable .slBez { position: absolute; pointer-events: none; background: linear-gradient(180deg, #f6f8fc, #8e95a5 35%, #e2e6ee 60%, #6a7080); box-shadow: inset 0 .25cqh 0 #fff, 0 .6cqh 1.2cqh rgba(0,0,0,.45); }
+#slTable .slBez.t { left: 0; right: 0; top: 0; height: 1.6cqh; border-radius: 1.6cqh 1.6cqh 0 0; }
+#slTable .slBez.b { left: 0; right: 0; bottom: 0; height: 1.6cqh; border-radius: 0 0 1.6cqh 1.6cqh; }
+#slTable .slBez.l { left: 0; top: 1.6cqh; bottom: 1.6cqh; width: 1.6cqh; background: linear-gradient(90deg, #f6f8fc, #8e95a5 50%, #c9d0dc); }
+#slTable .slBez.r { right: 0; top: 1.6cqh; bottom: 1.6cqh; width: 1.6cqh; background: linear-gradient(90deg, #c9d0dc, #8e95a5 50%, #6a7080); }
+#slTable .slWindow { position: relative; height: 100%; transform: translateZ(-2.6vh); display: flex; gap: 1cqh; padding: 1cqh 3.2cqh; border-radius: 1.8cqh; box-sizing: border-box; background: #050308; box-shadow: inset 0 1.4cqh 3cqh rgba(0,0,0,.9); }
+#slTable .slFace .slPic { filter: hue-rotate(var(--slHue, 0deg)); }       /* (the pictures, drawn ahead in Aurora's colours, turned to the palette that's on: app.js --slHue. On the pictures, not the reel, so the glow keeps its colour) */
+/* the winning card, as its drum stops: lit up in its rarity's colour (a bright edge, a halo, brighter), breathing, a shine across it */
+#slTable .slFace.win { background: var(--rc, #ffd84a); box-shadow: 0 0 0 .4cqh var(--rc, #ffd84a), 0 0 1.6cqh var(--rc, #ffd84a), inset 0 0 1.2cqh color-mix(in srgb, var(--rc, #ffd84a) 70%, #fff); }       /* (asked for: the winning card a fill the colour of its glow, in place of its picture) */
+#slTable .slFace.win::before { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; will-change: opacity; opacity: 0; box-shadow: 0 0 0 .5cqh var(--rc, #ffd84a), 0 0 3cqh var(--rc, #ffd84a), inset 0 0 2cqh #fff; animation: slWinGlow .9s ease-in-out infinite alternate; }
+#slTable .slFace.win .slPic { visibility: hidden; }
+#slTable .slFace.win::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; will-change: opacity; opacity: 0; background: linear-gradient(105deg, transparent 20%, rgba(255,255,255,.75) 50%, transparent 80%); animation: slWinShine 1.1s ease-out 2; }
+@keyframes slWinGlow { to { opacity: 1; } }
+@keyframes slWinShine { 35% { opacity: 1; } }
+#slTable .slReel { position: relative; flex: 1; overflow: hidden; border-radius: 1cqh; perspective: 70cqh; --rr: calc(9.6cqh * 1.93);
+  background: linear-gradient(180deg, #0c0a12, #24202c 50%, #0c0a12); box-shadow: inset 0 0 0 .2cqh rgba(255,255,255,.08); }
+#slTable .slReel::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(180deg, rgba(0,0,0,.92), rgba(0,0,0,0) 28%, rgba(0,0,0,0) 72%, rgba(0,0,0,.92)); }       /* (where the drum curves away) */
+#slTable .slDrum { position: absolute; inset: 0; transform-style: preserve-3d; will-change: transform; }
+#slTable .slFace { position: absolute; left: 6%; right: 6%; top: 50%; height: 9.6cqh; margin-top: -4.8cqh; padding: .4cqh; box-sizing: border-box; display: flex; border-radius: .9cqh;
+  background: #f4ecd8; box-shadow: 0 0 0 .2cqh rgba(0,0,0,.4); backface-visibility: hidden; }
+#slTable .slFace .slPic { flex: 1; border-radius: .6cqh; }
+#slTable .slFace span { display: none; }       /* (on the reels only the picture: names come on the cards) */
+#slTable .slPic { background: #14121c center/cover; }
+#slTable .slPic.none { background: radial-gradient(circle at 40% 35%, color-mix(in srgb, var(--bjAccent) 60%, #fff), var(--bjDark)); }
+#slTable .slLine { position: absolute; left: 2.4cqh; right: 2.4cqh; top: 50%; height: 11.4cqh; margin-top: -5.7cqh; border-radius: 1.2cqh; pointer-events: none;
+  box-shadow: inset 0 0 0 .35cqh rgba(255,216,74,.75), 0 0 1.6cqh rgba(255,216,74,.35); transition: box-shadow .2s; }
+#slTable:has(.slStage.stop) .slLine { box-shadow: inset 0 0 0 .5cqh var(--rc, #ffd84a), 0 0 3cqh var(--rc, #ffd84a), 0 0 6cqh var(--rc, #ffd84a); }       /* (lit in the rarity's colour as the drums stop) */
+#slTable:has(.slStage.stop) .slLine { background: var(--rc, #ffd84a); box-shadow: 0 0 2cqh var(--rc, #ffd84a), 0 0 5cqh var(--rc, #ffd84a); opacity: 1; }       /* (asked for, back: once the drums stop, the middle row a glowing panel in the rarity's colour) */
+#slTable .slArrow { position: absolute; top: 50%; width: 0; height: 0; margin-top: -1.6cqh; border-top: 1.6cqh solid transparent; border-bottom: 1.6cqh solid transparent; filter: drop-shadow(0 0 .8cqh #ffd84a); }
+#slTable .slArrow.l { left: .4cqh; border-left: 2cqh solid #ffd84a; } #slTable .slArrow.r { right: .4cqh; border-right: 2cqh solid #ffd84a; }
+#slTable .slGlass { position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: linear-gradient(160deg, rgba(255,255,255,.16), rgba(255,255,255,0) 30%, rgba(255,255,255,0) 70%, rgba(255,255,255,.06)); }
+/* the LED readouts: your tokens, the last win, your scenes */
+#slTable .slLeds { position: absolute; left: 6cqh; right: 6cqh; top: 62.4cqh; height: 7.8cqh; display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.4cqh; }
+#slTable .slLed { display: flex; flex-direction: column; gap: .5cqh; }
+#slTable .slLedLabel { font: 800 1.5cqh/1 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: .3em; text-transform: uppercase; color: #e8c15a; text-align: center; }
+#slTable .slLedVal { flex: 1; display: grid; place-items: center; border-radius: .8cqh; background: #0a0204; box-shadow: inset 0 0 0 .25cqh #5a1020, inset 0 0 1.4cqh #000;
+  font: 700 3.4cqh/1 "Cascadia Mono", "Consolas", monospace; letter-spacing: .1em; color: #ff3b3b; text-shadow: 0 0 1cqh #ff3b3b; }
+#slTable .slLed.won.r1 .slLedVal { color: #e2c2ff; text-shadow: 0 0 1cqh #c27bff; }
+#slTable .slLed.won.r2 .slLedVal { color: #ffe48a; text-shadow: 0 0 1cqh #ffd84a, 0 0 2cqh #ff4f8b; }
+#slTable .slLeds.slBlock { margin: -.8cqh -1cqh; padding: .8cqh 1cqh; border-radius: 1.2cqh; background: linear-gradient(180deg, color-mix(in srgb, var(--bjAccent, #22c08a) 40%, #000), color-mix(in srgb, var(--bjAccent, #22c08a) 18%, #000)); box-shadow: inset 0 .2cqh 0 rgba(255,255,255,.12); }       /* (a panel of its own, standing out) */
+/* the paytable */
+#slTable .slPay { position: absolute; left: 6cqh; right: 6cqh; top: 71.4cqh; height: 6cqh; display: flex; align-items: center; justify-content: space-around; border-radius: 1.2cqh;
+  background: linear-gradient(180deg, rgba(255,255,255,.08), rgba(0,0,0,.25)); box-shadow: inset 0 0 0 .2cqh rgba(232,193,90,.5); }
+#slTable .slPayRow { display: flex; align-items: center; gap: .8cqh; font-size: 1.9cqh; letter-spacing: .1em; color: #ffe9a8; }
+#slTable .slPay .slTagMini { min-width: 0; font-size: 1.7cqh; padding: .3cqh .8cqh; border-radius: .5cqh; }
+/* the button deck: the coin slot and the two big buttons (they pull: lit and breathing when they would) */
+#slTable .slDeck { position: absolute; left: 4cqh; right: 4cqh; top: 78.6cqh; height: 10.4cqh; display: flex; align-items: center; gap: 2.4cqh; padding: 0 3cqh; border-radius: 1.6cqh; box-sizing: border-box;
+  background: linear-gradient(180deg, #2a2633 0%, #15121c 60%, #0a0810); box-shadow: inset 0 .4cqh 0 rgba(255,255,255,.18), 0 1cqh 1.6cqh rgba(0,0,0,.5); }
+#slTable .slCoinSlot { position: relative; width: 5.4cqh; height: 7cqh; flex: none; border-radius: 1cqh; background: linear-gradient(180deg, #e2e6ee, #6a7080); box-shadow: inset 0 0 0 .2cqh rgba(0,0,0,.4); }
+#slTable .slCoinSlot::after { content: ''; position: absolute; left: 50%; top: 1.4cqh; bottom: 1.4cqh; width: .8cqh; margin-left: -.4cqh; border-radius: .4cqh; background: #000; box-shadow: 0 0 0 .2cqh #ffd84a; }
+#slTable .slDeck.ready .slCoinSlot::after, #slTable .slCoinSlot.in::after { box-shadow: 0 0 0 .3cqh #ffd84a, 0 0 2cqh #ffd84a; }
+#slTable .slBtn { position: relative; flex: 1; height: 7.4cqh; border: 0; border-radius: 3.7cqh; cursor: pointer; font: 900 2.6cqh/1 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: .12em; text-transform: uppercase; color: #fff;
+  background: radial-gradient(ellipse at 50% 20%, #ff9ab8, #e0245e 55%, #7a0a2e); box-shadow: 0 .8cqh 0 #4a0418, 0 1.2cqh 1.6cqh rgba(0,0,0,.5), inset 0 .3cqh .4cqh rgba(255,255,255,.6); text-shadow: 0 .2cqh 0 rgba(0,0,0,.4); transition: transform .08s, box-shadow .08s; }
+#slTable .slBtn.slDeckN { color: #3a1a00; text-shadow: 0 .2cqh 0 rgba(255,255,255,.4);
+  background: radial-gradient(ellipse at 50% 20%, #fff0a0, #f0a21a 55%, #8a4a06); box-shadow: 0 .8cqh 0 #5a2e02, 0 1.2cqh 1.6cqh rgba(0,0,0,.5), inset 0 .3cqh .4cqh rgba(255,255,255,.7); }
+#slTable .slBtn:active:not(:disabled) { transform: translateY(.6cqh); box-shadow: 0 .2cqh 0 #4a0418, inset 0 .3cqh .4cqh rgba(255,255,255,.6); }
+#slTable .slBtn::after { content: ''; position: absolute; inset: -.6cqh; border-radius: inherit; box-shadow: 0 0 2.4cqh rgba(255,216,74,.75); opacity: 0; pointer-events: none; }       /* (the glow breathes by its opacity: no repaint) */
+#slTable .slDeck.ready .slBtn:not(:disabled)::after { animation: slBtnGlow 1s ease-in-out infinite alternate; }
+@keyframes slBtnGlow { to { opacity: 1; } }
+#slTable .slBtn:disabled { filter: grayscale(.8) brightness(.55); cursor: default; }
+/* the coin tray */
+#slTable .slTray { position: absolute; left: 12cqh; right: 12cqh; top: 90.6cqh; bottom: 2.2cqh; border-radius: 1cqh 1cqh 3cqh 3cqh; background: linear-gradient(180deg, #050308, #1c1826);
+  box-shadow: inset 0 1cqh 1.6cqh rgba(0,0,0,.9), 0 0 0 .4cqh #c9d0dc, 0 0 0 .7cqh #6a7080; }
+#slTable.fWin .slTray { box-shadow: inset 0 1cqh 1.6cqh rgba(0,0,0,.9), 0 0 0 .4cqh #ffd84a, 0 0 3cqh #ffd84a; }
+/* the summon's stage, over the whole room: the dark coming down, the light, the flash, the pillar, the cards (the bar stays on top) */
+#slTable .slStage { position: absolute; inset: 0; z-index: 5; pointer-events: none; opacity: 0; transition: opacity .4s; container-type: size; }
+#slTable .slStage.on { opacity: 1; pointer-events: auto; cursor: pointer; background: radial-gradient(ellipse at 50% 40%, rgba(10,6,24,.45), rgba(4,2,10,.86)); }
+#slTable .slStage.charge { background: radial-gradient(ellipse at 50% 45%, transparent 22%, rgba(2,1,6,.92) 72%); }       /* (a vignette: the machine stays in sight while the camera swoops in) */
+#slTable .slStage.burst { background: radial-gradient(ellipse at 50% 40%, rgba(8,5,20,.82), rgba(2,1,6,.97)); }
+#slTable .slStage.black { background: #000; transition: none; }       /* an SSR's beat of dark: everything gone, then the burst */
+#slTable .slStage.black .slFx { opacity: 0; }
+/* the showcase: the dark lifts off the scene won (drawn live behind: app.js scenePreview), the machine steps aside, the banner sweeps in */
+#slTable .slStage { transition: opacity .4s, background .8s; }
+#slTable .slStage.out { background: #000 !important; transition: background .35s, opacity .4s; }       /* (the way back from the scene won: down to dark, then the dark fading off the machine) */
+#slTable .slStage.show { background: radial-gradient(ellipse at 50% 50%, transparent 40%, rgba(0,0,0,.45)) !important; }
+#slTable .slStage.show .slPrize, #slTable .slStage.show .slPillar { opacity: 0; transition: opacity .5s; }
+#slTable :is(.slRig, .slSide, .bjLamp) { transition: opacity .6s; }
+#slTable:has(.slStage.show) :is(.slRig, .slSide, .bjLamp) { opacity: 0; }
+#slTable .slBanner { position: absolute; left: 0; right: 0; top: 60%; padding: 2.2cqh 0 2.6cqh; text-align: center; pointer-events: none; opacity: 0; transform: translateX(-100%) skewX(-12deg);
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--bc, #6fb6ff) 70%, #000) 18%, color-mix(in srgb, var(--bc, #6fb6ff) 85%, #000) 50%, color-mix(in srgb, var(--bc, #6fb6ff) 70%, #000) 82%, transparent);
+  box-shadow: 0 0 6cqh color-mix(in srgb, var(--bc, #6fb6ff) 50%, transparent); overflow: hidden; }
+#slTable .slBanner.r1 { --bc: #a259ff; } #slTable .slBanner.r2 { --bc: #e0a800; }
+#slTable .slBanner.on { opacity: 1; transform: none; transition: transform .55s cubic-bezier(.15,1.3,.35,1), opacity .2s; }
+#slTable .slBanner.on.fade { opacity: 0; transition: opacity 1.6s ease; }       /* (then it's just the scene, sitting there: a click shows the cards) */
+#slTable .slStage.end { cursor: pointer; }
+#slTable .slBanner::after { content: ''; position: absolute; top: 0; bottom: 0; width: 20%; left: -30%; background: linear-gradient(90deg, transparent, rgba(255,255,255,.55), transparent); transform: skewX(-20deg); }
+#slTable .slBanner.on::after { animation: slShine 1.6s .5s ease-in-out infinite; }
+@keyframes slShine { to { left: 130%; } }
+#slTable .slBTag { display: inline-block; padding: .4cqh 1.6cqh; margin-right: 1.6cqh; border-radius: 1cqh; font: 900 4.6cqh/1 "Segoe UI Variable Display", "Segoe UI", system-ui; font-style: italic; color: #fff; background: rgba(0,0,0,.3); box-shadow: inset 0 0 0 .3cqh #fff; vertical-align: middle; }
+#slTable .slBanner.r2 .slBTag { background: linear-gradient(90deg, #ff4f8b, #ffd84a, #6fe8ff, #b98cff); }
+#slTable .slBStars { font-size: 4.6cqh; letter-spacing: .3cqh; color: #ffe9a8; text-shadow: 0 0 1.4cqh #ffd84a; vertical-align: middle; }
+#slTable .slBName { margin-top: 1cqh; font: 900 9cqh/1 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: .04em; color: #fff; text-shadow: 0 .5cqh 0 rgba(0,0,0,.35), 0 0 3cqh color-mix(in srgb, var(--bc, #6fb6ff) 80%, #fff); }
+#slTable .slBSub { margin-top: 1cqh; font: 800 2.4cqh/1 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: .5em; color: rgba(255,255,255,.85); }
+/* the rarity slammed across the screen as a rare card's stamp lands */
+#slTable .slSlam { position: absolute; left: 50%; top: 18%; transform: translateX(-50%); font: 900 italic 22cqh/1 "Segoe UI Variable Display", "Segoe UI", system-ui; letter-spacing: -.02em; white-space: nowrap; pointer-events: none; opacity: 0; color: #fff; }
+#slTable .slSlam.r1 { color: #e2c2ff; text-shadow: 0 0 4cqh #c27bff, 0 1cqh 0 #5b2a9e; }
+#slTable .slSlam.r2 { background: linear-gradient(90deg, #ff4f8b, #ffb03a, #ffd84a, #7dff9a, #6fe8ff, #b98cff); -webkit-background-clip: text; background-clip: text; color: transparent; filter: drop-shadow(0 1cqh 0 rgba(0,0,0,.4)); }
+#slTable .slSlam.on { animation: slSlam 1.5s cubic-bezier(.2,1.4,.4,1) forwards; }
+@keyframes slSlam { 0% { opacity: 0; transform: translateX(-50%) scale(3.4) rotate(-10deg); } 14% { opacity: 1; transform: translateX(-50%) scale(1) rotate(-6deg); } 70% { opacity: 1; transform: translateX(-50%) scale(1.06) rotate(-6deg); } 100% { opacity: 0; transform: translateX(-50%) scale(1.3) rotate(-6deg); } }
+#slTable .bjBar, #slTable .bjNote { z-index: 6; }
+#slTable .slFx { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+#slTable .slFlash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; transition: opacity .8s ease-out; }       /* (the white the zoom goes into, and lifts off the scene) */
+#slTable .slStage.white .slFlash { opacity: 1; transition: opacity .5s ease-in; }
+#slTable .slStage.on.clear { background: none; }       /* (the pull: the machine in plain sight) */
+#slTable .slStage.burst .slFlash { animation: slFlash .7s ease-out; }
+@keyframes slFlash { 0% { opacity: 0; } 8% { opacity: .95; } 100% { opacity: 0; } }
+#slTable .slPillar { position: absolute; left: 50%; top: -10%; bottom: -10%; width: 26cqw; margin-left: -13cqw; opacity: 0; pointer-events: none; transform: scaleX(.1);
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--pc, #6fb6ff) 55%, transparent) 30%, rgba(255,255,255,.85) 50%, color-mix(in srgb, var(--pc, #6fb6ff) 55%, transparent) 70%, transparent); }       /* (soft from its own gradient: a CSS blur on something this big is redone every frame) */
+#slTable .slStage.r1 { --pc: #c27bff; } #slTable .slStage.r2 { --pc: #ffd84a; }
+#slTable .slStage.burst .slPillar { animation: slPillar 1.6s ease-out forwards; }
+#slTable .slStage.r2.burst .slPillar { background: linear-gradient(90deg, transparent, rgba(255,80,160,.5) 20%, rgba(255,216,74,.7) 35%, #fff 50%, rgba(111,232,255,.7) 65%, rgba(185,140,255,.5) 80%, transparent); }
+@keyframes slPillar { 0% { opacity: 0; transform: scaleX(.05); } 15% { opacity: 1; transform: scaleX(1); } 100% { opacity: .18; transform: scaleX(.6); } }
+#slTable .slSkip { position: absolute; left: 50%; bottom: 3cqh; transform: translateX(-50%); font: 600 13px/1 "Segoe UI Variable Text", "Segoe UI", system-ui; color: rgba(255,255,255,.5); opacity: 0; pointer-events: none; }
+#slTable .slStage.on:not(.done) .slSkip { opacity: 1; animation: paFlicker 1.2s steps(2) infinite; }
+/* the cards: face down as they come, a rare one glowing before it turns, then the scene, its stars, its rarity stamped on */
+#slTable .slPrize { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: none; gap: 2cqh; justify-content: center; flex-wrap: wrap; width: 92cqw; perspective: 160cqh; }
+#slTable .slPrize.on { display: flex; }
+#slTable .slG { --w: 30cqh; width: var(--w); aspect-ratio: 3 / 4.2; opacity: 0; transform: translateY(-40cqh) rotate(-8deg) scale(.6); transition: opacity .3s, transform .5s cubic-bezier(.2,1.3,.4,1); cursor: default; }
+#slTable .slPrize.many { width: calc(5 * var(--mw) + 4 * 2cqh); --mw: min(19cqh, 17cqw); }       /* (two rows of five) */
+#slTable .slPrize.many .slG { --w: var(--mw); }
+#slTable .slG.in { opacity: 1; transform: none; }
+#slTable .slG.flip { cursor: pointer; }
+#slTable .slGIn { position: relative; width: 100%; height: 100%; transform-style: preserve-3d; transition: transform .55s cubic-bezier(.3,1.4,.5,1); }
+#slTable .slG.flip .slGIn { transform: rotateY(180deg); }
+#slTable .slGBack, #slTable .slGFront { position: absolute; inset: 0; border-radius: 1.6cqh; backface-visibility: hidden; overflow: hidden; }
+#slTable .slGBack { display: grid; place-items: center; background: radial-gradient(circle at 50% 40%, color-mix(in srgb, var(--rc) 45%, #1a1230), #0a0812 75%);
+  box-shadow: inset 0 0 0 .5cqh color-mix(in srgb, var(--rc) 70%, #fff), 0 0 2.4cqh color-mix(in srgb, var(--rc) 40%, transparent); }
+#slTable .slGBack svg { width: 55%; height: auto; opacity: .8; filter: drop-shadow(0 0 1cqh var(--rc)); }
+#slTable .slG.r0 .slGBack { --rc: #6fb6ff; }
+#slTable .slG.tease .slGBack { animation: slTease .2s ease-in-out infinite alternate; }
+@keyframes slTease { to { box-shadow: inset 0 0 0 .5cqh #fff, 0 0 6cqh var(--rc), 0 0 12cqh var(--rc); transform: scale(1.04); } }
+#slTable .slGFront { transform: rotateY(180deg); display: flex; flex-direction: column; padding: 1cqh; gap: .6cqh; background: linear-gradient(170deg, #fffdf6, #efe6d2);
+  box-shadow: inset 0 0 0 .5cqh var(--rc), 0 0 3cqh color-mix(in srgb, var(--rc) 70%, transparent); }
+#slTable .slG.r2 .slGFront { box-shadow: inset 0 0 0 .5cqh var(--rc), 0 0 5cqh #ffd84a, 0 0 10cqh rgba(255,111,181,.5); }
+#slTable .slG.r2 .slGFront::after { content: ''; position: absolute; inset: 0; pointer-events: none; opacity: .3;       /* the holo foil (no blend mode: that made a layer of its own to mix every frame) */
+  background: linear-gradient(115deg, transparent 20%, rgba(255,80,160,.7) 35%, rgba(255,216,74,.7) 45%, rgba(111,232,255,.7) 55%, rgba(185,140,255,.7) 65%, transparent 80%); background-size: 250% 100%; animation: slHolo 2.4s linear infinite; }
+@keyframes slHolo { from { background-position: 100% 0; } to { background-position: -150% 0; } }
+#slTable .slGFront .slPic { flex: 1; border-radius: 1cqh; background: #14121c center/cover; }
+#slTable .slGFront .slPic.none { background: radial-gradient(circle at 40% 35%, color-mix(in srgb, var(--rc) 60%, #fff), #1a1230); }
+#slTable .slStars { display: flex; justify-content: center; gap: .3cqh; font-size: calc(var(--w) * .1); line-height: 1; color: var(--rc); text-shadow: 0 0 1cqh var(--rc), 0 .2cqh 0 rgba(0,0,0,.35); }
+#slTable .slStars i { font-style: normal; }       /* (each animates in from big and clear as the card turns; at rest it's simply there) */
+#slTable .slG.flip .slStars i { animation: slStar .35s cubic-bezier(.2,1.6,.4,1) both; }
+@keyframes slStar { from { opacity: 0; transform: scale(2.4); } }
+#slTable .slName { font: 800 calc(var(--w) * .075)/1.1 "Segoe UI Variable Display", "Segoe UI", system-ui; color: #1d1b26; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#slTable .slTag { position: absolute; left: 6%; top: 4%; padding: .4cqh 1cqh; border-radius: .8cqh; font: 900 calc(var(--w) * .1)/1 "Segoe UI Variable Display", "Segoe UI", system-ui; font-style: italic; letter-spacing: .04em;
+  color: #fff; background: var(--rc); box-shadow: 0 .3cqh 0 rgba(0,0,0,.3), 0 0 2cqh var(--rc); transform: rotate(-8deg); }
+#slTable .slG.r2 .slTag { background: linear-gradient(90deg, #ff4f8b, #ffd84a, #6fe8ff, #b98cff); }
+#slTable .slNew { position: absolute; right: 6%; top: 4%; padding: .3cqh .8cqh; border-radius: .6cqh; font: 900 calc(var(--w) * .06)/1 "Segoe UI Variable Display", "Segoe UI", system-ui; font-style: normal;
+  color: #c2410c; background: #fff3d6; box-shadow: 0 0 0 .2cqh #c2410c; transform: rotate(6deg); }
+#slTable .slG:not(.stamp) :is(.slTag, .slNew) { visibility: hidden; }       /* (stamped on once the stars are in) */
+#slTable .slG.stamp .slTag { animation: slStamp .4s cubic-bezier(.2,1.5,.4,1) both; }
+#slTable .slG.stamp .slNew { animation: slStamp .4s .15s cubic-bezier(.2,1.5,.4,1) both; }
+@keyframes slStamp { from { opacity: 0; transform: scale(3) rotate(-14deg); } }
+#slTable .slTagMini { min-width: 34px; padding: 2px 6px; border-radius: 5px; text-align: center; font: 900 11px/1.2 "Segoe UI Variable Display", "Segoe UI", system-ui; font-style: italic; color: #fff; background: #6fb6ff; }
+#slTable .slTagMini.r1 { background: #c27bff; } #slTable .slTagMini.r2 { background: linear-gradient(90deg, #ff4f8b, #ffd84a, #6fe8ff); }
+#slTable .slPullN { background: linear-gradient(90deg, #ff4f8b, #ffb03a); box-shadow: 0 0 18px rgba(255,79,139,.5), inset 0 0 0 1px #fff3d6; }
+#slTable .slPull { height: 48px; padding: 0 36px; font-size: 17px; animation: paPulseText .5s ease-in-out infinite alternate; }
+@media (prefers-reduced-motion: reduce) { #slTable :is(.slRig, .slShake, .slLeverArm, .slLeverKnob, .slDrum, .slTrim, .slSign span, .slArch i, .slTicker span, .slStrip, .slBtn::after, .slReel, .slPull, .slFlash, .slPillar, .slG, .slGIn, .slGBack, .slStars i, .slTag, .slNew, .slGFront::after, .slSkip, .slFace.win, .slFace.win::before, .slFace.win::after, .slBanner, .slBanner::after, .slSlam) { animation: none !important; transition: none !important; } }
 
 /* Roulette: the wheel on the left; the sign, the last numbers, the layout and the players on the right */
 #rlTable .rlBrand { position: absolute; left: 3cqw; top: 3cqh; display: flex; align-items: center; gap: .8cqw; opacity: .3; pointer-events: none;
@@ -2053,6 +2350,34 @@ body.bcfull:not(.surfing):not(:has(#bcBar.show, #bcBar:hover, #bcBar:focus-withi
 #skTable .skStand li:first-child::before { color: color-mix(in srgb, var(--bjHi) 70%, #fff); }
 #skTable .skStand li span { flex: 1; text-align: left; }
 #skTable .skStand li.me span { font-weight: 700; }
+/* the winner crowned: big over the final scores (bobbing in), small beside their name there and in the players */
+#skTable .skCrown { display: inline-block; flex: none; width: 1.3cqw; height: 1.3cqw; filter: drop-shadow(0 .1cqw .3cqw rgba(0,0,0,.5)); }
+#skTable .skCrown svg { display: block; width: 100%; height: 100%; }
+/* a picture with the crown sitting on it, tipped a little: small in the players, big over the final scores */
+#skTable .skCrowned { position: relative; display: inline-grid; flex: none; }
+#skTable .skCrowned > .skCrown { position: absolute; left: 50%; top: 0; width: 78%; height: 78%; transform: translate(-46%, -62%) rotate(-12deg); pointer-events: none; }
+#skTable .skP .skCrowned .face, #skTable .skP .skCrowned .nf { box-shadow: 0 0 0 .12cqw #f7c948; }
+#skTable .skP .skCrowned > .skCrown { width: 115%; height: 115%; transform: translate(-42%, -82%) rotate(-14deg); }
+#skTable .skP:has(.skCrowned) { margin-top: .9cqh; }
+#skTable .skWinners { display: flex; gap: 2.2cqw; padding-top: 2.4cqw; }
+#skTable .skWinners .face, #skTable .skWinners .nf { width: 6cqw; height: 6cqw; font-size: 2.6cqw; font-weight: 800; border-radius: 50%; display: grid; place-items: center; color: #fff;
+  box-shadow: 0 0 0 .3cqw #f7c948, 0 0 2cqw rgba(247,201,72,.45), 0 .3cqw .8cqw rgba(0,0,0,.5); }
+#skTable .skWinners .nf { background: var(--c); }
+#skTable .skWinners .skCrown { width: 4.4cqw; height: 4.4cqw; transform-origin: 50% 90%; filter: drop-shadow(0 0 1cqw rgba(247,201,72,.55)) drop-shadow(0 .2cqw .4cqw rgba(0,0,0,.5));
+  animation: skCrownIn .7s cubic-bezier(.3,1.6,.5,1) both, skCrownBob 2.4s .7s ease-in-out infinite; }
+#skTable .skWinners .skCrowned { animation: skWinIn .5s cubic-bezier(.3,1.5,.5,1) both; }
+@keyframes skWinIn { from { transform: scale(.6); opacity: 0; } }
+@keyframes skCrownIn { from { transform: translate(-46%, -150%) scale(.4) rotate(-30deg); opacity: 0; } }
+@keyframes skCrownBob { 0%, 100% { transform: translate(-46%, -62%) rotate(-12deg); } 50% { transform: translate(-46%, -70%) rotate(-6deg); } }
+#skTable .skStand li.won { background: color-mix(in srgb, var(--bjAccent) 30%, transparent); }
+#skTable .skStand li.won::before { color: color-mix(in srgb, var(--bjHi) 70%, #fff); }
+/* the token announced: gold, with the coin */
+#skTable .skCard p.skTokWin { display: inline-flex; align-items: center; gap: .6cqw; padding: .4cqw 1cqw; border-radius: 999px; font: 700 1.15cqw/1.2 "Segoe UI Variable Text", "Segoe UI", system-ui; color: #ffe08a;
+  background: rgba(247,201,72,.12); box-shadow: inset 0 0 0 1px rgba(247,201,72,.4), 0 0 1.4cqw rgba(247,201,72,.2); }
+#skTable .skTokWin .coin { flex: none; width: 1.3cqw; height: 1.3cqw; border-radius: 50%;
+  background: radial-gradient(circle at 50% 50%, transparent 0 52%, rgba(120,70,0,.55) 54% 58%, transparent 60%), radial-gradient(circle at 35% 30%, #fff6c8 0 8%, #f7cf4a 30%, #d99a14 72%, #a8690a 100%);
+  box-shadow: 0 1px 3px rgba(0,0,0,.5), inset 0 0 0 1px rgba(110,60,0,.6); }
+@media (prefers-reduced-motion: reduce) { #skTable .skWinners .skCrown, #skTable .skWinners .skCrowned { animation: none; } }
 /* the right: the players, the guesses */
 #skTable .skSide { position: absolute; left: 77cqw; right: .9cqw; top: 1.6cqh; bottom: 1.6cqh; display: flex; flex-direction: column; gap: 1.2cqh; color: #fff; font-size: .95cqw; }
 #skTable .skSide.off { visibility: hidden; }

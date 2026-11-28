@@ -1,15 +1,16 @@
 // Drift — one wallet across the casino tables (Blackjack, Roulette, Hold'em, Pachinko, the crane machine): chips won at one are played at
 // another. Pure: no Electron, no timers. Whoever runs the tables makes one (main.js for this PC alone, kept in the settings;
-// hub.js for a hub, kept while the hub runs) and hands it to each table as opts.wallet.
+// hub.js for a hub, filled from each member's own PC when they sit down and sent back to it: one wallet everywhere) and hands
+// it to each table as opts.wallet.
 //
-//   const w = createWallet({ start: 1000, owns: (id) => ..., load: (id) => ({ chips, outUntil }), onChange: (id) => ... })
+//   const w = createWallet({ start: 500, owns: (id) => ..., load: (id) => ({ chips, outUntil }), onChange: (id) => ... })
 //
 // A table seats someone as it always has, then calls w.bind(seat): from then on the seat's `chips` and `outUntil` read and
 // write the wallet's, so the rules don't change at all (s.chips -= bet). Crapping out is the wallet's too: out of chips at one
 // table is out at all of them for the wait, and back in with fresh chips at all of them. Computer players aren't the
 // wallet's (owns says no): their chips stay their own.
 function createWallet(opts = {}) {
-  const start = opts.start || 1000;
+  const start = opts.start || 500;
   const owns = opts.owns || (() => true);
   const all = new Map();       // id -> { chips, outUntil }
   let rev = 0;
@@ -37,7 +38,7 @@ function createWallet(opts = {}) {
   // What a table seats someone with: the wallet's chips and wait (for sit's `keep`), or null for someone it isn't theirs
   const keep = (id) => (owns(String(id)) ? { ...get(id) } : null);
   return {
-    bind, keep, owns: (id) => owns(String(id)),
+    bind, keep, owns: (id) => owns(String(id)), has: (id) => all.has(String(id)),
     peek: (id) => ({ ...get(id) }),
     set(id, q) { const w = get(id), c = clean(q); if (c.chips !== w.chips || c.outUntil !== w.outUntil) { Object.assign(w, c); changed(String(id)); } },
     get rev() { return rev; },

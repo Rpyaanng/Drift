@@ -143,7 +143,7 @@ ok('two aces', total(['As', 'Ad']).n === 12);
   t.leave('a'); t.sit('a', 'Ann');
   ok('standing up does not skip it', t.me().outMs > 0 && t.me().chips === 0, t.me());
   t.wait(20000);
-  ok('back in with 1,000', t.me().outMs === 0 && t.me().chips === 1000, t.me());
+  ok('back in with 500 (half what you started with)', t.me().outMs === 0 && t.me().chips === 500, t.me());
 }
 { // two players: seat order, and only yours to play
   const t = table(); t.sit('a', 'Ann'); t.sit('b', 'Bo');
